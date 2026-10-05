@@ -19,3 +19,6 @@ prefix = "apps"
 
 [build]
 include_config_on_deploy = true
+
+[webhooks]
+api_version = "2025-10"
