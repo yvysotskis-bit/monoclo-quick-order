@@ -1,0 +1,225 @@
+{%- comment -%}
+  Попап швидкого замовлення. App embed: вмикається один раз у Theme settings → App embeds
+  і працює для всіх шаблонів товарів.
+{%- endcomment -%}
+{{ 'quick-order.css' | asset_url | stylesheet_tag }}
+
+{%- liquid
+  assign s = block.settings
+  assign accent = s.accent_color | default: '#000000'
+-%}
+
+<div
+  class="qo-root"
+  data-qo-root
+  style="--qo-accent: {{ accent }}; --qo-radius: {{ s.radius | default: 2 }}px;"
+>
+  <dialog
+    class="qo-dialog"
+    data-qo-dialog
+    aria-labelledby="qo-title"
+    data-endpoint="/apps/quick-order/submit"
+    data-work-start="{{ s.work_start | default: 10 }}"
+    data-work-end="{{ s.work_end | default: 20 }}"
+    data-timezone="Europe/Kyiv"
+    data-color-map="{{ s.color_map | escape }}"
+    data-size-guide-url="{{ s.size_guide_url | escape }}"
+    data-instagram-url="{{ s.instagram_url | escape }}"
+    data-after-hours-text="{{ s.after_hours_text | escape }}"
+    data-max-qty="10"
+  >
+    <div class="qo-sheet" tabindex="-1" data-qo-sheet>
+      <div class="qo-grabber" data-qo-grabber aria-hidden="true"><span></span></div>
+      <button type="button" class="qo-close" data-qo-close aria-label="Закрити">
+        <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+      </button>
+
+      <div class="qo-body" data-qo-body>
+        <section class="qo-view" data-qo-form-view>
+          <div class="qo-product" data-qo-swipe>
+            <div class="qo-product__media"><img alt="" width="96" height="96" data-qo-image></div>
+            <div class="qo-product__info">
+              <h2 class="qo-title" id="qo-title" data-qo-title></h2>
+              <p class="qo-price">
+                <span class="qo-price__now" data-qo-price></span>
+                <s class="qo-price__old" data-qo-compare hidden></s>
+                <span class="qo-badge" data-qo-badge hidden></span>
+              </p>
+            </div>
+          </div>
+
+          <form class="qo-form" id="qo-form" novalidate autocomplete="on" data-qo-form>
+            <div data-qo-options></div>
+
+            <div class="qo-field">
+              <span class="qo-label" id="qo-qty-label">Кількість</span>
+              <div class="qo-qty" role="group" aria-labelledby="qo-qty-label">
+                <button type="button" class="qo-qty__btn" data-qo-qty="-1" aria-label="Менше">−</button>
+                <input class="qo-qty__input" type="text" inputmode="numeric" value="1" readonly aria-live="polite" data-qo-qty-input>
+                <button type="button" class="qo-qty__btn" data-qo-qty="1" aria-label="Більше">+</button>
+              </div>
+              <p class="qo-stock" data-qo-stock hidden></p>
+            </div>
+
+            <div class="qo-field" data-qo-field="name">
+              <label class="qo-label" for="qo-name">Ваше імʼя</label>
+              <input class="qo-input" id="qo-name" name="name" type="text" autocomplete="name" placeholder="Як до вас звертатися" maxlength="60" required data-qo-name>
+              <p class="qo-hint qo-hint--field" data-qo-field-hint="name">Вкажіть імʼя, щоб менеджер знав, як до вас звертатися</p>
+            </div>
+
+            <div class="qo-field" data-qo-field="phone">
+              <label class="qo-label" for="qo-phone">Номер телефону</label>
+              <div class="qo-phone">
+                <span class="qo-phone__prefix" aria-hidden="true">+380</span>
+                <input class="qo-input qo-input--phone" id="qo-phone" name="tel" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="(__) ___ __ __" required data-qo-phone aria-describedby="qo-phone-hint">
+              </div>
+              <p class="qo-hint qo-hint--field" id="qo-phone-hint" data-qo-field-hint="phone">Менеджер звʼяжеться за цим номером</p>
+            </div>
+
+            {%- if s.show_comment -%}
+              <div class="qo-field">
+                <label class="qo-label" for="qo-comment">Коментар <span class="qo-optional">(необовʼязково)</span></label>
+                <textarea class="qo-input qo-input--area" id="qo-comment" name="comment" rows="2" maxlength="300" data-qo-comment></textarea>
+              </div>
+            {%- endif -%}
+
+            <div class="qo-honeypot" aria-hidden="true">
+              <label>Website <input type="text" name="website" tabindex="-1" autocomplete="off" data-qo-honeypot></label>
+            </div>
+
+            <dl class="qo-summary" data-qo-summary>
+              <dt>Разом</dt>
+              <dd data-qo-total></dd>
+            </dl>
+          </form>
+        </section>
+
+        <section class="qo-view qo-success" data-qo-success-view hidden>
+          <div class="qo-success__icon" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 28 28"><path d="M6 14.5l5.5 5.5L22 9" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="square"/></svg>
+          </div>
+          <h2 class="qo-success__title" tabindex="-1" data-qo-success-title></h2>
+          <dl class="qo-success__summary" data-qo-success-summary></dl>
+          <p class="qo-note" data-qo-success-note></p>
+          <p class="qo-note qo-note--hours" data-qo-success-hours hidden></p>
+          <div class="qo-success__actions">
+            <button type="button" class="qo-btn" data-qo-close>Продовжити покупки</button>
+            {%- if s.instagram_url != blank -%}
+              <a class="qo-btn qo-btn--ghost" href="{{ s.instagram_url }}" target="_blank" rel="noopener">Instagram</a>
+            {%- endif -%}
+          </div>
+        </section>
+      </div>
+
+      <footer class="qo-footer" data-qo-footer>
+        <p class="qo-hint qo-hint--cta" data-qo-cta-hint role="status" aria-live="polite"></p>
+        <p class="qo-error" data-qo-error role="alert" hidden></p>
+        <button type="submit" form="qo-form" class="qo-submit" data-qo-submit aria-disabled="true">
+          <span class="qo-submit__label">Замовити</span>
+          <span class="qo-spinner" aria-hidden="true"></span>
+        </button>
+        <p class="qo-note" data-qo-note>{{ s.response_note | escape }}</p>
+        <p class="qo-note qo-note--hours" data-qo-hours-note hidden></p>
+      </footer>
+    </div>
+  </dialog>
+</div>
+
+<script src="{{ 'quick-order.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Quick Order popup",
+  "target": "body",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Тексти"
+    },
+    {
+      "type": "textarea",
+      "id": "response_note",
+      "label": "Текст під кнопкою та на екрані успіху",
+      "default": "Менеджер зв'яжеться з вами, як тільки звільниться. Очікуйте дзвінка та/або повідомлення для повного оформлення вашого замовлення."
+    },
+    {
+      "type": "textarea",
+      "id": "after_hours_text",
+      "label": "Текст поза робочим часом",
+      "info": "{start} і {end} замінюються на години роботи.",
+      "default": "Замовлення приймаються щодня з {start} до {end}. Замовлення, оформлені поза цим часом, будуть опрацьовані наступного дня в порядку черги."
+    },
+    {
+      "type": "header",
+      "content": "Робочий час (Київ)"
+    },
+    {
+      "type": "range",
+      "id": "work_start",
+      "label": "Початок",
+      "min": 0,
+      "max": 23,
+      "step": 1,
+      "unit": "год",
+      "default": 10
+    },
+    {
+      "type": "range",
+      "id": "work_end",
+      "label": "Кінець",
+      "min": 1,
+      "max": 24,
+      "step": 1,
+      "unit": "год",
+      "default": 20
+    },
+    {
+      "type": "header",
+      "content": "Вигляд"
+    },
+    {
+      "type": "color",
+      "id": "accent_color",
+      "label": "Колір головної кнопки",
+      "default": "#000000"
+    },
+    {
+      "type": "range",
+      "id": "radius",
+      "label": "Заокруглення кутів",
+      "min": 0,
+      "max": 16,
+      "step": 1,
+      "unit": "px",
+      "default": 2
+    },
+    {
+      "type": "textarea",
+      "id": "color_map",
+      "label": "Кольори для кружечків",
+      "info": "Один колір на рядок: Назва:#hex. Чорний, білий, сірий та інші базові вже вбудовані.",
+      "default": "Графітовий:#3b3b3d"
+    },
+    {
+      "type": "header",
+      "content": "Додатково"
+    },
+    {
+      "type": "url",
+      "id": "size_guide_url",
+      "label": "Посилання на таблицю розмірів"
+    },
+    {
+      "type": "url",
+      "id": "instagram_url",
+      "label": "Instagram (для екрана успіху)"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_comment",
+      "label": "Показувати поле «Коментар»",
+      "default": false
+    }
+  ]
+}
+{% endschema %}

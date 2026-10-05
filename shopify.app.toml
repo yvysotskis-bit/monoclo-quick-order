@@ -1,0 +1,21 @@
+# Monoclo Quick Order: кастомний додаток для одного магазину.
+# Замініть значення REPLACE_* після створення додатка в Dev Dashboard (див. README).
+name = "Monoclo Quick Order"
+client_id = "REPLACE_WITH_CLIENT_ID"
+application_url = "https://REPLACE_WITH_YOUR_SERVER"
+embedded = false
+
+[access_scopes]
+scopes = ""
+
+[auth]
+redirect_urls = ["https://REPLACE_WITH_YOUR_SERVER/auth/callback"]
+
+[app_proxy]
+# Storefront викликає /apps/quick-order/*, Shopify підписує запит і пересилає сюди
+url = "https://REPLACE_WITH_YOUR_SERVER/proxy"
+subpath = "quick-order"
+prefix = "apps"
+
+[build]
+include_config_on_deploy = true

@@ -1,0 +1,6 @@
+api_version = "2025-07"
+
+[[extensions]]
+name = "Quick Order"
+handle = "quick-order"
+type = "theme"

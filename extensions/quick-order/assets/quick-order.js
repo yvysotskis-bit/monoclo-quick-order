@@ -1,0 +1,750 @@
+/* Quick Order popup для Monoclo. Без залежностей.
+   Кнопки [data-qo-open] читають JSON товару з <script id=data-qo-product>,
+   відкривають <dialog data-qo-dialog> і відправляють замовлення на App Proxy. */
+(function () {
+  'use strict';
+  if (window.QuickOrder) return;
+
+  var T = {
+    chooseOption: function (name) { return 'Оберіть ' + name.toLowerCase(); },
+    enterName: 'Вкажіть імʼя',
+    enterPhone: 'Вкажіть номер телефону',
+    inStock: 'В наявності',
+    low: function (n) { return 'Залишилось ' + n + ' шт.'; },
+    soldOut: 'Немає в наявності',
+    thanks: function (n) { return 'Дякуємо! Замовлення №' + n + ' прийнято'; },
+    network: 'Не вдалося зʼєднатися з сервером. Перевірте інтернет і натисніть «Замовити» ще раз.',
+    generic: 'Щось пішло не так. Натисніть «Замовити» ще раз.',
+    soldOutNow: 'На жаль, цей варіант щойно закінчився. Оберіть інший.',
+    product: 'Товар', qty: 'Кількість', total: 'Сума', phone: 'Телефон'
+  };
+
+  var COLOR_OPTION = /^(colou?r|колір|кольор|цвет)/i;
+  var SIZE_OPTION = /^(size|розмір|размер)/i;
+  var DEFAULT_COLORS = {
+    'чорний': '#111111', 'білий': '#ffffff', 'графітовий': '#3b3b3d', 'сірий': '#8d8d8d',
+    'світло-сірий': '#d4d4d4', 'темно-сірий': '#555555', 'червоний': '#c0262d', 'бордовий': '#6d1a24',
+    'синій': '#1f3a8a', 'темно-синій': '#14213d', 'блакитний': '#7ec8e3', 'зелений': '#2e7d32',
+    'хакі': '#6b6b3a', 'оливковий': '#6b7036', 'бежевий': '#d8c7a5', 'пісочний': '#d6c3a0',
+    'коричневий': '#6b4423', 'молочний': '#f3ede0', 'жовтий': '#f2c230', 'помаранчевий': '#ec7a1c',
+    'рожевий': '#f4b6c2', 'фіолетовий': '#6a3fa0',
+    'black': '#111111', 'white': '#ffffff', 'gray': '#8d8d8d', 'grey': '#8d8d8d', 'graphite': '#3b3b3d',
+    'navy': '#14213d', 'khaki': '#6b6b3a', 'beige': '#d8c7a5', 'brown': '#6b4423', 'olive': '#6b7036'
+  };
+
+  var STORE_KEY = 'qo:contact';
+
+  /* ---------- Чисті функції ---------- */
+
+  // Цифри національної частини номера (до 9), без 380 / 0 попереду
+  function nationalDigits(raw) {
+    var d = String(raw || '').replace(/\D/g, '');
+    if (d.indexOf('380') === 0) d = d.slice(3);
+    else if (d.charAt(0) === '0') d = d.slice(1);
+    return d.slice(0, 9);
+  }
+
+  // 671234567 → (67) 123 45 67
+  function formatNational(d) {
+    if (!d) return '';
+    var s = '(' + d.slice(0, 2);
+    if (d.length === 2) s += ')';
+    if (d.length > 2) s += ') ' + d.slice(2, 5);
+    if (d.length > 5) s += ' ' + d.slice(5, 7);
+    if (d.length > 7) s += ' ' + d.slice(7, 9);
+    return s;
+  }
+
+  function money(cents, currency) {
+    var code = currency || 'UAH';
+    try {
+      var n = new Intl.NumberFormat('uk-UA', {
+        minimumFractionDigits: 0, maximumFractionDigits: 2
+      }).format(cents / 100);
+      return code === 'UAH' ? n + '\u00a0₴' : n + '\u00a0' + code;
+    } catch (e) {
+      return (cents / 100) + ' ' + code;
+    }
+  }
+
+  function parseColorMap(text) {
+    var map = {};
+    Object.keys(DEFAULT_COLORS).forEach(function (k) { map[k] = DEFAULT_COLORS[k]; });
+    String(text || '').split(/\r?\n/).forEach(function (line) {
+      var i = line.lastIndexOf(':');
+      if (i < 1) return;
+      var name = line.slice(0, i).trim().toLowerCase();
+      var value = line.slice(i + 1).trim();
+      if (name && value) map[name] = value;
+    });
+    return map;
+  }
+
+  function resolveColor(name, map) {
+    var key = String(name).trim().toLowerCase();
+    if (map[key]) return map[key];
+    if (window.CSS && CSS.supports && CSS.supports('color', key)) return key;
+    return null;
+  }
+
+  function hourIn(tz, date) {
+    try {
+      return Number(new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' }).format(date));
+    } catch (e) {
+      return date.getHours();
+    }
+  }
+
+  function pad(n) { return (n < 10 ? '0' : '') + n + ':00'; }
+
+  function uuid() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return 'qo-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+  }
+
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function readStore() {
+    try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; }
+  }
+  function writeStore(value) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(value)); } catch (e) { /* приватний режим */ }
+  }
+
+  /* ---------- Стан і DOM ---------- */
+
+  var dialog, sheet, refs, cfg;
+  var state = null;
+  var productCache = {};
+
+  function $(selector) { return dialog.querySelector(selector); }
+
+  function init() {
+    dialog = document.querySelector('[data-qo-dialog]');
+    if (!dialog || dialog.__qoReady) return;
+    dialog.__qoReady = true;
+    sheet = $('[data-qo-sheet]');
+    cfg = {
+      endpoint: dialog.dataset.endpoint,
+      tz: dialog.dataset.timezone || 'Europe/Kyiv',
+      workStart: Number(dialog.dataset.workStart),
+      workEnd: Number(dialog.dataset.workEnd),
+      colorMap: parseColorMap(dialog.dataset.colorMap),
+      sizeGuide: dialog.dataset.sizeGuideUrl || '',
+      instagram: dialog.dataset.instagramUrl || '',
+      afterHoursText: dialog.dataset.afterHoursText || '',
+      maxQty: Number(dialog.dataset.maxQty) || 10
+    };
+    refs = {
+      form: $('[data-qo-form]'),
+      options: $('[data-qo-options]'),
+      image: $('[data-qo-image]'),
+      title: $('[data-qo-title]'),
+      price: $('[data-qo-price]'),
+      compare: $('[data-qo-compare]'),
+      badge: $('[data-qo-badge]'),
+      qtyInput: $('[data-qo-qty-input]'),
+      stock: $('[data-qo-stock]'),
+      name: $('[data-qo-name]'),
+      phone: $('[data-qo-phone]'),
+      comment: $('[data-qo-comment]'),
+      honeypot: $('[data-qo-honeypot]'),
+      total: $('[data-qo-total]'),
+      submit: $('[data-qo-submit]'),
+      ctaHint: $('[data-qo-cta-hint]'),
+      error: $('[data-qo-error]'),
+      hoursNote: $('[data-qo-hours-note]'),
+      formView: $('[data-qo-form-view]'),
+      successView: $('[data-qo-success-view]'),
+      successTitle: $('[data-qo-success-title]'),
+      successSummary: $('[data-qo-success-summary]'),
+      successNote: $('[data-qo-success-note]'),
+      successHours: $('[data-qo-success-hours]'),
+      body: $('[data-qo-body]')
+    };
+
+    dialog.addEventListener('click', function (e) {
+      if (e.target === dialog) close();
+    });
+    dialog.addEventListener('cancel', function (e) { e.preventDefault(); close(); });
+    dialog.addEventListener('click', function (e) {
+      if (e.target.closest('[data-qo-close]')) close();
+    });
+
+    dialog.querySelectorAll('[data-qo-qty]').forEach(function (btn) {
+      btn.addEventListener('click', function () { setQty(state.qty + Number(btn.dataset.qoQty)); });
+    });
+
+    refs.name.addEventListener('input', function () { onFieldInput('name'); });
+    refs.name.addEventListener('blur', function () { state.touched.name = refs.name.value.trim() !== ''; refresh(); });
+    refs.phone.addEventListener('input', onPhoneInput);
+    refs.phone.addEventListener('blur', function () { state.touched.phone = refs.phone.value !== ''; refresh(); });
+
+    refs.form.addEventListener('submit', function (e) { e.preventDefault(); submit(); });
+    refs.submit.addEventListener('click', function (e) {
+      if (refs.submit.getAttribute('aria-disabled') === 'true') {
+        e.preventDefault();
+        highlightMissing();
+      }
+    });
+
+    initSwipe();
+  }
+
+  /* ---------- Відкриття / закриття ---------- */
+
+  function loadProduct(id) {
+    if (productCache[id]) return productCache[id];
+    var node = document.getElementById(id);
+    if (!node) return null;
+    try {
+      productCache[id] = JSON.parse(node.textContent);
+      return productCache[id];
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function open(product, trigger) {
+    init();
+    if (!dialog || !product) return;
+
+    var saved = readStore();
+    state = {
+      product: product,
+      selected: product.options.map(function () { return null; }),
+      qty: 1,
+      submitting: false,
+      clientId: uuid(),
+      trigger: trigger || null,
+      touched: { name: false, phone: false },
+      prevDigits: ''
+    };
+
+    preselect(product);
+
+    refs.title.textContent = product.title;
+    refs.image.alt = product.title;
+    refs.image.removeAttribute('src');
+    refs.name.value = saved.name || '';
+    refs.phone.value = formatNational(nationalDigits(saved.phone || ''));
+    state.prevDigits = nationalDigits(refs.phone.value);
+    if (refs.comment) refs.comment.value = '';
+    refs.honeypot.value = '';
+
+    clearFieldStates();
+    hideError();
+    setView('form');
+    renderOptions();
+    refresh(true);
+
+    var afterHours = isAfterHours();
+    refs.hoursNote.hidden = !afterHours;
+    if (afterHours) refs.hoursNote.textContent = hoursText();
+
+    dialog.classList.remove('is-success', 'is-open');
+    dialog.showModal();
+    document.documentElement.classList.add('qo-lock');
+    refs.body.scrollTop = 0;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { dialog.classList.add('is-open'); });
+    });
+    sheet.focus({ preventScroll: true });
+  }
+
+  function close() {
+    if (!dialog || !dialog.open || (state && state.submitting)) return;
+    dialog.classList.remove('is-open');
+    var finish = function () {
+      if (dialog.open) dialog.close();
+      document.documentElement.classList.remove('qo-lock');
+      sheet.style.transform = '';
+      var trigger = state && state.trigger;
+      if (trigger && document.contains(trigger)) trigger.focus({ preventScroll: true });
+    };
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) finish();
+    else setTimeout(finish, 280);
+  }
+
+  function setView(name) {
+    var success = name === 'success';
+    refs.formView.hidden = success;
+    refs.successView.hidden = !success;
+    dialog.classList.toggle('is-success', success);
+  }
+
+  function preselect(product) {
+    var params = new URLSearchParams(window.location.search);
+    var variantId = Number(params.get('variant')) || 0;
+    var variant = product.variants.filter(function (v) { return v.id === variantId; })[0];
+    if (variant && variant.available) {
+      state.selected = variant.options.slice();
+      return;
+    }
+    product.options.forEach(function (option, i) {
+      if (option.values.length === 1) state.selected[i] = option.values[0];
+    });
+  }
+
+  /* ---------- Варіанти ---------- */
+
+  function currentVariant() {
+    if (state.selected.some(function (s) { return s == null; })) return null;
+    var found = state.product.variants.filter(function (v) {
+      return v.options.every(function (o, i) { return o === state.selected[i]; });
+    })[0];
+    return found || null;
+  }
+
+  function valueAvailable(i, value) {
+    return state.product.variants.some(function (v) {
+      return v.options[i] === value && v.available && state.selected.every(function (s, j) {
+        return j === i || s == null || v.options[j] === s;
+      });
+    });
+  }
+
+  function selectValue(i, value) {
+    state.selected[i] = value;
+    // Якщо після зміни обраний раніше варіант став недоступним, скидаємо його
+    state.selected.forEach(function (s, j) {
+      if (j !== i && s != null && !valueAvailable(j, s)) state.selected[j] = null;
+    });
+    hideError();
+    refresh();
+  }
+
+  function renderOptions() {
+    refs.options.textContent = '';
+    state.product.options.forEach(function (option, i) {
+      var isDefault = option.values.length === 1 && option.values[0] === 'Default Title';
+      if (isDefault) return;
+
+      var isColor = COLOR_OPTION.test(option.name);
+      var field = el('div', 'qo-field');
+      field.dataset.qoField = 'option-' + i;
+
+      var label = el('span', 'qo-label');
+      label.id = 'qo-opt-' + i;
+      label.appendChild(el('span', '', option.name));
+      var chosen = el('strong');
+      chosen.dataset.qoChosen = i;
+      label.appendChild(chosen);
+      if (cfg.sizeGuide && SIZE_OPTION.test(option.name)) {
+        var guide = el('a', 'qo-size-guide', 'Таблиця розмірів');
+        guide.href = cfg.sizeGuide;
+        guide.target = '_blank';
+        guide.rel = 'noopener';
+        label.appendChild(guide);
+      }
+      field.appendChild(label);
+
+      var group = el('div', 'qo-choices');
+      group.setAttribute('role', 'radiogroup');
+      group.setAttribute('aria-labelledby', label.id);
+
+      option.values.forEach(function (value) {
+        var btn = el('button', 'qo-choice');
+        btn.type = 'button';
+        btn.setAttribute('role', 'radio');
+        btn.dataset.qoOption = i;
+        btn.dataset.qoValue = value;
+        var color = isColor ? resolveColor(value, cfg.colorMap) : null;
+        if (color) {
+          btn.classList.add('qo-choice--color');
+          var dot = el('span', 'qo-dot');
+          dot.style.backgroundColor = color;
+          btn.appendChild(dot);
+          btn.setAttribute('aria-label', value);
+          btn.title = value;
+        } else {
+          btn.textContent = value;
+        }
+        btn.addEventListener('click', function () {
+          if (btn.getAttribute('aria-disabled') === 'true') return;
+          selectValue(i, value);
+        });
+        btn.addEventListener('keydown', onChoiceKey);
+        group.appendChild(btn);
+      });
+
+      field.appendChild(group);
+      refs.options.appendChild(field);
+    });
+  }
+
+  function onChoiceKey(e) {
+    var keys = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+    if (!keys[e.key]) return;
+    var buttons = Array.prototype.filter.call(
+      e.currentTarget.parentNode.children,
+      function (b) { return b.getAttribute('aria-disabled') !== 'true'; }
+    );
+    var next = buttons[(buttons.indexOf(e.currentTarget) + keys[e.key] + buttons.length) % buttons.length];
+    if (next) { e.preventDefault(); next.focus(); next.click(); }
+  }
+
+  function updateChoices() {
+    dialog.querySelectorAll('.qo-choice').forEach(function (btn) {
+      var i = Number(btn.dataset.qoOption);
+      var value = btn.dataset.qoValue;
+      var available = valueAvailable(i, value);
+      var checked = state.selected[i] === value;
+      btn.setAttribute('aria-checked', checked ? 'true' : 'false');
+      btn.setAttribute('aria-disabled', available ? 'false' : 'true');
+      btn.tabIndex = checked ? 0 : -1;
+      if (!available) btn.title = T.soldOut;
+      else if (btn.classList.contains('qo-choice--color')) btn.title = value;
+      else btn.removeAttribute('title');
+    });
+    // Якщо нічого не обрано, у групі фокусується перша доступна кнопка
+    dialog.querySelectorAll('.qo-choices').forEach(function (group) {
+      if (group.querySelector('[aria-checked="true"]')) return;
+      var first = group.querySelector('.qo-choice[aria-disabled="false"]');
+      if (first) first.tabIndex = 0;
+    });
+    dialog.querySelectorAll('[data-qo-chosen]').forEach(function (node) {
+      var v = state.selected[Number(node.dataset.qoChosen)];
+      node.textContent = v || '';
+    });
+  }
+
+  /* ---------- Кількість, ціна, наявність ---------- */
+
+  function maxQty(variant) {
+    var max = cfg.maxQty;
+    if (variant && variant.stock != null) max = Math.min(max, Math.max(variant.stock, 1));
+    return max;
+  }
+
+  function setQty(value) {
+    state.qty = Math.max(1, Math.min(value, maxQty(currentVariant())));
+    refresh();
+  }
+
+  function setImage(src) {
+    var next = src || state.product.image || '';
+    if (!next || refs.image.getAttribute('src') === next) return;
+    if (!refs.image.getAttribute('src')) { refs.image.src = next; return; }
+    refs.image.classList.add('is-swapping');
+    var loader = new Image();
+    loader.onload = loader.onerror = function () {
+      refs.image.src = next;
+      refs.image.classList.remove('is-swapping');
+    };
+    loader.src = next;
+  }
+
+  function digits() { return nationalDigits(refs.phone.value); }
+  function nameValid() { return refs.name.value.trim().length >= 2; }
+  function phoneValid() { return digits().length === 9; }
+
+  function firstMissing() {
+    for (var i = 0; i < state.selected.length; i++) {
+      var option = state.product.options[i];
+      var isDefault = option.values.length === 1 && option.values[0] === 'Default Title';
+      if (state.selected[i] == null && !isDefault) return { key: 'option-' + i, text: T.chooseOption(option.name) };
+    }
+    if (!nameValid()) return { key: 'name', text: T.enterName };
+    if (!phoneValid()) return { key: 'phone', text: T.enterPhone };
+    return null;
+  }
+
+  function refresh() {
+    var product = state.product;
+    var variant = currentVariant();
+    var source = variant || product;
+
+    refs.price.textContent = money(source.price, product.currency);
+    var onSale = source.compare_at_price > source.price;
+    refs.compare.hidden = !onSale;
+    refs.badge.hidden = !onSale;
+    if (onSale) {
+      refs.compare.textContent = money(source.compare_at_price, product.currency);
+      refs.badge.textContent = '−' + Math.round((1 - source.price / source.compare_at_price) * 100) + '%';
+    }
+    setImage(variant && variant.image);
+
+    if (state.qty > maxQty(variant)) state.qty = maxQty(variant);
+    refs.qtyInput.value = state.qty;
+    dialog.querySelector('[data-qo-qty="-1"]').disabled = state.qty <= 1;
+    dialog.querySelector('[data-qo-qty="1"]').disabled = state.qty >= maxQty(variant);
+
+    if (variant) {
+      refs.stock.hidden = false;
+      var low = variant.stock != null && variant.stock <= 5;
+      refs.stock.textContent = low ? T.low(variant.stock) : T.inStock;
+      refs.stock.classList.toggle('is-low', low);
+    } else {
+      refs.stock.hidden = true;
+    }
+    refs.total.textContent = money(source.price * state.qty, product.currency);
+
+    updateChoices();
+
+    // Підказки під полями
+    setFieldInvalid('name', state.touched.name && !nameValid());
+    setFieldInvalid('phone', state.touched.phone && !phoneValid());
+
+    var missing = firstMissing();
+    // Підсвітка «зверни увагу» гасне, щойно поле виправлено
+    dialog.querySelectorAll('.is-attention').forEach(function (field) {
+      if (!missing || field.dataset.qoField !== missing.key) field.classList.remove('is-attention');
+    });
+    refs.ctaHint.textContent = missing ? missing.text : '';
+    refs.submit.setAttribute('aria-disabled', missing || state.submitting ? 'true' : 'false');
+    refs.submit.classList.toggle('is-loading', state.submitting);
+    refs.submit.setAttribute('aria-busy', state.submitting ? 'true' : 'false');
+  }
+
+  function setFieldInvalid(key, invalid) {
+    var field = dialog.querySelector('[data-qo-field="' + key + '"]');
+    if (field) field.classList.toggle('is-invalid', invalid);
+  }
+
+  function clearFieldStates() {
+    dialog.querySelectorAll('.is-invalid, .is-attention').forEach(function (n) {
+      n.classList.remove('is-invalid', 'is-attention');
+    });
+  }
+
+  function highlightMissing() {
+    var missing = firstMissing();
+    if (!missing) return;
+    if (missing.key === 'name') state.touched.name = true;
+    if (missing.key === 'phone') state.touched.phone = true;
+    refresh();
+    var field = dialog.querySelector('[data-qo-field="' + missing.key + '"]');
+    if (!field) return;
+    field.scrollIntoView({
+      block: 'center',
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+    });
+    field.classList.remove('is-attention');
+    void field.offsetWidth; // перезапуск анімації
+    field.classList.add('is-attention');
+    var focusable = field.querySelector('input, [aria-disabled="false"][tabindex="0"], .qo-choice[aria-disabled="false"]');
+    if (focusable && (missing.key === 'name' || missing.key === 'phone')) focusable.focus({ preventScroll: true });
+  }
+
+  /* ---------- Поля ---------- */
+
+  function onFieldInput() {
+    state.touched.name = state.touched.name || nameValid();
+    hideError();
+    refresh();
+  }
+
+  function onPhoneInput(e) {
+    var d = nationalDigits(refs.phone.value);
+    // Backspace по символу маски (дужка, пробіл) не має «застрягати»
+    if (e.inputType && e.inputType.indexOf('deleteContent') === 0 && d === state.prevDigits && d.length) {
+      d = d.slice(0, -1);
+    }
+    state.prevDigits = d;
+    refs.phone.value = formatNational(d);
+    if (d.length === 9) state.touched.phone = true;
+    hideError();
+    refresh();
+  }
+
+  /* ---------- Робочі години ---------- */
+
+  function isAfterHours() {
+    var h = hourIn(cfg.tz, new Date());
+    return h < cfg.workStart || h >= cfg.workEnd;
+  }
+
+  function hoursText() {
+    return cfg.afterHoursText
+      .replace('{start}', pad(cfg.workStart))
+      .replace('{end}', pad(cfg.workEnd));
+  }
+
+  /* ---------- Відправка ---------- */
+
+  function showError(message) {
+    refs.error.textContent = message;
+    refs.error.hidden = false;
+  }
+  function hideError() {
+    if (refs.error) refs.error.hidden = true;
+  }
+
+  function submit() {
+    if (state.submitting) return;
+    if (firstMissing()) { highlightMissing(); return; }
+    var variant = currentVariant();
+    if (!variant) { highlightMissing(); return; }
+
+    state.submitting = true;
+    hideError();
+    refresh();
+
+    var payload = {
+      product_handle: state.product.handle,
+      variant_id: variant.id,
+      quantity: state.qty,
+      name: refs.name.value.trim(),
+      phone: '+380' + digits(),
+      comment: refs.comment ? refs.comment.value.trim() : '',
+      page_url: window.location.origin + state.product.url,
+      client_id: state.clientId,
+      website: refs.honeypot.value
+    };
+
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, 15000);
+
+    fetch(cfg.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    })
+      .then(function (res) {
+        return res.json().catch(function () { return null; }).then(function (data) {
+          return { ok: res.ok, data: data };
+        });
+      })
+      .then(function (result) {
+        clearTimeout(timer);
+        state.submitting = false;
+        if (result.ok && result.data && result.data.ok) {
+          onSuccess(result.data, variant, payload);
+        } else {
+          onFailure(result.data);
+        }
+      })
+      .catch(function () {
+        clearTimeout(timer);
+        state.submitting = false;
+        showError(T.network);
+        refresh();
+      });
+  }
+
+  function onFailure(data) {
+    if (data && data.code === 'sold_out') {
+      var variant = currentVariant();
+      if (variant) variant.available = false;
+      state.selected = state.selected.map(function (s, i) {
+        return valueAvailable(i, s) ? s : null;
+      });
+      showError(T.soldOutNow);
+    } else {
+      showError((data && data.message) || T.generic);
+      if (data && (data.field === 'name' || data.field === 'phone')) {
+        state.touched[data.field] = true;
+      }
+    }
+    refresh();
+  }
+
+  function onSuccess(data, variant, payload) {
+    writeStore({ name: payload.name, phone: digits() });
+
+    refs.successTitle.textContent = T.thanks(data.order_number);
+    refs.successSummary.textContent = '';
+    var rows = [[T.product, state.product.title]];
+    state.product.options.forEach(function (option, i) {
+      if (state.selected[i] && state.selected[i] !== 'Default Title') rows.push([option.name, state.selected[i]]);
+    });
+    rows.push([T.qty, String(state.qty)]);
+    rows.push([T.total, money(variant.price * state.qty, state.product.currency)]);
+    rows.push([T.phone, '+380 ' + formatNational(digits())]);
+    rows.forEach(function (row) {
+      var line = el('div');
+      line.appendChild(el('dt', '', row[0]));
+      line.appendChild(el('dd', '', row[1]));
+      refs.successSummary.appendChild(line);
+    });
+
+    refs.successNote.textContent = $('[data-qo-note]').textContent;
+    var after = data.after_hours != null ? data.after_hours : isAfterHours();
+    refs.successHours.hidden = !after;
+    if (after) refs.successHours.textContent = hoursText();
+
+    setView('success');
+    refs.body.scrollTop = 0;
+    refs.successTitle.focus({ preventScroll: true });
+
+    var total = (variant.price * state.qty) / 100;
+    document.dispatchEvent(new CustomEvent('quickorder:submitted', {
+      detail: { order_number: data.order_number, value: total, currency: state.product.currency, variant_id: variant.id }
+    }));
+    if (Array.isArray(window.dataLayer)) {
+      window.dataLayer.push({ event: 'quick_order', value: total, currency: state.product.currency });
+    }
+  }
+
+  /* ---------- Свайп вниз (мобільний) ---------- */
+
+  function initSwipe() {
+    var startY = null;
+    var dy = 0;
+    var handles = dialog.querySelectorAll('[data-qo-grabber], [data-qo-swipe]');
+    handles.forEach(function (handle) {
+      handle.addEventListener('touchstart', function (e) {
+        if (!window.matchMedia('(max-width: 640px)').matches) return;
+        startY = e.touches[0].clientY;
+        dy = 0;
+        sheet.classList.add('is-dragging');
+      }, { passive: true });
+      handle.addEventListener('touchmove', function (e) {
+        if (startY == null) return;
+        dy = Math.max(0, e.touches[0].clientY - startY);
+        sheet.style.transform = 'translateY(' + dy + 'px)';
+      }, { passive: true });
+      var end = function () {
+        if (startY == null) return;
+        startY = null;
+        sheet.classList.remove('is-dragging');
+        if (dy > 90) close();
+        else sheet.style.transform = '';
+      };
+      handle.addEventListener('touchend', end);
+      handle.addEventListener('touchcancel', end);
+    });
+  }
+
+  /* ---------- Кнопки на сторінці ---------- */
+
+  document.addEventListener('click', function (e) {
+    var trigger = e.target.closest && e.target.closest('[data-qo-open]');
+    if (!trigger) return;
+    e.preventDefault();
+    e.stopPropagation();
+    open(loadProduct(trigger.dataset.qoProduct), trigger);
+  });
+
+  // Sticky-кнопка внизу екрана, коли основна вийшла з поля зору
+  function initSticky() {
+    if (!('IntersectionObserver' in window)) return;
+    document.querySelectorAll('[data-qo-block]').forEach(function (block) {
+      var sticky = block.querySelector('[data-qo-sticky]');
+      var main = block.querySelector('.qo-trigger');
+      if (!sticky || !main || block.__qoSticky) return;
+      block.__qoSticky = true;
+      new IntersectionObserver(function (entries) {
+        var visible = entries[0].isIntersecting;
+        sticky.classList.toggle('is-visible', !visible);
+        sticky.setAttribute('aria-hidden', visible ? 'true' : 'false');
+        sticky.querySelector('button').tabIndex = visible ? -1 : 0;
+      }).observe(main);
+    });
+  }
+
+  initSticky();
+  document.addEventListener('shopify:section:load', initSticky);
+
+  window.QuickOrder = {
+    open: function (product) { open(product, null); },
+    _test: { nationalDigits: nationalDigits, formatNational: formatNational, money: money, parseColorMap: parseColorMap }
+  };
+})();

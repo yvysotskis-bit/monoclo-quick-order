@@ -1,0 +1,79 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { signParams, verifyProxySignature } from '../server/proxy-signature.js';
+import { RateLimiter } from '../server/rate-limit.js';
+import { formatDateTime, isWorkingTime, orderNumber } from '../server/hours.js';
+import { applyStatus, buildOrderMessage, escapeHtml, statusKeyboard } from '../server/message.js';
+
+test('підпис App Proxy: еталонний приклад з документації Shopify', () => {
+  const params = new URLSearchParams(
+    'extra=1&extra=2&shop=shop-name.myshopify.com&path_prefix=%2Fapps%2Fawesome_reviews&timestamp=1317327555',
+  );
+  // повідомлення: extra=1,2path_prefix=/apps/awesome_reviewsshop=shop-name.myshopify.comtimestamp=1317327555
+  params.set('signature', signParams(params, 'hush'));
+  assert.equal(verifyProxySignature(params, 'hush'), true);
+  assert.equal(verifyProxySignature(params, 'other'), false);
+  params.set('shop', 'evil.myshopify.com');
+  assert.equal(verifyProxySignature(params, 'hush'), false);
+  assert.equal(verifyProxySignature(new URLSearchParams('shop=x'), 'hush'), false);
+});
+
+test('rate limiter: ліміт і відновлення', () => {
+  const rl = new RateLimiter({ limit: 2, windowMs: 1000 });
+  assert.equal(rl.take('a', 0), true);
+  assert.equal(rl.take('a', 10), true);
+  assert.equal(rl.take('a', 20), false);
+  assert.equal(rl.take('b', 20), true);
+  assert.equal(rl.take('a', 1500), true);
+});
+
+test('робочі години Києва (літній і зимовий час)', () => {
+  const cfg = { workStart: 10, workEnd: 20, timezone: 'Europe/Kyiv' };
+  // 2025-07-01 06:59Z = 09:59 Київ (UTC+3)
+  assert.equal(isWorkingTime(new Date('2025-07-01T06:59:00Z'), cfg), false);
+  assert.equal(isWorkingTime(new Date('2025-07-01T07:00:00Z'), cfg), true);
+  assert.equal(isWorkingTime(new Date('2025-07-01T16:59:00Z'), cfg), true);
+  assert.equal(isWorkingTime(new Date('2025-07-01T17:00:00Z'), cfg), false);
+  // зима UTC+2: 2025-01-15 08:00Z = 10:00
+  assert.equal(isWorkingTime(new Date('2025-01-15T08:00:00Z'), cfg), true);
+});
+
+test('номер і дата замовлення', () => {
+  const d = new Date('2025-10-05T18:34:05Z'); // 21:34:05 Київ
+  assert.equal(orderNumber(d, 'Europe/Kyiv'), '20251005-213405');
+  assert.equal(formatDateTime(d, 'Europe/Kyiv'), '05.10.2025 21:34');
+});
+
+test('повідомлення: екранує HTML і містить ключові поля', () => {
+  const text = buildOrderMessage({
+    orderNumber: '1', when: '05.10.2025 21:34', afterHours: true,
+    productTitle: 'Футболка <b>X</b>', options: [{ name: 'Розмір', value: 'S' }],
+    quantity: 2, totalCents: 178000, currency: 'UAH', name: 'A & B', phone: '+380671234567',
+  });
+  assert.match(text, /Футболка &lt;b&gt;X&lt;\/b&gt;/);
+  assert.match(text, /A &amp; B/);
+  assert.match(text, /поза робочим часом/);
+  assert.match(text, /Розмір: S/);
+  assert.equal(escapeHtml('<&>'), '&lt;&amp;&gt;');
+});
+
+test('статус: додається, замінюється і скидається; entities не ламаються', () => {
+  const original = { text: 'Заголовок\nТовар', entities: [{ type: 'bold', offset: 0, length: 9 }] };
+  const taken = applyStatus(original, 'taken', 'Оля', '12:30');
+  assert.match(taken.text, /\n\nСтатус: ✅ В роботі — Оля, 12:30$/);
+  assert.deepEqual(taken.entities, original.entities);
+
+  const spam = applyStatus(taken, 'spam', 'Ігор', '12:31');
+  assert.equal(spam.text.match(/Статус:/g).length, 1);
+  assert.match(spam.text, /❌ Спам/);
+
+  assert.equal(applyStatus(spam, 'reset', 'x', 'y').text, original.text);
+});
+
+test('клавіатура статусу зберігає кнопку товару', () => {
+  const existing = { inline_keyboard: [[{ text: '🔗 Товар', url: 'https://x.test' }], [{ text: 'a', callback_data: 'st:taken' }]] };
+  const kb = statusKeyboard('taken', existing);
+  assert.equal(kb.inline_keyboard[0][0].url, 'https://x.test');
+  assert.equal(kb.inline_keyboard[1][0].callback_data, 'st:reset');
+  assert.equal(statusKeyboard('reset', existing).inline_keyboard[1].length, 2);
+});
