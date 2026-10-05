@@ -133,7 +133,7 @@ export function createApp({ config, fetchFn = fetch, now = () => new Date(), log
       comment: input.comment,
     });
     try {
-      await telegram.sendOrder(text, newOrderKeyboard(productUrl));
+      await telegram.sendOrder(text, newOrderKeyboard(productUrl, input.phone));
     } catch (err) {
       log.error('telegram send failed', err.message);
       throw new HttpError(502, 'upstream', 'Не вдалося відправити замовлення. Спробуйте ще раз');

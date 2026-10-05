@@ -26,10 +26,18 @@ export function buildOrderMessage(o) {
   return lines.join('\n');
 }
 
-export function newOrderKeyboard(productUrl) {
+// Номер у міжнародному форматі без «+»: 380951234567
+const phoneDigits = (phone) => String(phone).replace(/\D/g, '');
+
+export function newOrderKeyboard(productUrl, phone) {
+  const digits = phoneDigits(phone);
   return {
     inline_keyboard: [
       [{ text: '🔗 Товар', url: productUrl }],
+      [
+        { text: '💬 Telegram', url: `https://t.me/+${digits}` },
+        { text: '💬 WhatsApp', url: `https://wa.me/${digits}` },
+      ],
       [
         { text: '✅ Взято в роботу', callback_data: 'st:taken' },
         { text: '❌ Спам', callback_data: 'st:spam' },
@@ -58,8 +66,8 @@ export function applyStatus({ text, entities = [] }, status, actor, time) {
 }
 
 export function statusKeyboard(status, existing) {
-  const urlRow = (existing?.inline_keyboard || []).find((row) => row.some((b) => b.url));
-  const rows = urlRow ? [urlRow.filter((b) => b.url)] : [];
+  // Усі рядки з посиланнями (товар, чати) лишаються, змінюються тільки кнопки статусу
+  const rows = (existing?.inline_keyboard || []).filter((row) => row.every((b) => b.url));
   if (status === 'reset') {
     rows.push([
       { text: '✅ Взято в роботу', callback_data: 'st:taken' },

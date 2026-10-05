@@ -70,12 +70,17 @@ test('статус: додається, замінюється і скидаєт
   assert.equal(applyStatus(spam, 'reset', 'x', 'y').text, original.text);
 });
 
-test('клавіатура статусу зберігає кнопку товару', () => {
-  const existing = { inline_keyboard: [[{ text: '🔗 Товар', url: 'https://x.test' }], [{ text: 'a', callback_data: 'st:taken' }]] };
+test('клавіатура статусу зберігає кнопки товару та чатів', () => {
+  const existing = { inline_keyboard: [
+    [{ text: '🔗 Товар', url: 'https://x.test' }],
+    [{ text: 'TG', url: 'https://t.me/+1' }, { text: 'WA', url: 'https://wa.me/1' }],
+    [{ text: 'a', callback_data: 'st:taken' }],
+  ] };
   const kb = statusKeyboard('taken', existing);
   assert.equal(kb.inline_keyboard[0][0].url, 'https://x.test');
-  assert.equal(kb.inline_keyboard[1][0].callback_data, 'st:reset');
-  assert.equal(statusKeyboard('reset', existing).inline_keyboard[1].length, 2);
+  assert.equal(kb.inline_keyboard[1].length, 2);
+  assert.equal(kb.inline_keyboard[2][0].callback_data, 'st:reset');
+  assert.equal(statusKeyboard('reset', existing).inline_keyboard[2].length, 2);
 });
 
 import { loadConfig } from '../server/config.js';

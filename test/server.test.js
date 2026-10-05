@@ -31,7 +31,10 @@ test('успішне замовлення: ціна береться з мага
   assert.match(msg.body.text, /\+380671234567/);
   assert.match(msg.body.text, /Футболка &lt;Volvo&gt; FH16/);
   assert.match(msg.body.text, /Колір: Чорний/);
-  assert.equal(msg.body.reply_markup.inline_keyboard[1][0].callback_data, 'st:taken');
+  const rows = msg.body.reply_markup.inline_keyboard;
+  assert.equal(rows[1][0].url, 'https://t.me/+380671234567');
+  assert.equal(rows[1][1].url, 'https://wa.me/380671234567');
+  assert.equal(rows[2][0].callback_data, 'st:taken');
 });
 
 test('поза робочим часом позначається', async () => {
