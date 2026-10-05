@@ -115,11 +115,11 @@
           <p class="qo-note" data-qo-success-note></p>
           <p class="qo-note qo-note--hours" data-qo-success-hours hidden></p>
           {%- if s.telegram_url != blank -%}
-            <p class="qo-note qo-note--contact">{{ s.contact_hint | escape }}</p>
+            <p class="qo-note qo-note--contact">{{ s.account_hint | default: 'Ваш особистий кабінет MONOCLO у Telegram: замовлення, звʼязок із менеджером, сповіщення.' | escape }}</p>
           {%- endif -%}
           <div class="qo-success__actions">
             {%- if s.telegram_url != blank -%}
-              <a class="qo-btn" href="{{ s.telegram_url }}" target="_blank" rel="noopener" data-qo-telegram>Написати нам у Telegram</a>
+              <a class="qo-btn" href="{{ s.telegram_url }}" target="_blank" rel="noopener" data-qo-telegram>{{ s.account_label | default: 'Відкрити кабінет у Telegram' | escape }}</a>
               <button type="button" class="qo-btn qo-btn--ghost" data-qo-close>Продовжити покупки</button>
             {%- else -%}
               <button type="button" class="qo-btn" data-qo-close>Продовжити покупки</button>
@@ -292,15 +292,21 @@
     {
       "type": "url",
       "id": "telegram_url",
-      "label": "Telegram магазину (для екрана успіху)",
-      "info": "Кнопка «Написати нам у Telegram» після замовлення. Залиште порожнім, щоб прибрати.",
+      "label": "Telegram-бот магазину (для екрана успіху)",
+      "info": "Кнопка на екрані після замовлення. Залиште порожнім, щоб прибрати.",
       "default": "https://t.me/monoclo_store_bot?start=site"
     },
     {
       "type": "text",
-      "id": "contact_hint",
+      "id": "account_label",
+      "label": "Текст кнопки бота",
+      "default": "Відкрити кабінет у Telegram"
+    },
+    {
+      "type": "text",
+      "id": "account_hint",
       "label": "Підказка над кнопками на екрані успіху",
-      "default": "Хочете отримати відповідь швидше? Напишіть нам у Telegram."
+      "default": "Ваш особистий кабінет MONOCLO у Telegram: замовлення, звʼязок із менеджером, сповіщення."
     },
     {
       "type": "url",

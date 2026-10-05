@@ -128,7 +128,9 @@ async function flow(name, viewport) {
   assert.equal(await tg.isVisible(), true);
   assert.equal(await tg.getAttribute('href'), 'https://t.me/monoclo_store_bot?start=site');
   assert.equal(await tg.getAttribute('target'), '_blank');
-  assert.match(await page.textContent('.qo-note--contact'), /Напишіть нам у Telegram/);
+  assert.match(await page.textContent('.qo-note--contact'), /особистий кабінет MONOCLO у Telegram: замовлення, звʼязок із менеджером/);
+  assert.equal((await tg.textContent()).trim(), 'Відкрити кабінет у Telegram');
+  assert.doesNotMatch(await page.textContent('[data-qo-success-view]'), /Напишіть нам/);
   assert.equal(await page.evaluate(() => window.__lastEvent.value), 1780);
   // Аналітика: GA4 generate_lead, Meta Pixel Lead, dataLayer
   const ga = await page.evaluate(() => window.__ga);
