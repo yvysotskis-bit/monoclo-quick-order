@@ -23,6 +23,13 @@ export function createTelegram({ token, chatId, fetchFn }) {
       link_preview_options: { is_disabled: true },
       reply_markup: replyMarkup,
     }),
+    sendText: (text, { replyTo } = {}) => call('sendMessage', {
+      chat_id: chatId,
+      text,
+      parse_mode: 'HTML',
+      link_preview_options: { is_disabled: true },
+      reply_parameters: replyTo ? { message_id: replyTo, allow_sending_without_reply: true } : undefined,
+    }),
     editMessage: ({ messageId, text, entities, replyMarkup }) => call('editMessageText', {
       chat_id: chatId,
       message_id: messageId,

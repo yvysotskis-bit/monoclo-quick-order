@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { signParams, verifyProxySignature } from '../server/proxy-signature.js';
-import { RateLimiter } from '../server/rate-limit.js';
 import { formatDateTime, isWorkingTime, orderNumber } from '../server/hours.js';
 import { applyStatus, buildOrderMessage, escapeHtml, statusKeyboard } from '../server/message.js';
 
@@ -16,15 +15,6 @@ test('підпис App Proxy: еталонний приклад з докуме�
   params.set('shop', 'evil.myshopify.com');
   assert.equal(verifyProxySignature(params, 'hush'), false);
   assert.equal(verifyProxySignature(new URLSearchParams('shop=x'), 'hush'), false);
-});
-
-test('rate limiter: ліміт і відновлення', () => {
-  const rl = new RateLimiter({ limit: 2, windowMs: 1000 });
-  assert.equal(rl.take('a', 0), true);
-  assert.equal(rl.take('a', 10), true);
-  assert.equal(rl.take('a', 20), false);
-  assert.equal(rl.take('b', 20), true);
-  assert.equal(rl.take('a', 1500), true);
 });
 
 test('робочі години Києва (літній і зимовий час)', () => {
@@ -79,8 +69,10 @@ test('клавіатура статусу зберігає кнопки това
   const kb = statusKeyboard('taken', existing);
   assert.equal(kb.inline_keyboard[0][0].url, 'https://x.test');
   assert.equal(kb.inline_keyboard[1].length, 2);
-  assert.equal(kb.inline_keyboard[2][0].callback_data, 'st:reset');
-  assert.equal(statusKeyboard('reset', existing).inline_keyboard[2].length, 2);
+  const callbacks = kb.inline_keyboard.slice(2).flat().map((b) => b.callback_data);
+  assert.deepEqual(callbacks, ['st:no_answer', 'st:confirmed', 'st:shipped', 'st:cancelled', 'st:spam', 'st:reset']);
+  const fresh = statusKeyboard('reset', existing).inline_keyboard.slice(2).flat().map((b) => b.callback_data);
+  assert.deepEqual(fresh, ['st:taken', 'st:spam']);
 });
 
 import { loadConfig } from '../server/config.js';

@@ -27,6 +27,11 @@
     data-instagram-url="{{ s.instagram_url | escape }}"
     data-after-hours-text="{{ s.after_hours_text | escape }}"
     data-max-qty="10"
+    data-theme-mode="{{ s.theme_mode | default: 'time' }}"
+    data-dark-from="{{ s.dark_from | default: 17 }}"
+    data-light-from="{{ s.light_from | default: 6 }}"
+    data-track-ga="{{ s.track_ga }}"
+    data-track-meta="{{ s.track_meta }}"
   >
     <div class="qo-sheet" tabindex="-1" data-qo-sheet>
       <div class="qo-grabber" data-qo-grabber aria-hidden="true"><span></span></div>
@@ -75,6 +80,13 @@
               </div>
               <p class="qo-hint qo-hint--field" id="qo-phone-hint" data-qo-field-hint="phone">Менеджер звʼяжеться за цим номером</p>
             </div>
+
+            {%- if s.show_city -%}
+              <div class="qo-field">
+                <label class="qo-label" for="qo-city">Місто <span class="qo-optional">(необовʼязково)</span></label>
+                <input class="qo-input" id="qo-city" name="city" type="text" autocomplete="address-level2" placeholder="Наприклад, Київ" maxlength="60" data-qo-city>
+              </div>
+            {%- endif -%}
 
             {%- if s.show_comment -%}
               <div class="qo-field">
@@ -202,7 +214,67 @@
     },
     {
       "type": "header",
+      "content": "Тема попапа"
+    },
+    {
+      "type": "select",
+      "id": "theme_mode",
+      "label": "Світла чи темна",
+      "options": [
+        { "value": "time", "label": "За часом: світла вдень, темна ввечері" },
+        { "value": "auto", "label": "Як у пристрої відвідувача" },
+        { "value": "light", "label": "Завжди світла" },
+        { "value": "dark", "label": "Завжди темна" }
+      ],
+      "default": "time"
+    },
+    {
+      "type": "range",
+      "id": "dark_from",
+      "label": "Темна починається о (Київ)",
+      "min": 0,
+      "max": 23,
+      "step": 1,
+      "unit": "год",
+      "default": 17
+    },
+    {
+      "type": "range",
+      "id": "light_from",
+      "label": "Світла починається о (Київ)",
+      "min": 0,
+      "max": 23,
+      "step": 1,
+      "unit": "год",
+      "default": 6
+    },
+    {
+      "type": "header",
+      "content": "Аналітика"
+    },
+    {
+      "type": "checkbox",
+      "id": "track_ga",
+      "label": "Подія generate_lead в Google Analytics (gtag)",
+      "info": "Працює, якщо на сайті підключено GA4 через gtag. Для Google Tag Manager є подія quick_order у dataLayer.",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "track_meta",
+      "label": "Подія Lead у Meta Pixel",
+      "info": "Рахується як окрема конверсія «Lead» у рекламному кабінеті Facebook/Instagram.",
+      "default": true
+    },
+    {
+      "type": "header",
       "content": "Додатково"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_city",
+      "label": "Показувати поле «Місто» (необовʼязкове)",
+      "default": true
     },
     {
       "type": "url",

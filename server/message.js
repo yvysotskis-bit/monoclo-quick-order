@@ -5,13 +5,25 @@ export const escapeHtml = (value) => String(value)
 
 export function formatMoney(cents, currency = 'UAH') {
   const n = new Intl.NumberFormat('uk-UA', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(cents / 100);
-  return `${n}\u00a0${currency === 'UAH' ? '₴' : currency}`;
+  return `${n} ${currency === 'UAH' ? '₴' : currency}`;
+}
+
+// Джерело трафіку людською мовою: «facebook / cpc / campaign»
+export function describeSource({ utm = {}, referrer = '', click = '' } = {}) {
+  const inferred = { fbclid: 'facebook', gclid: 'google', ttclid: 'tiktok' }[click] || '';
+  const source = utm.source || inferred;
+  const parts = [source, utm.medium, utm.campaign].filter(Boolean);
+  if (parts.length) return parts.join(' / ');
+  return referrer || '';
 }
 
 export function buildOrderMessage(o) {
   const lines = [
     `<b>🛍 Швидке замовлення #${escapeHtml(o.orderNumber)}</b>`,
     `🕒 ${escapeHtml(o.when)}${o.afterHours ? ' · ⏳ <b>поза робочим часом</b>' : ''}`,
+  ];
+  if (o.delayed) lines.push('⚠️ Повідомлення надійшло із затримкою через збій звʼязку');
+  lines.push(
     '',
     `<b>${escapeHtml(o.productTitle)}</b>`,
     ...o.options.map((p) => `${escapeHtml(p.name)}: ${escapeHtml(p.value)}`),
@@ -20,14 +32,34 @@ export function buildOrderMessage(o) {
     '',
     `👤 ${escapeHtml(o.name)}`,
     `📞 ${escapeHtml(o.phone)}`,
-  ];
+  );
+  if (o.city) lines.push(`📍 ${escapeHtml(o.city)}`);
   if (o.comment) lines.push(`💬 ${escapeHtml(o.comment)}`);
-  lines.push('', '#Monoclo');
+  const source = describeSource(o);
+  lines.push('', `📈 ${source ? escapeHtml(source) : 'прямий візит'}`, '#Monoclo');
   return lines.join('\n');
 }
 
 // Номер у міжнародному форматі без «+»: 380951234567
 const phoneDigits = (phone) => String(phone).replace(/\D/g, '');
+
+export const STATUSES = {
+  taken: { label: '✅ В роботі', button: '✅ Взято в роботу' },
+  no_answer: { label: '📵 Не відповів', button: '📵 Не відповів' },
+  confirmed: { label: '👍 Підтверджено', button: '👍 Підтверджено' },
+  shipped: { label: '📦 Відправлено', button: '📦 Відправлено' },
+  cancelled: { label: '🚫 Скасовано', button: '🚫 Скасовано' },
+  spam: { label: '❌ Спам', button: '❌ Спам' },
+};
+export const STATUS_KEYS = Object.keys(STATUSES);
+
+const chunk = (items, size) => {
+  const rows = [];
+  for (let i = 0; i < items.length; i += size) rows.push(items.slice(i, i + size));
+  return rows;
+};
+
+const statusButton = (key) => ({ text: STATUSES[key].button, callback_data: `st:${key}` });
 
 export function newOrderKeyboard(productUrl, phone) {
   const digits = phoneDigits(phone);
@@ -38,19 +70,12 @@ export function newOrderKeyboard(productUrl, phone) {
         { text: '💬 Telegram', url: `https://t.me/+${digits}` },
         { text: '💬 WhatsApp', url: `https://wa.me/${digits}` },
       ],
-      [
-        { text: '✅ Взято в роботу', callback_data: 'st:taken' },
-        { text: '❌ Спам', callback_data: 'st:spam' },
-      ],
+      [statusButton('taken'), statusButton('spam')],
     ],
   };
 }
 
 const STATUS_MARK = 'Статус:';
-const STATUS_TEXT = {
-  taken: '✅ В роботі',
-  spam: '❌ Спам',
-};
 
 // Додає (або замінює) рядок статусу в кінці повідомлення; entities лишаються валідними,
 // бо змінюється лише хвіст тексту.
@@ -60,21 +85,23 @@ export function applyStatus({ text, entities = [] }, status, actor, time) {
   const kept = entities.filter((e) => e.offset + e.length <= base.length);
   if (status === 'reset') return { text: base, entities: kept };
   return {
-    text: `${base}\n\n${STATUS_MARK} ${STATUS_TEXT[status]} — ${actor}, ${time}`,
+    text: `${base}\n\n${STATUS_MARK} ${STATUSES[status].label} — ${actor}, ${time}`,
     entities: kept,
   };
 }
 
+// Усі рядки з посиланнями (товар, чати) лишаються, змінюються тільки кнопки статусу
 export function statusKeyboard(status, existing) {
-  // Усі рядки з посиланнями (товар, чати) лишаються, змінюються тільки кнопки статусу
   const rows = (existing?.inline_keyboard || []).filter((row) => row.every((b) => b.url));
   if (status === 'reset') {
-    rows.push([
-      { text: '✅ Взято в роботу', callback_data: 'st:taken' },
-      { text: '❌ Спам', callback_data: 'st:spam' },
-    ]);
+    rows.push([statusButton('taken'), statusButton('spam')]);
   } else {
+    rows.push(...chunk(STATUS_KEYS.filter((key) => key !== status).map(statusButton), 2));
     rows.push([{ text: '↩️ Повернути в нові', callback_data: 'st:reset' }]);
   }
   return { inline_keyboard: rows };
+}
+
+export function buildReminder(orderNumber, minutes) {
+  return `⏰ Замовлення #${orderNumber} уже ${minutes} хв без відповіді менеджера.\nНатисніть «✅ Взято в роботу», коли почнете його опрацьовувати.`;
 }

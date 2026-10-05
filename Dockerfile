@@ -5,5 +5,4 @@ COPY server ./server
 COPY scripts ./scripts
 ENV NODE_ENV=production
 EXPOSE 3000
-USER node
-CMD ["node", "server/index.js"]
+CMD ["node", "--disable-warning=ExperimentalWarning", "server/index.js"]

@@ -37,32 +37,53 @@ npm run preview:shots    # E2E у Chromium + скріншоти (preview/out/sho
 ## Налаштування
 
 ### 1. Telegram
-1. У @BotFather: `/revoke`, щоб відкликати **старий токен** (він був у коді теми й у Google Doc), і взяти новий.
-2. Заповніть `.env` за зразком `.env.example` (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`).
-3. Після деплою сервера: `node --env-file=.env scripts/set-telegram-webhook.js`: це вмикає кнопки статусу.
+1. У @BotFather створіть бота (`/newbot`) і візьміть токен.
+2. Заповніть змінні `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET` (див. `.env.example`).
+3. Додайте бота адміністратором у групу замовлень.
+4. Після деплою відкрийте в браузері (підставивши свої значення):
+   `https://api.telegram.org/bot<ТОКЕН>/setWebhook?url=<СЕРВЕР>/telegram/webhook&secret_token=<СЕКРЕТ>&allowed_updates=["callback_query"]`
 
 ### 2. Shopify
 1. Створіть додаток у Shopify Dev Dashboard, тип розповсюдження: custom (один магазин).
-2. Підставте `client_id` і адресу сервера в `shopify.app.toml`.
-3. Client secret покладіть у `SHOPIFY_API_SECRET` на сервері: ним підписується App Proxy.
-4. `shopify app deploy`, потім встановіть додаток на магазин `SHOPIFY_SHOP`.
-5. Online Store → Themes → Customize → **App embeds** → увімкніть **Quick Order popup** і заповніть тексти/години.
-6. На шаблоні товару: Product information → Add block → Apps → **Quick Order button**. Повторіть для кожного
-   шаблону товару (худі тощо). Старий код (`show_quick_order`, `{% render 'quick-order' %}`) після перевірки можна прибрати.
+2. `client_id` і адреси сервера вже в `shopify.app.toml`. Client secret → змінна `SHOPIFY_API_SECRET` на сервері.
+3. `npx @shopify/cli@latest app deploy`, потім встановіть додаток на магазин `SHOPIFY_SHOP`.
+4. Customize → **App embeds** → увімкніть **Quick Order popup**; на шаблонах товару додайте блок **Quick Order button**.
 
-### 3. Хостинг
-Сервер без залежностей: `node server/index.js` (є `Dockerfile`). Підійде Fly.io, Render, Railway або VPS.
-Тримайте **один інстанс**: ліміти запитів і захист від дублів зберігаються в памʼяті.
+### 3. Хостинг (Render)
+- Web Service, Docker, гілка з кодом, health check `/healthz`.
+- **Disk:** Mount Path `/data`, 1 GB. Без нього база (замовлення, черга, ліміти) губиться при кожному перезапуску.
+- Один інстанс (SQLite).
 
-## Змінні оточення
-Див. `.env.example`. Обовʼязкові: `SHOPIFY_SHOP`, `SHOPIFY_API_SECRET`, `TELEGRAM_BOT_TOKEN`,
-`TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`.
+### 4. KeyCRM (необовʼязково)
+Змінні `KEYCRM_API_KEY`, `KEYCRM_SOURCE_ID`, за потреби `KEYCRM_STATUS_MAP`. Помилки KeyCRM не зупиняють
+Telegram: замовлення повторно відправляється з чергою, а після 10 невдалих спроб у групу приходить попередження.
+
+### 5. Моніторинг
+- `GET /healthz` для Render (завжди 200, поки процес живий).
+- `GET /status` для зовнішнього моніторингу (UptimeRobot): `503`, якщо база недоступна або замовлення
+  понад 10 хв не може відправитись у Telegram.
+
+## Що вміє сервер
+- **Надійність:** замовлення спершу зберігається в SQLite, потім відправляється. Якщо Telegram/KeyCRM недоступні,
+  черга повторює з наростаючою паузою (30 с … 15 хв); менеджер бачить позначку «надійшло із затримкою».
+- **Статуси:** ✅ В роботі · 📵 Не відповів · 👍 Підтверджено · 📦 Відправлено · 🚫 Скасовано · ❌ Спам. Статус зберігається
+  в базі, дописується в повідомлення і (якщо налаштовано `KEYCRM_STATUS_MAP`) оновлює замовлення в KeyCRM.
+- **Нагадування:** якщо замовлення не взяли в роботу за 15 хв (нічні рахуються від 10:00), бот нагадує в групі
+  кожні 30 хв, до 3 разів, лише в робочий час.
+- **Тижневий звіт:** понеділок 09:00 (Київ): кількість, сума, статуси, середній час відповіді, топ товарів, джерела.
+- **UTM:** мітки реклами запамʼятовуються на 30 днів і потрапляють у Telegram та KeyCRM.
 
 ## Події для аналітики
-Після успішного замовлення: `document` отримує `quickorder:submitted` (`detail`: order_number, value, currency),
-у `dataLayer` (якщо є) додається `{event: 'quick_order'}`. Piksel/GA підключаються на ваш розсуд.
+Після успішного замовлення: подія `quickorder:submitted` на `document`; `dataLayer.push({event: 'quick_order', quick_order: {...}})`
+для Google Tag Manager; `gtag('event', 'generate_lead', …)` для GA4 і `fbq('track', 'Lead', …)` для Meta Pixel
+(вмикаються в налаштуваннях app embed).
+
+## Тема попапа
+За замовчуванням світла з 06:00 до 17:00 за київським часом і темна ввечері та вночі. Режим і години
+змінюються в налаштуваннях app embed (також «як у пристрої», «завжди світла», «завжди темна»).
 
 ## Відомі обмеження
 - Ukrainian-маска телефону (+380); міжнародні номери попап не приймає.
 - Кнопка «Подзвонити» в Telegram неможлива (Telegram не дозволяє `tel:` у кнопках), але номер у тексті клікабельний.
-- Швидке замовлення не створює Draft Order у Shopify (за потреби додається окремим кроком, як і KeyCRM).
+- Швидке замовлення не створює Draft Order у Shopify (за потреби додається окремим кроком).
+- Бази SQLite достатньо для одного сервера; при значному зростанні навантаження варто перейти на PostgreSQL.

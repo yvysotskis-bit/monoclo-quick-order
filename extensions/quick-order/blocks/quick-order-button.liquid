@@ -12,6 +12,7 @@
     data-qo-block
     data-qo-autofit="{{ block.settings.auto_fit }}"
     data-qo-gap="{{ block.settings.gap }}"
+    data-qo-nudge="{{ block.settings.nudge }}"
     {{ block.shopify_attributes }}
   >
     <button
@@ -73,6 +74,7 @@
           {%- for v in qo_product.variants -%}
             {
               "id": {{ v.id }},
+              "sku": {{ v.sku | default: '' | json }},
               "title": {{ v.title | json }},
               "options": {{ v.options | json }},
               "available": {{ v.available | json }},
@@ -128,6 +130,13 @@
       "id": "auto_fit",
       "label": "Підтягнути до кнопки «Додати до кошика»",
       "info": "Автоматично прибирає великий відступ між кнопками. Форма, шрифт і висота кнопки копіюються з кнопки теми.",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "nudge",
+      "label": "Легке підсвічування, якщо довго не натискають",
+      "info": "Кнопка тричі коротко «пульсує», поки відвідувач її не торкнувся. Вимикається, якщо в пристрої вказано «зменшити рух».",
       "default": true
     },
     {

@@ -6,9 +6,9 @@
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "node --watch server/index.js",
-    "test": "node --test \"test/*.test.js\"",
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch server/index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.js\"",
     "telegram:webhook": "node scripts/set-telegram-webhook.js",
     "preview": "node preview/build.js",
     "preview:shots": "node preview/shots.js"

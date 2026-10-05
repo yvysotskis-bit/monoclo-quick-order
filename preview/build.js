@@ -57,7 +57,7 @@ for (const color of Object.keys(colors)) {
   for (const size of sizes) {
     const soldOut = (color === 'Білий' && size === 'XL') || (color === 'Графітовий' && ['S', 'M'].includes(size));
     variants.push({
-      id: id++, title: `${color} / ${size}`, options: [color, size], available: !soldOut,
+      id: id++, sku: `TEE-${color.slice(0, 2)}-${size}`, title: `${color} / ${size}`, options: [color, size], available: !soldOut,
       price: 89000, compare_at_price: 110000, featured_image: color === 'Графітовий' ? null : tee(colors[color]),
       inventory_management: 'shopify', inventory_policy: 'deny',
       inventory_quantity: soldOut ? 0 : color === 'Чорний' && size === 'L' ? 2 : 12,
@@ -114,14 +114,20 @@ const mock = `<script>
       }, 700);
     });
   };
-  if (q.get('hours') === 'off') {
+  // ?hour=N: підміна поточної години (Київ) для перевірки теми й робочого часу; ?hours=off = 23:00
+  var forced = q.get('hours') === 'off' ? 23 : (q.get('hour') !== null ? Number(q.get('hour')) : null);
+  if (forced !== null) {
     var Real = Intl.DateTimeFormat;
     Intl.DateTimeFormat = function (l, o) {
       var f = new Real(l, o);
-      if (o && o.hour === '2-digit' && o.timeZone) return { format: function () { return '23'; } };
+      if (o && o.hour === '2-digit' && o.timeZone) return { format: function () { return String(forced); } };
       return f;
     };
   }
+  // Заглушки аналітики
+  window.__ga = []; window.__fb = []; window.dataLayer = [];
+  window.gtag = function () { window.__ga.push(Array.prototype.slice.call(arguments)); };
+  window.fbq = function () { window.__fb.push(Array.prototype.slice.call(arguments)); };
 })();
 </script>`;
 

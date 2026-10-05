@@ -102,6 +102,60 @@
     return 'qo-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
   }
 
+  /* ---------- Джерело трафіку (UTM) ---------- */
+
+  var ATTR_KEY = 'qo:attribution';
+  var ATTR_TTL = 30 * 24 * 3600 * 1000;
+
+  function readAttribution() {
+    try {
+      var a = JSON.parse(localStorage.getItem(ATTR_KEY));
+      if (a && Date.now() - a.at < ATTR_TTL) return a;
+    } catch (e) { /* приватний режим */ }
+    return null;
+  }
+
+  function writeAttribution(value) {
+    try { localStorage.setItem(ATTR_KEY, JSON.stringify(value)); } catch (e) { /* приватний режим */ }
+  }
+
+  // Запамʼятовуємо, з якої реклами прийшов відвідувач, щоб пізніше показати це в замовленні (30 днів)
+  function captureAttribution() {
+    var q = new URLSearchParams(window.location.search);
+    var utm = {};
+    ['source', 'medium', 'campaign', 'content', 'term'].forEach(function (k) {
+      var v = q.get('utm_' + k);
+      if (v) utm[k] = v.slice(0, 100);
+    });
+    var click = ['fbclid', 'gclid', 'ttclid'].filter(function (k) { return q.has(k); })[0] || '';
+    var referrer = '';
+    try {
+      if (document.referrer) {
+        var host = new URL(document.referrer).hostname.replace(/^www\./, '');
+        if (host && host !== window.location.hostname.replace(/^www\./, '')) referrer = host;
+      }
+    } catch (e) { /* некоректний referrer */ }
+
+    var stored = readAttribution();
+    if (Object.keys(utm).length || click) {
+      writeAttribution({ utm: utm, click: click, referrer: referrer || (stored && stored.referrer) || '', at: Date.now() });
+    } else if (!stored && referrer) {
+      writeAttribution({ utm: {}, click: '', referrer: referrer, at: Date.now() });
+    }
+  }
+
+  // Темна тема: за часом доби, як у пристрої або завжди світла/темна
+  function pickTheme(mode, hour, darkFrom, lightFrom) {
+    if (mode === 'dark' || mode === 'light') return mode;
+    if (mode === 'auto') {
+      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    var dark = darkFrom > lightFrom
+      ? (hour >= darkFrom || hour < lightFrom)
+      : (hour >= darkFrom && hour < lightFrom);
+    return dark ? 'dark' : 'light';
+  }
+
   function el(tag, className, text) {
     var node = document.createElement(tag);
     if (className) node.className = className;
@@ -138,7 +192,12 @@
       sizeGuide: dialog.dataset.sizeGuideUrl || '',
       instagram: dialog.dataset.instagramUrl || '',
       afterHoursText: dialog.dataset.afterHoursText || '',
-      maxQty: Number(dialog.dataset.maxQty) || 10
+      maxQty: Number(dialog.dataset.maxQty) || 10,
+      themeMode: dialog.dataset.themeMode || 'time',
+      darkFrom: isNaN(Number(dialog.dataset.darkFrom)) ? 17 : Number(dialog.dataset.darkFrom),
+      lightFrom: isNaN(Number(dialog.dataset.lightFrom)) ? 6 : Number(dialog.dataset.lightFrom),
+      trackGa: dialog.dataset.trackGa === 'true',
+      trackMeta: dialog.dataset.trackMeta === 'true'
     };
     refs = {
       form: $('[data-qo-form]'),
@@ -153,6 +212,7 @@
       name: $('[data-qo-name]'),
       phone: $('[data-qo-phone]'),
       comment: $('[data-qo-comment]'),
+      city: $('[data-qo-city]'),
       honeypot: $('[data-qo-honeypot]'),
       total: $('[data-qo-total]'),
       submit: $('[data-qo-submit]'),
@@ -235,6 +295,8 @@
     refs.phone.value = formatNational(nationalDigits(saved.phone || ''));
     state.prevDigits = nationalDigits(refs.phone.value);
     if (refs.comment) refs.comment.value = '';
+    if (refs.city) refs.city.value = saved.city || '';
+    dialog.dataset.theme = pickTheme(cfg.themeMode, hourIn(cfg.tz, new Date()), cfg.darkFrom, cfg.lightFrom);
     refs.honeypot.value = '';
 
     clearFieldStates();
@@ -622,6 +684,10 @@
       name: refs.name.value.trim(),
       phone: '+380' + digits(),
       comment: refs.comment ? refs.comment.value.trim() : '',
+      city: refs.city ? refs.city.value.trim() : '',
+      utm: (readAttribution() || {}).utm || {},
+      referrer: (readAttribution() || {}).referrer || '',
+      click: (readAttribution() || {}).click || '',
       page_url: window.location.origin + state.product.url,
       client_id: state.clientId,
       website: refs.honeypot.value
@@ -676,7 +742,7 @@
   }
 
   function onSuccess(data, variant, payload) {
-    writeStore({ name: payload.name, phone: digits() });
+    writeStore({ name: payload.name, phone: digits(), city: payload.city });
 
     refs.successTitle.textContent = T.thanks(data.order_number);
     refs.successSummary.textContent = '';
@@ -703,13 +769,35 @@
     refs.body.scrollTop = 0;
     refs.successTitle.focus({ preventScroll: true });
 
+    track(data, variant);
+  }
+
+  // Події для аналітики: customEvent, dataLayer (GTM), Google Analytics 4 і Meta Pixel
+  function track(data, variant) {
+    var product = state.product;
     var total = (variant.price * state.qty) / 100;
-    document.dispatchEvent(new CustomEvent('quickorder:submitted', {
-      detail: { order_number: data.order_number, value: total, currency: state.product.currency, variant_id: variant.id }
-    }));
-    if (Array.isArray(window.dataLayer)) {
-      window.dataLayer.push({ event: 'quick_order', value: total, currency: state.product.currency });
-    }
+    var detail = {
+      order_number: data.order_number, value: total, currency: product.currency,
+      variant_id: variant.id, sku: variant.sku || '', item_name: product.title, quantity: state.qty
+    };
+    try {
+      document.dispatchEvent(new CustomEvent('quickorder:submitted', { detail: detail }));
+      if (Array.isArray(window.dataLayer)) {
+        window.dataLayer.push({ event: 'quick_order', quick_order: detail });
+      }
+      if (cfg.trackGa && typeof window.gtag === 'function') {
+        window.gtag('event', 'generate_lead', {
+          currency: product.currency, value: total, transaction_id: data.order_number,
+          items: [{ item_id: variant.sku || String(variant.id), item_name: product.title, quantity: state.qty, price: variant.price / 100 }]
+        });
+      }
+      if (cfg.trackMeta && typeof window.fbq === 'function') {
+        window.fbq('track', 'Lead', {
+          value: total, currency: product.currency, content_name: product.title,
+          content_ids: [String(variant.id)], content_type: 'product'
+        }, { eventID: data.order_number });
+      }
+    } catch (e) { /* аналітика ніколи не ламає замовлення */ }
   }
 
   /* ---------- Свайп вниз (мобільний) ---------- */
@@ -878,11 +966,58 @@
     });
   }
 
+  // М'яке підсвічування кнопки, якщо відвідувач довго не натискає (не більше 3 разів, не при reduce motion)
+  function initNudge() {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    document.querySelectorAll('[data-qo-block]').forEach(function (block) {
+      var btn = block.querySelector('.qo-trigger');
+      if (block.dataset.qoNudge !== 'true' || !btn || block.__qoNudge) return;
+      block.__qoNudge = true;
+
+      var visible = false;
+      var shown = 0;
+      var loops = 0;
+      var done = false;
+      var timer;
+      if ('IntersectionObserver' in window) {
+        new IntersectionObserver(function (entries) { visible = entries[0].isIntersecting; }, { threshold: 0.6 }).observe(btn);
+      } else {
+        visible = true;
+      }
+      var stop = function () {
+        done = true;
+        clearTimeout(timer);
+        btn.classList.remove('is-nudging');
+      };
+      ['pointerenter', 'focus', 'click', 'touchstart'].forEach(function (name) {
+        btn.addEventListener(name, stop, { passive: true });
+      });
+      btn.addEventListener('animationend', function () { btn.classList.remove('is-nudging'); });
+
+      var schedule = function (delay) {
+        timer = setTimeout(function () {
+          if (done || shown >= 3 || loops++ > 30) return;
+          var modalOpen = dialog && dialog.open;
+          if (visible && !modalOpen && !document.hidden) {
+            shown += 1;
+            btn.classList.remove('is-nudging');
+            void btn.offsetWidth;
+            btn.classList.add('is-nudging');
+          }
+          schedule(12000);
+        }, delay);
+      };
+      schedule(8000);
+    });
+  }
+
+  captureAttribution();
   initSticky();
-  document.addEventListener('shopify:section:load', initSticky);
+  initNudge();
+  document.addEventListener('shopify:section:load', function () { initSticky(); initNudge(); });
 
   window.QuickOrder = {
     open: function (product) { open(product, null); },
-    _test: { nationalDigits: nationalDigits, formatNational: formatNational, money: money, parseColorMap: parseColorMap }
+    _test: { nationalDigits: nationalDigits, formatNational: formatNational, money: money, parseColorMap: parseColorMap, pickTheme: pickTheme }
   };
 })();

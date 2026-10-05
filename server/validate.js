@@ -29,6 +29,16 @@ function cleanText(raw, max) {
 
 const fail = (code, message, field) => ({ ok: false, code, message, field });
 
+// UTM-мітки й джерело: короткі рядки без розмітки
+function cleanUtm(raw) {
+  const utm = {};
+  for (const key of ['source', 'medium', 'campaign', 'content', 'term']) {
+    const value = cleanText(raw?.[key], 100);
+    if (value) utm[key] = value;
+  }
+  return utm;
+}
+
 export function validateSubmission(body, { maxQty }) {
   if (!body || typeof body !== 'object') return fail('bad_request', 'Некоректний запит');
 
@@ -56,10 +66,17 @@ export function validateSubmission(body, { maxQty }) {
     ? body.client_id
     : '';
 
+  const city = cleanText(body.city, 60);
+  const click = ['fbclid', 'gclid', 'ttclid'].includes(body.click) ? body.click : '';
+
   return {
     ok: true,
     value: {
       handle,
+      city,
+      utm: cleanUtm(body.utm),
+      referrer: cleanText(body.referrer, 100),
+      click,
       variantId,
       quantity,
       name,
