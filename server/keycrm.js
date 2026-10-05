@@ -62,6 +62,15 @@ export function createKeycrm({ token, sourceId, statusMap = {}, fetchFn }) {
       if (!data.id) throw new Error('KeyCRM не повернув id замовлення');
       return data.id;
     },
+    // Фіксує оплату в замовленні (наприклад, передоплату через Monobank)
+    async addPayment(crmOrderId, { methodId, amountUah, description }) {
+      await call('POST', `/order/${crmOrderId}/payment`, {
+        payment_method_id: methodId,
+        amount: amountUah,
+        status: 'paid',
+        description,
+      });
+    },
     // Повертає false, якщо для цього статусу не налаштовано відповідника в KeyCRM
     async updateStatus(crmOrderId, status) {
       const statusId = statusMap[status];

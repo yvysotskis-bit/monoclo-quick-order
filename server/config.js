@@ -48,6 +48,12 @@ export function loadConfig(env = process.env) {
     keycrmSourceId: number('KEYCRM_SOURCE_ID', 216),
     keycrmStatusMap: parseJson(optional('KEYCRM_STATUS_MAP'), 'KEYCRM_STATUS_MAP'),
 
+    // Передоплата через Monobank (Plata by mono): без токена кнопка «Передоплата» не показується
+    monobankToken: optional('MONOBANK_TOKEN'),
+    prepayAmountUah: number('PREPAY_AMOUNT_UAH', 200),
+    payValiditySeconds: number('PAY_VALIDITY_HOURS', 24) * 3600,
+    keycrmPaymentMethodId: number('KEYCRM_PAYMENT_METHOD_ID', 0),
+
     // Нагадування про замовлення без відповіді
     reminderMinutes: number('REMINDER_MINUTES', 15),
     reminderRepeatMinutes: number('REMINDER_REPEAT_MINUTES', 30),

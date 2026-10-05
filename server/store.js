@@ -42,6 +42,24 @@ function hydrate(row) {
   return row ? { ...row, data: JSON.parse(row.data) } : null;
 }
 
+// Нові колонки додаються до вже існуючої бази без втрати даних
+const ADDED_COLUMNS = {
+  pay_invoice_id: 'TEXT',
+  pay_url: 'TEXT',
+  pay_status: 'TEXT',
+  pay_amount: 'INTEGER',
+  pay_created_at: 'INTEGER',
+  pay_paid_at: 'INTEGER',
+};
+
+function migrate(db) {
+  const existing = new Set(db.prepare('PRAGMA table_info(orders)').all().map((c) => c.name));
+  for (const [name, type] of Object.entries(ADDED_COLUMNS)) {
+    if (!existing.has(name)) db.exec(`ALTER TABLE orders ADD COLUMN ${name} ${type}`);
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS orders_invoice ON orders (pay_invoice_id)');
+}
+
 export class Store {
   constructor(db) {
     this.db = db;
@@ -166,6 +184,24 @@ export class Store {
     return giveUp;
   }
 
+  /* ---- оплата ---- */
+
+  findByInvoiceId(invoiceId) {
+    return this.one('SELECT * FROM orders WHERE pay_invoice_id = ? ORDER BY id DESC LIMIT 1', invoiceId);
+  }
+
+  setPayment(id, { invoiceId, url, status, amount, createdAt }) {
+    this.run(
+      `UPDATE orders SET pay_invoice_id = ?, pay_url = ?, pay_status = ?, pay_amount = ?,
+         pay_created_at = ?, pay_paid_at = NULL WHERE id = ?`,
+      invoiceId, url, status, amount, createdAt, id,
+    );
+  }
+
+  setPayStatus(id, status, paidAt = null) {
+    this.run('UPDATE orders SET pay_status = ?, pay_paid_at = COALESCE(?, pay_paid_at) WHERE id = ?', status, paidAt, id);
+  }
+
   /* ---- статуси ---- */
 
   setStatus(id, status, by, at) {
@@ -216,5 +252,6 @@ export function openStore(file) {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;');
   db.exec(SCHEMA);
+  migrate(db);
   return new Store(db);
 }

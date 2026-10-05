@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { signParams } from '../server/proxy-signature.js';
 import { createApp } from '../server/app.js';
 import { openStore } from '../server/store.js';
@@ -21,12 +22,21 @@ export const config = {
   keycrmToken: '',
   keycrmSourceId: 216,
   keycrmStatusMap: {},
+  keycrmPaymentMethodId: 0,
+  monobankToken: '',
+  prepayAmountUah: 200,
+  payValiditySeconds: 86400,
   reminderMinutes: 15,
   reminderRepeatMinutes: 30,
   reminderMax: 3,
   reportDay: 1,
   reportHour: 9,
 };
+
+// Пара ключів, якою «банк» підписує вебхуки в тестах
+const monoKeys = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+const monoPublicPem = monoKeys.publicKey.export({ type: 'spki', format: 'pem' });
+export const signMono = (raw) => crypto.sign('sha256', Buffer.from(raw), monoKeys.privateKey).toString('base64');
 
 export const product = {
   handle: 'tee',
@@ -76,6 +86,14 @@ export function mockFetch({ productResponse } = {}) {
       if (fn.fail.telegram) return Response.json({ ok: false, description: 'Bad Gateway' }, { status: 502 });
       return Response.json({ ok: true, result: { message_id: ++messageId } });
     }
+    if (u.startsWith('https://api.monobank.ua/')) {
+      if (fn.fail.monobank) return new Response('{"errText":"boom"}', { status: 500 });
+      if (u.endsWith('/pubkey')) return Response.json({ key: Buffer.from(monoPublicPem).toString('base64') });
+      if (u.endsWith('/invoice/create')) {
+        fn.invoices += 1;
+        return Response.json({ invoiceId: `inv-${fn.invoices}`, pageUrl: `https://pay.mono.bank/inv-${fn.invoices}` });
+      }
+    }
     if (u.startsWith('https://openapi.keycrm.app/')) {
       if (fn.fail.keycrm) return new Response('{"message":"boom"}', { status: 500 });
       return Response.json({ id: 777 });
@@ -83,7 +101,9 @@ export function mockFetch({ productResponse } = {}) {
     throw new Error(`unexpected fetch ${u}`);
   };
   fn.calls = calls;
-  fn.fail = { telegram: false, keycrm: false };
+  fn.fail = { telegram: false, keycrm: false, monobank: false };
+  fn.invoices = 0;
+  fn.mono = () => calls.filter((c) => c.url.includes('api.monobank.ua') && c.url.endsWith('/invoice/create'));
   fn.tg = (method) => calls.filter((c) => c.url.includes('api.telegram.org') && c.url.endsWith(`/${method}`));
   fn.crm = () => calls.filter((c) => c.url.includes('keycrm.app'));
   return fn;
@@ -110,9 +130,10 @@ export function makeApp({ cfg = {}, fetchOpts, at = '2025-10-05T12:00:00Z' } = {
 }
 
 // Виклик handle() без реального сокета
-export async function call(app, { method = 'POST', url, body, headers = {} }) {
+export async function call(app, { method = 'POST', url, body, rawBody, headers = {} }) {
   const { Readable } = await import('node:stream');
-  const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
+  const payload = rawBody ?? (body === undefined ? null : JSON.stringify(body));
+  const req = Readable.from(payload === null ? [] : [Buffer.from(payload)]);
   Object.assign(req, { method, url, headers, socket: { remoteAddress: '1.2.3.4' } });
   const res = {
     status: 0,
