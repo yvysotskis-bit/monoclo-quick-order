@@ -1,7 +1,7 @@
 # Monoclo Quick Order: кастомний додаток для одного магазину.
 # Замініть значення REPLACE_* після створення додатка в Dev Dashboard (див. README).
 name = "Monoclo Quick Order"
-client_id = "REPLACE_WITH_CLIENT_ID"
+client_id = "936835f792c250fbc95a72e7f4930efa"
 application_url = "https://REPLACE_WITH_YOUR_SERVER"
 embedded = false
 
