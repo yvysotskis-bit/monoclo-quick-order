@@ -43,8 +43,15 @@ async function flow(name, viewport) {
   assert.match(await page.textContent('[data-qo-note]'), /Менеджер зв'яжеться з вами, як тільки звільниться/);
   await shot('1-open');
 
-  // Колір → розмір; недоступні розміри для графітового
+  // Фото змінюється вже при виборі кольору (без розміру), навіть якщо в варіанта немає власного фото
+  const imgSrc = () => page.getAttribute('[data-qo-image]', 'src');
+  await page.click('.qo-choice[data-qo-value="Білий"]');
+  await page.waitForFunction(() => document.querySelector('[data-qo-image]').src.includes('%23ffffff'));
   await page.click('.qo-choice[data-qo-value="Графітовий"]');
+  await page.waitForFunction(() => document.querySelector('[data-qo-image]').src.includes('%233b3b3d'));
+  assert.ok((await imgSrc()).includes('%233b3b3d'));
+
+  // Колір → розмір; недоступні розміри для графітового
   assert.equal(await page.textContent('[data-qo-cta-hint]'), 'Оберіть розмір');
   assert.equal(await page.getAttribute('.qo-choice[data-qo-value="S"]', 'aria-disabled'), 'true');
   assert.equal(await page.getAttribute('.qo-choice[data-qo-value="L"]', 'aria-disabled'), 'false');
@@ -154,6 +161,40 @@ for (const mode of ['network', 'soldout', 'invalid']) {
   assert.equal(await page.isVisible('[data-qo-hours-note]'), true);
   assert.match(await page.textContent('[data-qo-hours-note]'), /з 10:00 до 20:00/);
   await shot('open');
+  await ctx.close();
+}
+
+// Кнопка копіює вигляд кнопки теми і стоїть упритул до неї
+for (const theme of ['pill', 'square']) {
+  const { page, ctx, shot, errors } = await session(`theme-${theme}`, { width: 390, height: 844 }, theme === 'square' ? '?theme=square' : '');
+  await page.waitForTimeout(1000);
+  const m = await page.evaluate(() => {
+    const css = (el) => getComputedStyle(el);
+    const ref = document.querySelector('form[action="/cart/add"] button');
+    const ours = document.querySelector('.qo-block .qo-trigger');
+    const pay = document.getElementById('pay');
+    const r = (el) => el.getBoundingClientRect();
+    return {
+      refRadius: css(ref).borderTopLeftRadius, ourRadius: css(ours).borderTopLeftRadius,
+      refWeight: css(ref).fontWeight, ourWeight: css(ours).fontWeight,
+      refSize: css(ref).fontSize, ourSize: css(ours).fontSize,
+      refHeight: Math.round(r(ref).height), ourHeight: Math.round(r(ours).height),
+      gapAbove: Math.round(r(ours).top - r(ref).bottom), gapBelow: Math.round(r(pay).top - r(ours).bottom),
+    };
+  });
+  assert.equal(m.ourRadius, m.refRadius, theme + ' radius');
+  assert.equal(m.ourWeight, m.refWeight, theme + ' weight');
+  assert.equal(m.ourSize, m.refSize, theme + ' size');
+  assert.equal(m.ourHeight, m.refHeight, theme + ' height');
+  assert.ok(Math.abs(m.gapAbove - 12) <= 1, theme + ' gap above ' + m.gapAbove);
+  assert.ok(Math.abs(m.gapBelow - 12) <= 1, theme + ' gap below ' + m.gapBelow);
+  await shot('page');
+  // Попап: кнопка «Замовити» теж у формі теми
+  await open(page);
+  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('[data-qo-submit]')).borderTopLeftRadius),
+    m.refRadius);
+  await shot('popup');
+  assert.deepEqual(errors, []);
   await ctx.close();
 }
 

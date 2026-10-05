@@ -62,6 +62,13 @@ export function createApp({ config, fetchFn = fetch, now = () => new Date(), log
   async function submit(req, url) {
     // 1. Запит має прийти через App Proxy свого магазину
     if (!verifyProxySignature(url.searchParams, config.apiSecret)) {
+      // Без самого секрету: лише те, що допомагає знайти причину
+      log.error('bad proxy signature', JSON.stringify({
+        hasSignature: url.searchParams.has('signature'),
+        params: [...new Set(url.searchParams.keys())],
+        secretLength: config.apiSecret.length,
+        secretPrefix: config.apiSecret.slice(0, 3),
+      }));
       throw new HttpError(401, 'unauthorized', 'Недійсний підпис');
     }
     const age = Math.abs(Date.now() / 1000 - Number(url.searchParams.get('timestamp')));

@@ -1,6 +1,7 @@
 export function loadConfig(env = process.env) {
   const required = (key) => {
-    const value = env[key];
+    // Зайві пробіли й переноси рядків при копіюванні в Render ламають секрети
+    const value = env[key]?.trim();
     if (!value) throw new Error(`Не задано змінну оточення ${key}`);
     return value;
   };

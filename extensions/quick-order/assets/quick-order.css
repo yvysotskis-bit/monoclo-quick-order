@@ -21,23 +21,25 @@
 .qo-trigger {
   display: block;
   width: 100%;
+  box-sizing: border-box;
   margin: 0;
   padding: 0 24px;
-  min-height: 44px;
-  border: 1px solid var(--qo-accent, #000);
-  border-radius: var(--qo-radius, 2px);
-  font: inherit;
-  font-size: 12px;
+  min-height: var(--qo-btn-height, 44px);
+  border: var(--qo-btn-border, 1px) solid var(--qo-btn-accent, #000);
+  border-radius: var(--qo-btn-radius, var(--qo-radius, 2px));
+  font-family: var(--qo-btn-font, inherit);
+  font-weight: var(--qo-btn-weight, 400);
+  font-size: var(--qo-btn-size, 12px);
   line-height: 1.2;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: var(--qo-btn-spacing, 0.05em);
+  text-transform: var(--qo-btn-transform, uppercase);
   cursor: pointer;
   transition: background-color 0.2s, color 0.2s, opacity 0.2s;
 }
-.qo-trigger--solid { background: #000; color: #fff; border-color: #000; }
-.qo-trigger--solid:hover { background: #222; }
-.qo-trigger--outline { background: transparent; color: #000; border-color: #000; }
-.qo-trigger--outline:hover { background: #000; color: #fff; }
+.qo-trigger--solid { background: var(--qo-btn-accent, #000); color: var(--qo-btn-on-accent, #fff); }
+.qo-trigger--solid:hover { opacity: 0.88; }
+.qo-trigger--outline { background: transparent; color: var(--qo-btn-accent, #000); }
+.qo-trigger--outline:hover { background: var(--qo-btn-accent, #000); color: var(--qo-btn-on-accent, #fff); }
 .qo-trigger:focus-visible { outline: 2px solid #000; outline-offset: 2px; }
 
 .qo-editor-note {
@@ -287,7 +289,7 @@ html.qo-lock { overflow: hidden; }
   min-height: 44px;
   padding: 0 14px;
   border: 1px solid #000;
-  border-radius: var(--qo-radius);
+  border-radius: var(--qo-btn-radius, var(--qo-radius));
   background: #fff;
   color: #000;
   font: inherit;
@@ -342,7 +344,8 @@ html.qo-lock { overflow: hidden; }
   width: fit-content;
   height: 44px;
   border: 1px solid #000;
-  border-radius: var(--qo-radius);
+  border-radius: var(--qo-btn-radius, var(--qo-radius));
+  overflow: hidden;
 }
 .qo-qty__btn {
   width: 44px;
@@ -384,7 +387,7 @@ html.qo-lock { overflow: hidden; }
   min-height: 48px;
   padding: 12px 14px;
   border: 1px solid #cfcfcf;
-  border-radius: var(--qo-radius);
+  border-radius: var(--qo-input-radius, var(--qo-radius));
   background: #fff;
   color: var(--qo-ink);
   font: inherit;
@@ -477,13 +480,14 @@ html.qo-lock { overflow: hidden; }
   min-height: 52px;
   padding: 0 24px;
   border: 0;
-  border-radius: var(--qo-radius);
+  border-radius: var(--qo-btn-radius, var(--qo-radius));
   background: var(--qo-accent);
   color: #fff;
-  font: inherit;
+  font-family: var(--qo-btn-font, inherit);
+  font-weight: var(--qo-btn-weight, 400);
   font-size: 13px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: var(--qo-btn-spacing, 0.08em);
+  text-transform: var(--qo-btn-transform, uppercase);
   cursor: pointer;
   transition: opacity 0.2s, background-color 0.2s;
 }
@@ -562,16 +566,17 @@ html.qo-lock { overflow: hidden; }
   min-height: 48px;
   padding: 0 24px;
   border: 1px solid #000;
-  border-radius: var(--qo-radius);
+  border-radius: var(--qo-btn-radius, var(--qo-radius));
   background: #000;
   color: #fff;
-  font: inherit;
+  font-family: var(--qo-btn-font, inherit);
+  font-weight: var(--qo-btn-weight, 400);
   font-size: 12px;
   line-height: 46px;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--qo-btn-spacing, 0.08em);
   text-align: center;
   text-decoration: none;
-  text-transform: uppercase;
+  text-transform: var(--qo-btn-transform, uppercase);
   cursor: pointer;
 }
 .qo-btn--ghost { background: #fff; color: #000; }

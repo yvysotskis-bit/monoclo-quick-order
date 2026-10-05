@@ -30,7 +30,7 @@ const engine = new Liquid({ strictVariables: false, strictFilters: true });
 engine.registerTag('schema', SchemaTag);
 engine.registerFilter('asset_url', (name) => `../../extensions/quick-order/assets/${name}`);
 engine.registerFilter('stylesheet_tag', (url) => `<link rel="stylesheet" href="${url}">`);
-engine.registerFilter('image_url', (src) => src);
+engine.registerFilter('image_url', (src) => (src && typeof src === 'object' ? src.src : src));
 
 function schemaOf(source) {
   const m = source.match(/\{%\s*schema\s*%\}([\s\S]*?)\{%\s*endschema\s*%\}/);
@@ -58,7 +58,7 @@ for (const color of Object.keys(colors)) {
     const soldOut = (color === 'Білий' && size === 'XL') || (color === 'Графітовий' && ['S', 'M'].includes(size));
     variants.push({
       id: id++, title: `${color} / ${size}`, options: [color, size], available: !soldOut,
-      price: 89000, compare_at_price: 110000, featured_image: tee(colors[color]),
+      price: 89000, compare_at_price: 110000, featured_image: color === 'Графітовий' ? null : tee(colors[color]),
       inventory_management: 'shopify', inventory_policy: 'deny',
       inventory_quantity: soldOut ? 0 : color === 'Чорний' && size === 'L' ? 2 : 12,
     });
@@ -75,6 +75,7 @@ const product = {
   variants,
 };
 product.selected_or_first_available_variant = variants[0];
+product.images = Object.keys(colors).map((c) => ({ src: tee(colors[c]), alt: `Худі ${c.toLowerCase()} спереду` }));
 
 const read = (f) => fs.readFileSync(path.join(blocksDir, f), 'utf8');
 async function render(file, overrides = {}) {
@@ -136,20 +137,25 @@ const page = `<!doctype html>
   .pdp img{width:100%;display:block}
   .info h1{font-size:20px;font-weight:600;margin:0 0 8px}
   .price{font-size:18px;margin:0 0 20px}.price s{color:#999;margin-left:8px}
-  .btn{display:block;width:100%;box-sizing:border-box;min-height:44px;margin:0 0 10px;border:1px solid #000;background:#000;color:#fff;font:inherit;font-size:12px;letter-spacing:.05em;text-transform:uppercase}
-  .btn.alt{background:#fff;color:#000}
+  .info{display:flex;flex-direction:column;gap:34px}
+  .info form{margin:0}
+  /* Тема-«пігулка», як на сайті Monoclo */
+  .btn{display:block;width:100%;box-sizing:border-box;min-height:56px;border:2px solid #000;border-radius:999px;background:transparent;color:#000;font:700 15px/1.2 -apple-system,Segoe UI,Arial,sans-serif;letter-spacing:.02em;text-transform:uppercase;cursor:pointer}
+  body.theme-square .btn{border-radius:2px;background:#000;color:#fff;font-weight:500;letter-spacing:.06em;border-width:1px}
   .filler{height:900px}
   @media(max-width:749px){.pdp{grid-template-columns:1fr;padding:16px;gap:20px}header{padding:14px 16px}header span{display:none}}
 </style></head>
 <body>
+<script>if (new URLSearchParams(location.search).get('theme') === 'square') document.body.classList.add('theme-square');</script>
 <header><b>MONOCLO</b><span>Printed T-shirts</span><span>Hoodies</span><span>Sale</span></header>
 <main class="pdp">
   <div><img src="${product.featured_image}" alt=""></div>
   <div class="info">
     <h1>${product.title}</h1>
     <p class="price">₴890,00 <s>₴1 100,00</s></p>
-    <button class="btn">Додати в кошик</button>
+    <form action="/cart/add" method="post"><button type="submit" name="add" class="btn">Додати до кошика</button></form>
     ${button}
+    <button class="btn" id="pay">Оплата частинами</button>
     <div class="filler"></div>
   </div>
 </main>

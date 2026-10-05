@@ -427,6 +427,35 @@
     refresh();
   }
 
+  // Яке фото показати: фото варіанта → фото першого варіанта з обраним кольором →
+  // фото товару, в описі (alt) якого згадано колір → головне фото товару.
+  function imageForSelection() {
+    var product = state.product;
+    var variant = currentVariant();
+    if (variant && variant.image) return variant.image;
+
+    var colors = [];
+    product.options.forEach(function (option, i) {
+      if (COLOR_OPTION.test(option.name) && state.selected[i] != null) {
+        colors.push({ index: i, value: state.selected[i] });
+      }
+    });
+    if (!colors.length) return null;
+
+    var matching = product.variants.filter(function (v) {
+      return v.image && colors.every(function (c) { return v.options[c.index] === c.value; });
+    });
+    var preferred = matching.filter(function (v) { return v.available; })[0] || matching[0];
+    if (preferred) return preferred.image;
+
+    var names = colors.map(function (c) { return c.value.toLowerCase(); });
+    var byAlt = (product.images || []).filter(function (img) {
+      var alt = (img.alt || '').toLowerCase();
+      return alt && names.every(function (n) { return alt.indexOf(n) !== -1; });
+    })[0];
+    return byAlt ? byAlt.src : null;
+  }
+
   function setImage(src) {
     var next = src || state.product.image || '';
     if (!next || refs.image.getAttribute('src') === next) return;
@@ -468,7 +497,7 @@
       refs.compare.textContent = money(source.compare_at_price, product.currency);
       refs.badge.textContent = '−' + Math.round((1 - source.price / source.compare_at_price) * 100) + '%';
     }
-    setImage(variant && variant.image);
+    setImage(imageForSelection());
 
     if (state.qty > maxQty(variant)) state.qty = maxQty(variant);
     refs.qtyInput.value = state.qty;
@@ -722,6 +751,115 @@
     e.stopPropagation();
     open(loadProduct(trigger.dataset.qoProduct), trigger);
   });
+
+  /* ---------- Підгонка під тему ---------- */
+
+  // Копіюємо вигляд кнопки «Додати до кошика»: форму, рамку, шрифт, висоту.
+  // Так кнопка швидкого замовлення виглядає рідною в будь-якій темі.
+  var REF_SELECTORS = [
+    'form[action*="/cart/add"] button[type="submit"]',
+    'form[action*="/cart/add"] [name="add"]',
+    '.product-form__submit',
+    'button[name="add"]'
+  ];
+
+  function parseRgb(value) {
+    var m = String(value).match(/rgba?\(([^)]+)\)/);
+    if (!m) return null;
+    var p = m[1].split(/[ ,\/]+/).filter(Boolean).map(parseFloat);
+    return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+  }
+
+  function isOpaque(c) { return c && c.a > 0.05; }
+
+  function onAccent(c) {
+    if (!c) return '#fff';
+    var lum = (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255;
+    return lum > 0.6 ? '#000' : '#fff';
+  }
+
+  function findReference(blocks) {
+    var triggerTop = blocks[0].querySelector('.qo-trigger').getBoundingClientRect().top;
+    var best = null;
+    var fallback = null;
+    REF_SELECTORS.forEach(function (selector) {
+      document.querySelectorAll(selector).forEach(function (node) {
+        if (node.closest('.qo-root, .qo-block')) return;
+        var rect = node.getBoundingClientRect();
+        if (rect.width < 40 || rect.height < 20) return;
+        fallback = fallback || node;
+        // Найближча основна кнопка над нашою
+        if (rect.bottom <= triggerTop + 1 && (!best || rect.bottom > best.getBoundingClientRect().bottom)) best = node;
+      });
+    });
+    return { style: best || fallback, above: best };
+  }
+
+  function matchTheme() {
+    var blocks = document.querySelectorAll('[data-qo-block]');
+    if (!blocks.length) return;
+    var ref = findReference(blocks);
+    if (!ref.style) return;
+
+    var cs = getComputedStyle(ref.style);
+    var rect = ref.style.getBoundingClientRect();
+    var bg = parseRgb(cs.backgroundColor);
+    var border = parseRgb(cs.borderTopColor);
+    var borderWidth = parseFloat(cs.borderTopWidth) || 0;
+    var text = parseRgb(cs.color);
+    var accent = isOpaque(bg) ? bg : (isOpaque(border) && borderWidth > 0 ? border : text);
+    var accentCss = accent
+      ? 'rgb(' + accent.r + ',' + accent.g + ',' + accent.b + ')'
+      : '#000';
+    var radius = parseFloat(cs.borderTopLeftRadius) || 0;
+    if (radius >= rect.height / 2) radius = 999;
+
+    var set = document.documentElement.style;
+    set.setProperty('--qo-btn-radius', radius + 'px');
+    set.setProperty('--qo-btn-border', Math.max(borderWidth, 1) + 'px');
+    set.setProperty('--qo-btn-font', cs.fontFamily);
+    set.setProperty('--qo-btn-weight', cs.fontWeight);
+    set.setProperty('--qo-btn-size', cs.fontSize);
+    set.setProperty('--qo-btn-spacing', cs.letterSpacing);
+    set.setProperty('--qo-btn-transform', cs.textTransform);
+    set.setProperty('--qo-btn-height', Math.round(Math.min(Math.max(rect.height, 40), 72)) + 'px');
+    set.setProperty('--qo-btn-accent', accentCss);
+    set.setProperty('--qo-btn-on-accent', onAccent(accent));
+    set.setProperty('--qo-input-radius', Math.min(radius, 12) + 'px');
+
+    fitSpacing(blocks, ref.above);
+  }
+
+  // Темам властивий великий відступ між блоками. Підтягуємо нашу кнопку до основної
+  // і вирівнюємо відступ із нижнім сусідом.
+  function fitSpacing(blocks, above) {
+    blocks.forEach(function (block) {
+      block.style.marginTop = '';
+      block.style.marginBottom = '';
+      if (block.dataset.qoAutofit !== 'true' || !above) return;
+      var trigger = block.querySelector('.qo-trigger');
+      var target = Number(block.dataset.qoGap);
+      if (isNaN(target)) target = 12;
+      var gap = trigger.getBoundingClientRect().top - above.getBoundingClientRect().bottom;
+      if (gap > target + 2 && gap < 220) {
+        var delta = Math.round(gap - target);
+        block.style.marginTop = -delta + 'px';
+        block.style.marginBottom = -delta + 'px';
+      }
+    });
+  }
+
+  var themeTimer;
+  function scheduleTheme() {
+    clearTimeout(themeTimer);
+    themeTimer = setTimeout(matchTheme, 120);
+  }
+  matchTheme();
+  setTimeout(matchTheme, 800);
+  window.addEventListener('load', matchTheme);
+  window.addEventListener('resize', scheduleTheme);
+  document.addEventListener('shopify:section:load', scheduleTheme);
+  document.addEventListener('shopify:block:select', scheduleTheme);
 
   // Sticky-кнопка внизу екрана, коли основна вийшла з поля зору
   function initSticky() {

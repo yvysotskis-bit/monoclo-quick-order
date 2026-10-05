@@ -77,3 +77,18 @@ test('клавіатура статусу зберігає кнопку това
   assert.equal(kb.inline_keyboard[1][0].callback_data, 'st:reset');
   assert.equal(statusKeyboard('reset', existing).inline_keyboard[1].length, 2);
 });
+
+import { loadConfig } from '../server/config.js';
+
+test('конфіг обрізає пробіли й переноси рядків у змінних', () => {
+  const cfg = loadConfig({
+    SHOPIFY_SHOP: ' shop.myshopify.com\n',
+    SHOPIFY_API_SECRET: ' shpss_abc \n',
+    TELEGRAM_BOT_TOKEN: 'tok ',
+    TELEGRAM_CHAT_ID: '-1',
+    TELEGRAM_WEBHOOK_SECRET: 's',
+  });
+  assert.equal(cfg.apiSecret, 'shpss_abc');
+  assert.equal(cfg.shop, 'shop.myshopify.com');
+  assert.equal(cfg.telegramToken, 'tok');
+});

@@ -10,6 +10,8 @@
   <div
     class="qo-block"
     data-qo-block
+    data-qo-autofit="{{ block.settings.auto_fit }}"
+    data-qo-gap="{{ block.settings.gap }}"
     {{ block.shopify_attributes }}
   >
     <button
@@ -51,6 +53,14 @@
         "compare_at_price": {{ qo_product.compare_at_price | default: 0 }},
         "image": {% if qo_product.featured_image %}{{ qo_product.featured_image | image_url: width: 320 | json }}{% else %}null{% endif %},
         "selected_variant_id": {{ qo_product.selected_or_first_available_variant.id | default: 0 }},
+        "images": [
+          {%- for img in qo_product.images limit: 40 -%}
+            {
+              "src": {{ img | image_url: width: 320 | json }},
+              "alt": {{ img.alt | default: '' | json }}
+            }{% unless forloop.last %},{% endunless %}
+          {%- endfor -%}
+        ],
         "options": [
           {%- for option in qo_product.options_with_values -%}
             {
@@ -112,6 +122,23 @@
         { "value": "outline", "label": "З рамкою (другорядна)" }
       ],
       "default": "outline"
+    },
+    {
+      "type": "checkbox",
+      "id": "auto_fit",
+      "label": "Підтягнути до кнопки «Додати до кошика»",
+      "info": "Автоматично прибирає великий відступ між кнопками. Форма, шрифт і висота кнопки копіюються з кнопки теми.",
+      "default": true
+    },
+    {
+      "type": "range",
+      "id": "gap",
+      "label": "Відстань до сусідніх кнопок",
+      "min": 0,
+      "max": 40,
+      "step": 2,
+      "unit": "px",
+      "default": 12
     },
     {
       "type": "checkbox",
