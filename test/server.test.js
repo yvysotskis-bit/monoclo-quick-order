@@ -27,7 +27,9 @@ test('успішне замовлення: ціна з магазину, одн�
   assert.match(msg.body.text, /прямий візит/);
   const rows = msg.body.reply_markup.inline_keyboard;
   assert.equal(rows[1][0].url, 'https://t.me/+380671234567');
-  assert.equal(rows[1][1].url, 'https://wa.me/380671234567');
+  assert.equal(rows[1][1].text, '💬 Viber');
+  assert.equal(rows[1][1].url, 'https://qo.test/viber/380671234567');
+  assert.ok(rows.flat().every((b) => !b.url || b.url.startsWith('https://')), 'Telegram приймає лише https-посилання');
   assert.equal(rows[2][0].callback_data, 'st:taken');
 
   const saved = store.getOrder(1);
@@ -168,4 +170,15 @@ test('/status повертає 503, якщо замовлення застряг
   const st = await call(app, { method: 'GET', url: '/status' });
   assert.equal(st.status, 503);
   assert.equal(st.json.ok, false);
+});
+
+test('/viber/<номер> віддає сторінку, що відкриває Viber; сміття відхиляється', async () => {
+  const { app } = makeApp();
+  const ok = await call(app, { method: 'GET', url: '/viber/380671234567' });
+  assert.equal(ok.status, 200);
+  assert.match(ok.headers['content-type'], /text\/html/);
+  assert.match(ok.text, /viber:\/\/chat\?number=%2B380671234567/);
+  for (const bad of ['/viber/abc', '/viber/12', '/viber/380671234567%22%3E%3Cscript%3E', '/viber/']) {
+    assert.equal((await call(app, { method: 'GET', url: bad })).status, 404, bad);
+  }
 });

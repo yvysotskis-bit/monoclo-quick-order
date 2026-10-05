@@ -20,6 +20,7 @@ import {
   buildOrderMessage,
   buildReminder,
   newOrderKeyboard,
+  viberLink,
   statusKeyboard,
 } from './message.js';
 import { buildWeeklyReport } from './report.js';
@@ -102,7 +103,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         delayed,
       });
       try {
-        const message = await telegram.sendOrder(text, newOrderKeyboard(d.productUrl, d.phone));
+        const message = await telegram.sendOrder(text, newOrderKeyboard(d.productUrl, d.phone, config.publicUrl));
         store.markTelegramSent(order.id, message?.message_id ?? null);
         return true;
       } catch (err) {
@@ -354,6 +355,22 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     return { code: ok ? 200 : 503, body: { ok, db: true, ...counts, stuck_seconds: stuckSeconds } };
   }
 
+  // Сторінка-перехідник: Telegram дозволяє лише https-посилання, а вона відкриває Viber
+  function viberPage(digits) {
+    const link = viberLink(digits);
+    return `<!doctype html>
+<html lang="uk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>Відкриваємо Viber</title>
+<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font:16px/1.5 -apple-system,Segoe UI,Arial,sans-serif;background:#fff;color:#111;text-align:center}
+main{padding:24px;max-width:360px}a.b{display:block;margin:20px 0 12px;padding:16px;border-radius:999px;background:#111;color:#fff;text-decoration:none;font-weight:600}
+p{margin:8px 0;color:#555}</style></head>
+<body><main><h1 style="font-size:20px">Відкриваємо Viber…</h1>
+<a class="b" href="${link}">Відкрити чат у Viber</a>
+<p>Якщо Viber не відкрився, натисніть кнопку вище.</p>
+<p>Номер клієнта: <b>+${digits}</b></p></main>
+<script>setTimeout(function(){location.href=${JSON.stringify(link)};},150);</script></body></html>`;
+  }
+
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const send = (code, body) => {
@@ -362,6 +379,11 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     };
     try {
       if (req.method === 'GET' && url.pathname === '/healthz') return send(200, { ok: true });
+      const viber = req.method === 'GET' && /^\/viber\/(\d{8,15})$/.exec(url.pathname);
+      if (viber) {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(viberPage(viber[1]));
+      }
       if (req.method === 'GET' && url.pathname === '/status') {
         const { code, body } = status();
         return send(code, body);

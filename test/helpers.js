@@ -15,6 +15,7 @@ export const config = {
   workEnd: 20,
   maxQty: 10,
   currency: 'UAH',
+  publicUrl: 'https://qo.test',
   dbPath: ':memory:',
   workerIntervalMs: 30000,
   keycrmToken: '',
@@ -120,7 +121,8 @@ export async function call(app, { method = 'POST', url, body, headers = {} }) {
     end(payload) { this.payload = payload; },
   };
   await app.handle(req, res);
-  return { status: res.status, json: JSON.parse(res.payload) };
+  const isJson = String(res.headers['content-type']).includes('json');
+  return { status: res.status, headers: res.headers, text: res.payload, json: isJson ? JSON.parse(res.payload) : null };
 }
 
 export const submit = (app, body = goodBody()) => call(app, { url: signedUrl(), body });

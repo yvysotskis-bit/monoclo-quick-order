@@ -36,6 +36,8 @@ export function loadConfig(env = process.env) {
     workEnd: number('WORK_HOURS_END', 20),
     maxQty: number('MAX_QTY', 10),
     currency: optional('CURRENCY') || 'UAH',
+    // Публічна адреса цього сервера (на Render підставляється автоматично як RENDER_EXTERNAL_URL)
+    publicUrl: (optional('PUBLIC_URL') || optional('RENDER_EXTERNAL_URL')).replace(/\/+$/, ''),
 
     // База: на Render підключіть Disk з Mount Path /data, інакше дані губляться при перезапуску
     dbPath: optional('DB_PATH') || (fs.existsSync('/data') ? '/data/quick-order.db' : './data/quick-order.db'),

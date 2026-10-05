@@ -63,7 +63,7 @@ test('статус: додається, замінюється і скидаєт
 test('клавіатура статусу зберігає кнопки товару та чатів', () => {
   const existing = { inline_keyboard: [
     [{ text: '🔗 Товар', url: 'https://x.test' }],
-    [{ text: 'TG', url: 'https://t.me/+1' }, { text: 'WA', url: 'https://wa.me/1' }],
+    [{ text: 'TG', url: 'https://t.me/+1' }, { text: 'VB', url: 'https://qo.test/viber/1' }],
     [{ text: 'a', callback_data: 'st:taken' }],
   ] };
   const kb = statusKeyboard('taken', existing);

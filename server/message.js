@@ -61,15 +61,18 @@ const chunk = (items, size) => {
 
 const statusButton = (key) => ({ text: STATUSES[key].button, callback_data: `st:${key}` });
 
-export function newOrderKeyboard(productUrl, phone) {
+// Telegram не приймає в кнопках посилання viber://, тому кнопка веде на сторінку нашого сервера,
+// яка відкриває Viber (див. viberPage у app.js)
+export const viberLink = (digits) => `viber://chat?number=%2B${digits}`;
+
+export function newOrderKeyboard(productUrl, phone, publicUrl = '') {
   const digits = phoneDigits(phone);
+  const chats = [{ text: '💬 Telegram', url: `https://t.me/+${digits}` }];
+  if (publicUrl) chats.push({ text: '💬 Viber', url: `${publicUrl}/viber/${digits}` });
   return {
     inline_keyboard: [
       [{ text: '🔗 Товар', url: productUrl }],
-      [
-        { text: '💬 Telegram', url: `https://t.me/+${digits}` },
-        { text: '💬 WhatsApp', url: `https://wa.me/${digits}` },
-      ],
+      chats,
       [statusButton('taken'), statusButton('spam')],
     ],
   };
