@@ -573,6 +573,7 @@ html.qo-lock { overflow: hidden; }
 .qo-success__summary dt { color: var(--qo-muted); }
 .qo-success__summary dd { margin: 0; text-align: right; font-weight: 500; }
 .qo-success .qo-note { font-size: 13px; }
+.qo-note--contact { margin-top: 18px; font-size: 13px; color: var(--qo-ink); }
 .qo-success__actions { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; }
 
 .qo-btn {

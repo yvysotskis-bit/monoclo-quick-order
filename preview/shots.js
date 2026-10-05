@@ -123,6 +123,12 @@ async function flow(name, viewport) {
   assert.equal(order.page_url.endsWith('/products/futbolka-monoclo-volvo-fh16'), true);
   assert.match(await page.textContent('[data-qo-success-title]'), /Замовлення №20251005-213405 прийнято/);
   assert.equal(await page.isVisible('[data-qo-submit]'), false);
+  // Після замовлення: кнопка «Написати нам у Telegram» магазину
+  const tg = page.locator('[data-qo-telegram]');
+  assert.equal(await tg.isVisible(), true);
+  assert.equal(await tg.getAttribute('href'), 'https://t.me/monoclo_store_bot?start=site');
+  assert.equal(await tg.getAttribute('target'), '_blank');
+  assert.match(await page.textContent('.qo-note--contact'), /Напишіть нам у Telegram/);
   assert.equal(await page.evaluate(() => window.__lastEvent.value), 1780);
   // Аналітика: GA4 generate_lead, Meta Pixel Lead, dataLayer
   const ga = await page.evaluate(() => window.__ga);

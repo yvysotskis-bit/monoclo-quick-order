@@ -114,8 +114,16 @@
           <dl class="qo-success__summary" data-qo-success-summary></dl>
           <p class="qo-note" data-qo-success-note></p>
           <p class="qo-note qo-note--hours" data-qo-success-hours hidden></p>
+          {%- if s.telegram_url != blank -%}
+            <p class="qo-note qo-note--contact">{{ s.contact_hint | escape }}</p>
+          {%- endif -%}
           <div class="qo-success__actions">
-            <button type="button" class="qo-btn" data-qo-close>Продовжити покупки</button>
+            {%- if s.telegram_url != blank -%}
+              <a class="qo-btn" href="{{ s.telegram_url }}" target="_blank" rel="noopener" data-qo-telegram>Написати нам у Telegram</a>
+              <button type="button" class="qo-btn qo-btn--ghost" data-qo-close>Продовжити покупки</button>
+            {%- else -%}
+              <button type="button" class="qo-btn" data-qo-close>Продовжити покупки</button>
+            {%- endif -%}
             {%- if s.instagram_url != blank -%}
               <a class="qo-btn qo-btn--ghost" href="{{ s.instagram_url }}" target="_blank" rel="noopener">Instagram</a>
             {%- endif -%}
@@ -280,6 +288,19 @@
       "type": "url",
       "id": "size_guide_url",
       "label": "Посилання на таблицю розмірів"
+    },
+    {
+      "type": "url",
+      "id": "telegram_url",
+      "label": "Telegram магазину (для екрана успіху)",
+      "info": "Кнопка «Написати нам у Telegram» після замовлення. Залиште порожнім, щоб прибрати.",
+      "default": "https://t.me/monoclo_store_bot?start=site"
+    },
+    {
+      "type": "text",
+      "id": "contact_hint",
+      "label": "Підказка над кнопками на екрані успіху",
+      "default": "Хочете отримати відповідь швидше? Напишіть нам у Telegram."
     },
     {
       "type": "url",
