@@ -4,7 +4,9 @@ export const escapeHtml = (value) => String(value)
   .replace(/>/g, '&gt;');
 
 export function formatMoney(cents, currency = 'UAH') {
-  const n = new Intl.NumberFormat('uk-UA', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(cents / 100);
+  // Копійки показуємо завжди двома цифрами (1 500,50), а цілі суми без них (1 500)
+  const digits = cents % 100 === 0 ? 0 : 2;
+  const n = new Intl.NumberFormat('uk-UA', { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(cents / 100);
   return `${n} ${currency === 'UAH' ? '₴' : currency}`;
 }
 
@@ -65,8 +67,19 @@ const statusButton = (key) => ({ text: STATUSES[key].button, callback_data: `st:
 // яка відкриває Viber (див. viberPage у app.js)
 export const viberLink = (digits) => `viber://chat?number=%2B${digits}`;
 
-// pay: { amountUah } або null, якщо оплата не налаштована
-const payRow = (pay) => (pay ? [[{ text: `💳 Передоплата ${pay.amountUah} ₴`, callback_data: 'pay:link' }]] : []);
+// pay: { prepayUah, paidCents, remainingCents } або null, якщо оплата не налаштована
+const payRows = (pay) => (pay
+  ? [
+    [
+      { text: `💳 Передоплата ${pay.prepayUah} ₴`, callback_data: 'pay:link' },
+      {
+        text: `💳 ${pay.paidCents > 0 ? 'Залишок' : 'Повна сума'} ${formatMoney(pay.remainingCents)}`,
+        callback_data: 'pay:full',
+      },
+    ],
+    [{ text: '✏️ Інша сума', callback_data: 'pay:custom' }],
+  ]
+  : []);
 
 export function newOrderKeyboard(productUrl, phone, publicUrl = '', pay = null) {
   const digits = phoneDigits(phone);
@@ -76,7 +89,7 @@ export function newOrderKeyboard(productUrl, phone, publicUrl = '', pay = null) 
     inline_keyboard: [
       [{ text: '🔗 Товар', url: productUrl }],
       chats,
-      ...payRow(pay),
+      ...payRows(pay),
       [statusButton('taken'), statusButton('spam')],
     ],
   };
@@ -100,7 +113,7 @@ export function applyStatus({ text, entities = [] }, status, actor, time) {
 // Усі рядки з посиланнями (товар, чати) лишаються, змінюються тільки кнопки статусу
 export function statusKeyboard(status, existing, pay = null) {
   const rows = (existing?.inline_keyboard || []).filter((row) => row.every((b) => b.url));
-  rows.push(...payRow(pay));
+  rows.push(...payRows(pay));
   if (status === 'reset') {
     rows.push([statusButton('taken'), statusButton('spam')]);
   } else {
@@ -110,24 +123,65 @@ export function statusKeyboard(status, existing, pay = null) {
   return { inline_keyboard: rows };
 }
 
-// Повідомлення менеджеру з готовим текстом для клієнта (його можна скопіювати одним дотиком)
-export function buildPaymentMessage({ orderNumber, amountUah, url, hours }) {
-  const amount = formatMoney(amountUah * 100);
-  const forClient = `Вітаємо! Щоб підтвердити замовлення №${orderNumber}, будь ласка, внесіть передоплату ${amount}: ${url}`;
-  return [
-    `💳 <b>Посилання на передоплату ${escapeHtml(amount)}</b> · замовлення #${escapeHtml(orderNumber)}`,
-    `Діє ${hours} год. Скопіюйте текст нижче й надішліть клієнту:`,
-    '',
-    `<code>${escapeHtml(forClient)}</code>`,
-  ].join('\n');
+// Розбір суми, яку ввів менеджер: «1500», «1 500», «1499,50», «1500 грн». Повертає копійки або null
+export function parseAmountKopecks(text) {
+  const cleaned = String(text ?? '')
+    .toLowerCase()
+    .replace(/(грн|гривень|гривні|uah|₴)/g, '')
+    .replace(/[\s\u00a0]/g, '')
+    .replace(',', '.');
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null;
+  const kopecks = Math.round(Number(cleaned) * 100);
+  return kopecks > 0 ? kopecks : null;
 }
 
-export function buildPaidMessage(orderNumber, amountUah) {
-  return `✅ Передоплата ${formatMoney(amountUah * 100)} отримана за замовленням #${orderNumber}.`;
+// Назви оплати: називний відмінок («Передоплата … отримана») і знахідний («посилання на передоплату»)
+export const PAYMENT_KIND = {
+  prepay: 'передоплата',
+  full: 'повна оплата',
+  custom: 'оплата',
+};
+const PAYMENT_KIND_ACC = {
+  prepay: 'передоплату',
+  full: 'повну оплату',
+  custom: 'оплату',
+};
+
+// Повідомлення менеджеру з готовим текстом для клієнта (його можна скопіювати одним дотиком)
+export function buildPaymentMessage({ orderNumber, amountCents, kind, url, hours, createdBy, totalCents, paidCents = 0 }) {
+  const amount = formatMoney(amountCents);
+  const client = kind === 'prepay'
+    ? `Вітаємо! Щоб підтвердити замовлення №${orderNumber}, будь ласка, внесіть передоплату ${amount}: ${url}`
+    : `Вітаємо! Для оплати замовлення №${orderNumber} на суму ${amount} перейдіть за посиланням: ${url}`;
+  const lines = [
+    `💳 <b>Посилання на ${PAYMENT_KIND_ACC[kind] || 'оплату'} ${escapeHtml(amount)}</b> · замовлення #${escapeHtml(orderNumber)}`,
+  ];
+  if (createdBy) lines.push(`Створив(ла): ${escapeHtml(createdBy)}`);
+  if (paidCents > 0) lines.push(`Уже сплачено: ${escapeHtml(formatMoney(paidCents))}`);
+  if (amountCents + paidCents > totalCents) {
+    lines.push(`⚠️ Разом з уже сплаченим сума перевищує суму замовлення (${escapeHtml(formatMoney(totalCents))}). Перевірте, чи це правильно.`);
+  }
+  lines.push(`Діє ${hours} год. Скопіюйте текст нижче й надішліть клієнту:`, '', `<code>${escapeHtml(client)}</code>`);
+  return lines.join('\n');
+}
+
+export function buildPaidMessage({ orderNumber, amountCents, kind, totalCents, paidCents }) {
+  const lines = [`✅ ${PAYMENT_KIND[kind] ? PAYMENT_KIND[kind][0].toUpperCase() + PAYMENT_KIND[kind].slice(1) : 'Оплата'} ${formatMoney(amountCents)} отримана за замовленням #${orderNumber}.`];
+  const rest = totalCents - paidCents;
+  lines.push(rest > 0
+    ? `Сплачено ${formatMoney(paidCents)} з ${formatMoney(totalCents)}, залишок ${formatMoney(rest)}.`
+    : 'Замовлення оплачено повністю.');
+  return lines.join('\n');
 }
 
 export function buildPayFailedMessage(orderNumber, reason) {
-  return `⚠️ Передоплата за замовленням #${orderNumber} не пройшла${reason ? ` (${reason})` : ''}. Створіть нове посилання кнопкою «💳 Передоплата».`;
+  return `⚠️ Оплата за замовленням #${orderNumber} не пройшла${reason ? ` (${reason})` : ''}. Створіть нове посилання кнопкою «💳».`;
+}
+
+// Прохання ввести суму; згадка менеджера змушує Telegram показати йому поле відповіді
+export function buildAmountPrompt({ orderNumber, userId, userName, maxUah }) {
+  const who = userId ? `<a href="tg://user?id=${userId}">${escapeHtml(userName)}</a>` : escapeHtml(userName);
+  return `✏️ ${who}, введіть суму в гривнях для замовлення #${escapeHtml(orderNumber)}.\nВідповідайте саме на це повідомлення. Наприклад: 1500 або 1499.50 (до ${maxUah} ₴).`;
 }
 
 export function buildReminder(orderNumber, minutes) {

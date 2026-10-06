@@ -30,6 +30,15 @@ export function createTelegram({ token, chatId, fetchFn }) {
       link_preview_options: { is_disabled: true },
       reply_parameters: replyTo ? { message_id: replyTo, allow_sending_without_reply: true } : undefined,
     }),
+    // Просить конкретного менеджера відповісти на це повідомлення (force_reply лише для згаданого користувача)
+    sendPrompt: (text, { replyTo } = {}) => call('sendMessage', {
+      chat_id: chatId,
+      text,
+      parse_mode: 'HTML',
+      link_preview_options: { is_disabled: true },
+      reply_parameters: replyTo ? { message_id: replyTo, allow_sending_without_reply: true } : undefined,
+      reply_markup: { force_reply: true, selective: true, input_field_placeholder: 'Сума в гривнях, наприклад 1500' },
+    }),
     editMessage: ({ messageId, text, entities, replyMarkup }) => call('editMessageText', {
       chat_id: chatId,
       message_id: messageId,
@@ -42,7 +51,7 @@ export function createTelegram({ token, chatId, fetchFn }) {
     setWebhook: (url, secretToken) => call('setWebhook', {
       url,
       secret_token: secretToken,
-      allowed_updates: ['callback_query'],
+      allowed_updates: ['callback_query', 'message'],
     }),
   };
 }

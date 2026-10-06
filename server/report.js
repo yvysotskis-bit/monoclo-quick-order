@@ -9,7 +9,7 @@ const plural = (n, one, few, many) => {
   return many;
 };
 
-export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH' }) {
+export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH', payments = [] }) {
   const title = `📊 <b>Звіт за тиждень ${formatDayMonth(new Date(from), timezone)}–${formatDayMonth(new Date(to), timezone)}</b>`;
   if (!orders.length) return `${title}\n\nЗамовлень за цей період не було.`;
 
@@ -18,18 +18,14 @@ export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH'
   const sources = new Map();
   let sum = 0;
   let afterHours = 0;
-  let paid = 0;
-  let paidSum = 0;
+  const paid = payments.length;
+  const paidSum = payments.reduce((sum, p) => sum + p.amount, 0);
   const responseTimes = [];
 
   for (const o of orders) {
     counts[o.status] = (counts[o.status] || 0) + 1;
     sum += o.data.totalCents;
     if (o.data.afterHours) afterHours += 1;
-    if (o.pay_status === 'success') {
-      paid += 1;
-      paidSum += o.pay_amount || 0;
-    }
     products.set(o.data.productTitle, (products.get(o.data.productTitle) || 0) + o.data.quantity);
     const source = describeSource(o.data) || 'прямий візит';
     sources.set(source, (sources.get(source) || 0) + 1);
@@ -51,7 +47,7 @@ export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH'
   ];
 
   if (paid) {
-    lines.push('', `💳 Передоплат отримано: ${paid} на ${escapeHtml(formatMoney(paidSum, currency))}`);
+    lines.push('', `💳 Оплат отримано: ${paid} на ${escapeHtml(formatMoney(paidSum, currency))}`);
   }
 
   if (responseTimes.length) {

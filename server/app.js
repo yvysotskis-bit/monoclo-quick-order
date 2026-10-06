@@ -19,9 +19,12 @@ import {
   STATUS_KEYS,
   applyStatus,
   buildOrderMessage,
+  buildAmountPrompt,
   buildPaidMessage,
   buildPayFailedMessage,
   buildPaymentMessage,
+  parseAmountKopecks,
+  PAYMENT_KIND,
   buildReminder,
   newOrderKeyboard,
   viberLink,
@@ -33,6 +36,7 @@ const MAX_BODY_BYTES = 16 * 1024;
 const PROXY_MAX_AGE_SEC = 10 * 60;
 const DUPLICATE_WINDOW_MS = 5 * 60 * 1000;
 const STUCK_ALERT_SEC = 10 * 60;
+const PROMPT_TTL_MS = 30 * 60 * 1000;
 const STATUS_ACTION = new RegExp(`^st:(${[...STATUS_KEYS, 'reset'].join('|')})$`);
 
 class HttpError extends Error {
@@ -94,7 +98,16 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   const monobank = config.monobankToken && config.publicUrl
     ? createMonobank({ token: config.monobankToken, fetchFn })
     : null;
-  const pay = monobank ? { amountUah: config.prepayAmountUah } : null;
+  // Що показувати на кнопках оплати для конкретного замовлення
+  const payInfo = (order) => {
+    if (!monobank) return null;
+    const paidCents = store.paidTotal(order.id);
+    return {
+      prepayUah: config.prepayAmountUah,
+      paidCents,
+      remainingCents: Math.max(order.data.totalCents - paidCents, 0),
+    };
+  };
 
   // Замовлення, які зараз відправляються: щоб фонова черга не дублювала їх
   const inFlight = new Set();
@@ -118,7 +131,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         delayed,
       });
       try {
-        const message = await telegram.sendOrder(text, newOrderKeyboard(d.productUrl, d.phone, config.publicUrl, pay));
+        const message = await telegram.sendOrder(text, newOrderKeyboard(d.productUrl, d.phone, config.publicUrl, payInfo(order)));
         store.markTelegramSent(order.id, message?.message_id ?? null);
         return true;
       } catch (err) {
@@ -141,7 +154,9 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         // Якщо менеджер уже встиг змінити статус у Telegram, підтягуємо його в CRM
         const fresh = store.getOrder(order.id);
         if (fresh.status !== 'new') await keycrm.updateStatus(crmId, fresh.status).catch((e) => log.error('keycrm status', e.message));
-        if (fresh.pay_status === 'success') await syncCrmPayment(fresh, crmId);
+        for (const payment of store.paymentsForOrder(order.id)) {
+          if (payment.status === 'success' && !payment.crm_synced) await syncCrmPayment(payment, { ...fresh, crm_order_id: crmId });
+        }
         return true;
       } catch (err) {
         log.error('keycrm create failed', err.message);
@@ -156,15 +171,16 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     });
   }
 
-  // Передоплата, що вже надійшла, фіксується в замовленні KeyCRM (якщо вказано спосіб оплати)
-  async function syncCrmPayment(order, crmOrderId, amountKopecks = order.pay_amount) {
-    if (!keycrm || !config.keycrmPaymentMethodId || !crmOrderId) return;
+  // Оплата, що вже надійшла, фіксується в замовленні KeyCRM (якщо вказано спосіб оплати)
+  async function syncCrmPayment(payment, order) {
+    if (!keycrm || !config.keycrmPaymentMethodId || !order.crm_order_id) return;
     try {
-      await keycrm.addPayment(crmOrderId, {
+      await keycrm.addPayment(order.crm_order_id, {
         methodId: config.keycrmPaymentMethodId,
-        amountUah: amountKopecks / 100,
-        description: `Передоплата Monobank, рахунок ${order.pay_invoice_id}`,
+        amountUah: payment.amount / 100,
+        description: `${PAYMENT_KIND[payment.kind] || 'Оплата'} Monobank, рахунок ${payment.invoice_id}`,
       });
+      store.markPaymentSynced(payment.id);
     } catch (err) {
       log.error('keycrm payment failed', err.message);
     }
@@ -278,10 +294,16 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     if (!safeEqual(req.headers['x-telegram-bot-api-secret-token'] || '', config.telegramWebhookSecret)) {
       throw new HttpError(401, 'unauthorized', 'Unauthorized');
     }
-    const query = (await readJson(req)).callback_query;
+    const update = await readJson(req);
+    // Відповідь менеджера на прохання ввести суму
+    if (update.message) return amountReply(update.message);
+
+    const query = update.callback_query;
     if (!query?.message || String(query.message.chat?.id) !== telegram.chatId) return { ok: true };
 
-    if (query.data === 'pay:link') return paymentLink(query);
+    if (query.data === 'pay:link') return paymentLink(query, 'prepay');
+    if (query.data === 'pay:full') return paymentLink(query, 'full');
+    if (query.data === 'pay:custom') return customAmountPrompt(query);
 
     const match = STATUS_ACTION.exec(query.data || '');
     if (!match) return { ok: true };
@@ -311,7 +333,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         messageId: message.message_id,
         text: next.text,
         entities: next.entities,
-        replyMarkup: statusKeyboard(action, message.reply_markup, pay),
+        replyMarkup: statusKeyboard(action, message.reply_markup, order ? payInfo(order) : null),
       });
       await telegram.answerCallback(query.id);
     } catch (err) {
@@ -321,47 +343,142 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     return { ok: true };
   }
 
-  /* ---------- Передоплата (Monobank) ---------- */
+  /* ---------- Оплата (Monobank) ---------- */
 
-  // Кнопка «💳 Передоплата»: створює рахунок і пише менеджеру готовий текст для клієнта
-  async function paymentLink(query) {
+  const actorName = (from) => [from?.first_name, from?.last_name].filter(Boolean).join(' ') || from?.username || 'менеджер';
+
+  // Створює рахунок (або повертає чинний на ту саму суму). Неоплачені рахунки з іншою сумою закриваються,
+  // щоб клієнт не заплатив за двома посиланнями.
+  async function issuePayment({ order, amount, kind, actor }) {
+    const nowMs = now().getTime();
+    const active = store.activePayments(order.id, nowMs - config.payValiditySeconds * 1000);
+    const same = active.find((p) => p.amount === amount);
+    if (same) return { payment: same, reused: true };
+
+    for (const old of active) {
+      try {
+        await monobank.removeInvoice(old.invoice_id);
+        store.setPaymentStatus(old.id, 'removed');
+      } catch (err) {
+        log.error('remove invoice failed', err.message);
+      }
+    }
+    const count = store.paymentsForOrder(order.id).length;
+    const invoice = await monobank.createInvoice({
+      amount,
+      reference: count ? `${order.order_number}-${count + 1}` : order.order_number,
+      destination: `${kind === 'prepay' ? 'Передоплата за' : 'Оплата'} замовлення №${order.order_number}`,
+      redirectUrl: config.storeOrigin,
+      webHookUrl: `${config.publicUrl}/mono/webhook`,
+      validity: config.payValiditySeconds,
+    });
+    const id = store.insertPayment({
+      orderId: order.id, invoiceId: invoice.invoiceId, amount, kind, url: invoice.pageUrl, createdBy: actor, createdAt: nowMs,
+    });
+    return { payment: store.getPayment(id), reused: false };
+  }
+
+  function postPaymentLink(order, payment, replyTo) {
+    return telegram.sendText(buildPaymentMessage({
+      orderNumber: order.order_number,
+      amountCents: payment.amount,
+      kind: payment.kind,
+      url: payment.url,
+      hours: config.payValiditySeconds / 3600,
+      createdBy: payment.created_by,
+      totalCents: order.data.totalCents,
+      paidCents: store.paidTotal(order.id),
+    }), { replyTo });
+  }
+
+  // Кнопки «💳 Передоплата» і «💳 Повна сума / Залишок»
+  async function paymentLink(query, kind) {
     const message = query.message;
     const answer = (text) => telegram.answerCallback(query.id, text).catch(() => {});
     const order = store.findByMessageId(message.message_id);
     if (!monobank) { await answer('Оплата не налаштована'); return { ok: true }; }
     if (!order) { await answer('Замовлення не знайдено'); return { ok: true }; }
-    if (order.pay_status === 'success') { await answer('Передоплата вже отримана'); return { ok: true }; }
 
-    const nowMs = now().getTime();
+    const total = order.data.totalCents;
+    const paid = store.paidTotal(order.id);
+    let amount;
+    if (kind === 'prepay') {
+      amount = Math.min(config.prepayAmountUah * 100, total);
+      if (paid >= amount) { await answer('Передоплата вже отримана'); return { ok: true }; }
+    } else {
+      amount = total - paid;
+      if (amount <= 0) { await answer('Замовлення вже оплачено повністю'); return { ok: true }; }
+    }
+
     try {
-      const reusable = order.pay_url
-        && ['created', 'processing'].includes(order.pay_status)
-        && nowMs < order.pay_created_at + config.payValiditySeconds * 1000;
-      if (!reusable) {
-        const amount = Math.min(config.prepayAmountUah * 100, order.data.totalCents);
-        const invoice = await monobank.createInvoice({
-          amount,
-          reference: order.order_number,
-          destination: `Передоплата за замовлення №${order.order_number}`,
-          redirectUrl: config.storeOrigin,
-          webHookUrl: `${config.publicUrl}/mono/webhook`,
-          validity: config.payValiditySeconds,
-        });
-        store.setPayment(order.id, {
-          invoiceId: invoice.invoiceId, url: invoice.pageUrl, status: 'created', amount, createdAt: nowMs,
-        });
-      }
-      const current = store.getOrder(order.id);
-      await telegram.sendText(buildPaymentMessage({
-        orderNumber: order.order_number,
-        amountUah: current.pay_amount / 100,
-        url: current.pay_url,
-        hours: config.payValiditySeconds / 3600,
-      }), { replyTo: message.message_id });
-      await answer(reusable ? 'Посилання вже було, надіслав ще раз' : 'Посилання створено');
+      const { payment, reused } = await issuePayment({ order, amount, kind, actor: actorName(query.from) });
+      await postPaymentLink(order, payment, message.message_id);
+      await answer(reused ? 'Посилання вже було, надіслав ще раз' : 'Посилання створено');
     } catch (err) {
       log.error('payment link failed', err.message);
       await answer('Не вдалося створити посилання. Спробуйте ще раз');
+    }
+    return { ok: true };
+  }
+
+  // Кнопка «✏️ Інша сума»: бот просить менеджера відповісти сумою
+  async function customAmountPrompt(query) {
+    const message = query.message;
+    const answer = (text) => telegram.answerCallback(query.id, text).catch(() => {});
+    const order = store.findByMessageId(message.message_id);
+    if (!monobank) { await answer('Оплата не налаштована'); return { ok: true }; }
+    if (!order) { await answer('Замовлення не знайдено'); return { ok: true }; }
+    try {
+      const sent = await telegram.sendPrompt(buildAmountPrompt({
+        orderNumber: order.order_number,
+        userId: query.from?.id,
+        userName: actorName(query.from),
+        maxUah: config.payMaxAmountUah,
+      }), { replyTo: message.message_id });
+      store.insertPrompt({
+        messageId: sent.message_id, orderId: order.id, userId: query.from?.id, createdAt: now().getTime(),
+      });
+      await answer('Введіть суму у відповідь на нове повідомлення');
+    } catch (err) {
+      log.error('amount prompt failed', err.message);
+      await answer('Не вдалося. Спробуйте ще раз');
+    }
+    return { ok: true };
+  }
+
+  // Менеджер відповів на прохання числом: створюємо рахунок на цю суму
+  async function amountReply(message) {
+    if (!monobank || String(message.chat?.id) !== telegram.chatId || !message.reply_to_message) return { ok: true };
+    const prompt = store.findPrompt(message.reply_to_message.message_id);
+    if (!prompt) return { ok: true };
+
+    const reply = (text) => telegram.sendText(text, { replyTo: message.message_id }).catch((e) => log.error('reply failed', e.message));
+    const nowMs = now().getTime();
+    if (nowMs - prompt.created_at > PROMPT_TTL_MS) {
+      store.deletePrompt(prompt.message_id);
+      await reply('Запит застарів. Натисніть «✏️ Інша сума» ще раз.');
+      return { ok: true };
+    }
+
+    const amount = parseAmountKopecks(message.text);
+    if (!amount) {
+      await reply('Не вдалося розпізнати суму. Введіть число в гривнях, наприклад 1500 або 1499.50.');
+      return { ok: true };
+    }
+    if (amount > config.payMaxAmountUah * 100) {
+      await reply(`Сума завелика. Максимум ${config.payMaxAmountUah} ₴.`);
+      return { ok: true };
+    }
+
+    const order = store.getOrder(prompt.order_id);
+    if (!order) return { ok: true };
+    try {
+      const { payment } = await issuePayment({ order, amount, kind: 'custom', actor: actorName(message.from) });
+      store.deletePrompt(prompt.message_id);
+      await postPaymentLink(order, payment, order.tg_message_id || message.message_id);
+    } catch (err) {
+      log.error('custom payment failed', err.message);
+      await reply('Не вдалося створити посилання. Спробуйте ще раз.');
     }
     return { ok: true };
   }
@@ -382,19 +499,25 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       throw new HttpError(400, 'bad_request', 'Bad request');
     }
 
-    const order = store.findByInvoiceId(body.invoiceId);
-    if (!order) return { ok: true };
+    const payment = store.findPaymentByInvoice(body.invoiceId);
+    if (!payment) return { ok: true };
     const status = String(body.status);
-    if (order.pay_status === status) return { ok: true };
+    if (payment.status === status) return { ok: true };
     // Запізніле «processing» не скасовує вже отриману оплату
-    if (order.pay_status === 'success' && status !== 'reversed') return { ok: true };
+    if (payment.status === 'success' && status !== 'reversed') return { ok: true };
 
+    const order = store.getOrder(payment.order_id);
     const replyTo = order.tg_message_id || undefined;
-    store.setPayStatus(order.id, status, status === 'success' ? now().getTime() : null);
+    store.setPaymentStatus(payment.id, status, status === 'success' ? now().getTime() : null);
     if (status === 'success') {
-      const amount = Number(body.finalAmount ?? body.amount ?? order.pay_amount);
-      await telegram.sendText(buildPaidMessage(order.order_number, amount / 100), { replyTo }).catch((e) => log.error('paid notice failed', e.message));
-      await syncCrmPayment(order, order.crm_order_id, amount);
+      await telegram.sendText(buildPaidMessage({
+        orderNumber: order.order_number,
+        amountCents: payment.amount,
+        kind: payment.kind,
+        totalCents: order.data.totalCents,
+        paidCents: store.paidTotal(order.id),
+      }), { replyTo }).catch((e) => log.error('paid notice failed', e.message));
+      await syncCrmPayment(payment, order);
     } else if (status === 'failure' || status === 'reversed') {
       await telegram.sendText(buildPayFailedMessage(order.order_number, body.failureReason), { replyTo }).catch((e) => log.error('pay failed notice failed', e.message));
     }
@@ -432,6 +555,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       to,
       timezone: config.timezone,
       currency: config.currency,
+      payments: store.paidSince(from),
     });
     try {
       await telegram.sendText(text);
@@ -446,6 +570,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const date = now();
     for (const order of store.telegramDue(date.getTime())) await deliverTelegram(order);
     for (const order of store.crmDue(date.getTime())) await deliverCrm(order);
+    for (const payment of store.unsyncedPayments()) await syncCrmPayment(payment, store.getOrder(payment.order_id));
+    store.pruneOldPrompts(date.getTime() - PROMPT_TTL_MS);
     await sendReminders(date);
     await sendWeeklyReport(date);
   }

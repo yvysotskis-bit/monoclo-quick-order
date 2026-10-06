@@ -49,6 +49,11 @@ export function createMonobank({ token, fetchFn }) {
       return { invoiceId: data.invoiceId, pageUrl: data.pageUrl };
     },
 
+    // Закриває неоплачений рахунок (щоб клієнт не заплатив за старим посиланням). Найкраща спроба: збій не критичний
+    async removeInvoice(invoiceId) {
+      await call('POST', '/invoice/remove', { invoiceId });
+    },
+
     // Вебхук підписано ECDSA (заголовок X-Sign). Якщо підпис не збігся, один раз оновлюємо ключ банку
     // (він міг змінитися) і перевіряємо ще раз. Без дійсного підпису статусу довіряти не можна.
     async verifyWebhook(rawBody, signature) {

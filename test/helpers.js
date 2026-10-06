@@ -25,6 +25,7 @@ export const config = {
   keycrmPaymentMethodId: 0,
   monobankToken: '',
   prepayAmountUah: 200,
+  payMaxAmountUah: 50000,
   payValiditySeconds: 86400,
   reminderMinutes: 15,
   reminderRepeatMinutes: 30,
@@ -89,6 +90,7 @@ export function mockFetch({ productResponse } = {}) {
     }
     if (u.startsWith('https://api.monobank.ua/')) {
       if (fn.fail.monobank) return new Response('{"errText":"boom"}', { status: 500 });
+      if (u.endsWith('/invoice/remove')) return Response.json({});
       if (u.endsWith('/pubkey')) return Response.json({ key: Buffer.from(monoPublicPem).toString('base64') });
       if (u.endsWith('/invoice/create')) {
         fn.invoices += 1;
@@ -105,6 +107,7 @@ export function mockFetch({ productResponse } = {}) {
   fn.fail = { telegram: false, keycrm: false, monobank: false };
   fn.invoices = 0;
   fn.mono = () => calls.filter((c) => c.url.includes('api.monobank.ua') && c.url.endsWith('/invoice/create'));
+  fn.monoRemoved = () => calls.filter((c) => c.url.endsWith('/invoice/remove'));
   fn.tg = (method) => calls.filter((c) => c.url.includes('api.telegram.org') && c.url.endsWith(`/${method}`));
   fn.crm = () => calls.filter((c) => c.url.includes('keycrm.app'));
   return fn;

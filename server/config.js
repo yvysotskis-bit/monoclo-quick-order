@@ -59,6 +59,7 @@ export function loadConfig(env = process.env) {
     // Передоплата через Monobank (Plata by mono): без токена кнопка «Передоплата» не показується
     monobankToken: optional('MONOBANK_TOKEN'),
     prepayAmountUah: number('PREPAY_AMOUNT_UAH', 200),
+    payMaxAmountUah: number('PAY_MAX_AMOUNT_UAH', 50000),
     payValiditySeconds: number('PAY_VALIDITY_HOURS', 24) * 3600,
     keycrmPaymentMethodId: number('KEYCRM_PAYMENT_METHOD_ID', 0),
 

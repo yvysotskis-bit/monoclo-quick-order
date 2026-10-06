@@ -34,6 +34,26 @@ CREATE INDEX IF NOT EXISTS orders_message ON orders (tg_message_id);
 CREATE TABLE IF NOT EXISTS hits (key TEXT NOT NULL, at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS hits_key ON hits (key, at);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL,
+  invoice_id TEXT NOT NULL UNIQUE,
+  amount INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  url TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'created',
+  created_by TEXT,
+  created_at INTEGER NOT NULL,
+  paid_at INTEGER,
+  crm_synced INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS payments_order ON payments (order_id);
+CREATE TABLE IF NOT EXISTS pay_prompts (
+  message_id INTEGER PRIMARY KEY,
+  order_id INTEGER NOT NULL,
+  user_id INTEGER,
+  created_at INTEGER NOT NULL
+);
 `;
 
 const backoff = (attempts, now) => now + Math.min(30_000 * 2 ** attempts, 15 * 60_000);
@@ -58,6 +78,11 @@ function migrate(db) {
     if (!existing.has(name)) db.exec(`ALTER TABLE orders ADD COLUMN ${name} ${type}`);
   }
   db.exec('CREATE INDEX IF NOT EXISTS orders_invoice ON orders (pay_invoice_id)');
+  // Рахунки зі старої схеми (один на замовлення) переносимо в таблицю платежів; в CRM вони вже потрапили
+  db.exec(`INSERT OR IGNORE INTO payments (order_id, invoice_id, amount, kind, url, status, created_at, paid_at, crm_synced)
+    SELECT id, pay_invoice_id, COALESCE(pay_amount, 0), 'prepay', COALESCE(pay_url, ''),
+           COALESCE(pay_status, 'created'), COALESCE(pay_created_at, created_at), pay_paid_at, 1
+    FROM orders WHERE pay_invoice_id IS NOT NULL`);
 }
 
 export class Store {
@@ -186,20 +211,75 @@ export class Store {
 
   /* ---- оплата ---- */
 
-  findByInvoiceId(invoiceId) {
-    return this.one('SELECT * FROM orders WHERE pay_invoice_id = ? ORDER BY id DESC LIMIT 1', invoiceId);
-  }
-
-  setPayment(id, { invoiceId, url, status, amount, createdAt }) {
-    this.run(
-      `UPDATE orders SET pay_invoice_id = ?, pay_url = ?, pay_status = ?, pay_amount = ?,
-         pay_created_at = ?, pay_paid_at = NULL WHERE id = ?`,
-      invoiceId, url, status, amount, createdAt, id,
+  insertPayment({ orderId, invoiceId, amount, kind, url, createdBy, createdAt }) {
+    const { lastInsertRowid } = this.run(
+      'INSERT INTO payments (order_id, invoice_id, amount, kind, url, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      orderId, invoiceId, amount, kind, url, createdBy || null, createdAt,
     );
+    return Number(lastInsertRowid);
   }
 
-  setPayStatus(id, status, paidAt = null) {
-    this.run('UPDATE orders SET pay_status = ?, pay_paid_at = COALESCE(?, pay_paid_at) WHERE id = ?', status, paidAt, id);
+  getPayment(id) {
+    return this.db.prepare('SELECT * FROM payments WHERE id = ?').get(id) || null;
+  }
+
+  findPaymentByInvoice(invoiceId) {
+    return this.db.prepare('SELECT * FROM payments WHERE invoice_id = ?').get(invoiceId) || null;
+  }
+
+  paymentsForOrder(orderId) {
+    return this.db.prepare('SELECT * FROM payments WHERE order_id = ? ORDER BY id').all(orderId);
+  }
+
+  // Рахунки, що ще можна оплатити (створені після `since` і не завершені)
+  activePayments(orderId, since) {
+    return this.db.prepare(
+      "SELECT * FROM payments WHERE order_id = ? AND status IN ('created', 'processing') AND created_at >= ? ORDER BY id",
+    ).all(orderId, since);
+  }
+
+  setPaymentStatus(id, status, paidAt = null) {
+    this.run('UPDATE payments SET status = ?, paid_at = COALESCE(?, paid_at) WHERE id = ?', status, paidAt, id);
+  }
+
+  // Сума отриманих оплат за замовленням, у копійках
+  paidTotal(orderId) {
+    return this.db.prepare("SELECT COALESCE(SUM(amount), 0) AS n FROM payments WHERE order_id = ? AND status = 'success'")
+      .get(orderId).n;
+  }
+
+  unsyncedPayments() {
+    return this.db.prepare(
+      `SELECT p.* FROM payments p JOIN orders o ON o.id = p.order_id
+       WHERE p.status = 'success' AND p.crm_synced = 0 AND o.crm_order_id IS NOT NULL ORDER BY p.id`,
+    ).all();
+  }
+
+  markPaymentSynced(id) {
+    this.run('UPDATE payments SET crm_synced = 1 WHERE id = ?', id);
+  }
+
+  paidSince(since) {
+    return this.db.prepare("SELECT * FROM payments WHERE status = 'success' AND paid_at >= ? ORDER BY id").all(since);
+  }
+
+  /* ---- запити суми (відповідь менеджера на повідомлення бота) ---- */
+
+  insertPrompt({ messageId, orderId, userId, createdAt }) {
+    this.run('INSERT OR REPLACE INTO pay_prompts (message_id, order_id, user_id, created_at) VALUES (?, ?, ?, ?)',
+      messageId, orderId, userId ?? null, createdAt);
+  }
+
+  findPrompt(messageId) {
+    return this.db.prepare('SELECT * FROM pay_prompts WHERE message_id = ?').get(messageId) || null;
+  }
+
+  deletePrompt(messageId) {
+    this.run('DELETE FROM pay_prompts WHERE message_id = ?', messageId);
+  }
+
+  pruneOldPrompts(before) {
+    this.run('DELETE FROM pay_prompts WHERE created_at < ?', before);
   }
 
   /* ---- статуси ---- */
