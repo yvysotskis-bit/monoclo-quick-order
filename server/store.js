@@ -215,8 +215,11 @@ export class Store {
 
   /* ---- нагадування ---- */
 
-  reminderCandidates(max) {
-    return this.q("SELECT * FROM orders WHERE status = 'new' AND tg_state = 'sent' AND reminders < ?", max);
+  reminderCandidates(max, since = 0) {
+    return this.q(
+      "SELECT * FROM orders WHERE status = 'new' AND tg_state = 'sent' AND reminders < ? AND created_at >= ?",
+      max, since,
+    );
   }
 
   markReminded(id, at) {

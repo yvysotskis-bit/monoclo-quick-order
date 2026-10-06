@@ -406,7 +406,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   async function sendReminders(date) {
     const nowMs = date.getTime();
     if (!isWorkingTime(date, config)) return;
-    for (const order of store.reminderCandidates(config.reminderMax)) {
+    for (const order of store.reminderCandidates(config.reminderMax, config.remindersFrom || 0)) {
       const start = effectiveStart(order.created_at, config);
       const due = start + (config.reminderMinutes + order.reminders * config.reminderRepeatMinutes) * 60_000;
       if (nowMs < due) continue;

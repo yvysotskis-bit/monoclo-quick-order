@@ -9,6 +9,14 @@ function parseJson(raw, name) {
   }
 }
 
+// ISO-дата (наприклад, 2026-10-06T07:00:00Z) у мілісекунди; порожньо = 0
+function parseDate(raw, name) {
+  if (!raw) return 0;
+  const ms = Date.parse(raw);
+  if (Number.isNaN(ms)) throw new Error(`${name} має бути датою, наприклад 2026-10-06T07:00:00Z`);
+  return ms;
+}
+
 export function loadConfig(env = process.env) {
   const required = (key) => {
     // Зайві пробіли й переноси рядків при копіюванні в Render ламають секрети
@@ -58,6 +66,8 @@ export function loadConfig(env = process.env) {
     reminderMinutes: number('REMINDER_MINUTES', 15),
     reminderRepeatMinutes: number('REMINDER_REPEAT_MINUTES', 30),
     reminderMax: number('REMINDER_MAX', 3),
+    // Нагадувати лише про замовлення, створені не раніше цієї дати (старі, наприклад тестові, ігноруються)
+    remindersFrom: parseDate(optional('REMINDERS_FROM'), 'REMINDERS_FROM'),
 
     // Тижневий звіт: день тижня (1 = понеділок) і година за київським часом
     reportDay: number('REPORT_DAY', 1),

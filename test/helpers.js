@@ -29,6 +29,7 @@ export const config = {
   reminderMinutes: 15,
   reminderRepeatMinutes: 30,
   reminderMax: 3,
+  remindersFrom: 0,
   reportDay: 1,
   reportHour: 9,
 };

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { call, makeApp, submit } from './helpers.js';
+import { call, goodBody, makeApp, submit } from './helpers.js';
 
 const reminders = (fetchFn) => fetchFn.tg('sendMessage').filter((c) => /без відповіді менеджера/.test(c.body.text));
 
@@ -99,4 +99,35 @@ test('база переживає перезапуск: дублі та лімі
   const again = await call(second, { url: (await import('./helpers.js')).signedUrl(), body: (await import('./helpers.js')).goodBody() });
   assert.equal(again.json.order_number, '20251005-150000');
   assert.equal(fetchFn.tg('sendMessage').length, 1);
+});
+
+test('нагадування лише про замовлення, створені після REMINDERS_FROM', async () => {
+  const from = new Date('2025-10-06T08:30:00Z').getTime(); // 11:30 Київ
+  const { app, fetchFn, now } = makeApp({ at: '2025-10-06T08:00:00Z', cfg: { remindersFrom: from } });
+
+  await submit(app); // старе замовлення (11:00)
+  now.set('2025-10-06T08:40:00Z');
+  await submit(app, goodBody({ quantity: 3, client_id: 'client-id-0002' })); // нове (11:40)
+
+  now.set('2025-10-06T08:50:00Z'); // старому минуло 50 хв, новому 10
+  await app.tick();
+  assert.equal(reminders(fetchFn).length, 0);
+
+  now.set('2025-10-06T08:56:00Z'); // новому 16 хв
+  await app.tick();
+  const sent = reminders(fetchFn);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].body.text, /#20251006-114000/);
+  assert.doesNotMatch(sent[0].body.text, /#20251006-110000/);
+});
+
+test('REMINDERS_FROM у конфігурації: ISO-дата, помилка при сміттєвому значенні', async () => {
+  const { loadConfig } = await import('../server/config.js');
+  const base = {
+    SHOPIFY_SHOP: 's.myshopify.com', SHOPIFY_API_SECRET: 'x', TELEGRAM_BOT_TOKEN: 't',
+    TELEGRAM_CHAT_ID: '-1', TELEGRAM_WEBHOOK_SECRET: 'w',
+  };
+  assert.equal(loadConfig(base).remindersFrom, 0);
+  assert.equal(loadConfig({ ...base, REMINDERS_FROM: '2026-10-06T07:00:00Z' }).remindersFrom, Date.parse('2026-10-06T07:00:00Z'));
+  assert.throws(() => loadConfig({ ...base, REMINDERS_FROM: 'вчора' }), /REMINDERS_FROM/);
 });
