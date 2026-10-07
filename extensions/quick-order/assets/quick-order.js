@@ -247,7 +247,17 @@
       successSummary: $('[data-qo-success-summary]'),
       successNote: $('[data-qo-success-note]'),
       successHours: $('[data-qo-success-hours]'),
-      body: $('[data-qo-body]')
+      body: $('[data-qo-body]'),
+      head: $('[data-qo-head]'),
+      stepLabel: $('[data-qo-step-label]'),
+      bar: $('[data-qo-bar]'),
+      back: $('[data-qo-back]'),
+      recap: $('[data-qo-recap]'),
+      recapLine: $('[data-qo-recap-line]'),
+      editData: $('[data-qo-edit-data]'),
+      submitLabel: $('[data-qo-submit-label]'),
+      step1: $('[data-qo-step="1"]'),
+      step2: $('[data-qo-step="2"]')
     };
 
     dialog.addEventListener('click', function (e) {
@@ -273,12 +283,24 @@
     refs.phone.addEventListener('input', onPhoneInput);
     refs.phone.addEventListener('blur', function () { state.touched.phone = refs.phone.value !== ''; refresh(); });
 
-    refs.form.addEventListener('submit', function (e) { e.preventDefault(); submit(); });
+    // Enter у полі або дотик по головній кнопці: «Далі» на кроці 1, замовлення на кроці 2
+    refs.form.addEventListener('submit', function (e) { e.preventDefault(); primaryAction(); });
     refs.submit.addEventListener('click', function (e) {
       if (refs.submit.getAttribute('aria-disabled') === 'true') {
         e.preventDefault();
         highlightMissing();
       }
+    });
+    refs.back.addEventListener('click', function () { goBack(); });
+    refs.editData.addEventListener('click', function () { showStep(2, true); });
+    // Поле у фокусі завжди прокручується в видиму зону над клавіатурою
+    refs.form.addEventListener('focusin', function (e) {
+      if (!window.matchMedia('(max-width: 640px)').matches) return;
+      var field = e.target.closest && e.target.closest('.qo-field');
+      if (!field) return;
+      setTimeout(function () {
+        if (dialog.open && document.activeElement === e.target) field.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }, 320);
     });
 
     initSwipe();
@@ -312,6 +334,7 @@
       clientId: uuid(),
       trigger: trigger || null,
       touched: { name: false, phone: false },
+      step: 1,
       delivery: { method: 'warehouse', city: null, point: null, street: null },
       prevDigits: ''
     };
@@ -335,7 +358,7 @@
     hideError();
     setView('form');
     renderOptions();
-    refresh(true);
+    showStep(1, false);
 
     var afterHours = isAfterHours();
     refs.hoursNote.hidden = !afterHours;
@@ -344,6 +367,7 @@
     dialog.classList.remove('is-success', 'is-open');
     dialog.showModal();
     watchViewport(true);
+    pushHistory(1);
     document.documentElement.classList.add('qo-lock');
     refs.body.scrollTop = 0;
     requestAnimationFrame(function () {
@@ -358,7 +382,9 @@
     if (!vv || !sheet || !window.matchMedia('(max-width: 640px)').matches) return;
     var covered = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
     sheet.style.bottom = covered ? covered + 'px' : '';
-    sheet.style.maxHeight = covered ? Math.round(vv.height * 0.96) + 'px' : '';
+    // З клавіатурою висота рівна видимій частині екрана: нічого не вилазить за межі
+    sheet.style.height = covered ? Math.round(vv.height * 0.98) + 'px' : '';
+    dialog.classList.toggle('qo-kb', covered > 120);
   }
 
   function watchViewport(on) {
@@ -369,12 +395,14 @@
     vv[method]('scroll', syncViewport);
     if (!on && sheet) {
       sheet.style.bottom = '';
-      sheet.style.maxHeight = '';
+      sheet.style.height = '';
+      dialog.classList.remove('qo-kb');
     }
   }
 
   function close() {
     if (!dialog || !dialog.open || (state && state.submitting)) return;
+    popHistory();
     dialog.classList.remove('is-open');
     var finish = function () {
       watchViewport(false);
@@ -697,16 +725,112 @@
   function nameValid() { return refs.name.value.trim().length >= 2; }
   function phoneValid() { return digits().length === 9; }
 
-  function firstMissing() {
+  function optionMissing() {
     for (var i = 0; i < state.selected.length; i++) {
       var option = state.product.options[i];
       var isDefault = option.values.length === 1 && option.values[0] === 'Default Title';
       if (state.selected[i] == null && !isDefault) return { key: 'option-' + i, text: T.chooseOption(option.name) };
     }
+    return null;
+  }
+
+  function contactMissing() {
     if (!nameValid()) return { key: 'name', text: T.enterName };
     if (!phoneValid()) return { key: 'phone', text: T.enterPhone };
     return deliveryMissing();
   }
+
+  function firstMissing() { return optionMissing() || contactMissing(); }
+
+  /* ---------- Кроки ---------- */
+
+  // Контакти вже заповнені (повторний клієнт): головна кнопка на кроці 1 одразу замовляє
+  function quickReady() { return !contactMissing(); }
+
+  function recapText() {
+    var parts = [[refs.name.value.trim(), refs.surname ? refs.surname.value.trim() : ''].filter(Boolean).join(' ')];
+    parts.push('+380 ' + formatNational(digits()));
+    var place = state.delivery.city ? (state.delivery.city.present || state.delivery.city.name) : cityText();
+    if (place) parts.push(place);
+    var d = state.delivery;
+    if (d.method === 'courier') {
+      if (d.street) parts.push(d.street.name);
+    } else if (d.point) {
+      parts.push(d.point.name.split(':')[0]);
+    }
+    return parts.filter(Boolean).join(' · ');
+  }
+
+  function showStep(n, focus) {
+    state.step = n;
+    refs.step1.hidden = n !== 1;
+    refs.step2.hidden = n !== 2;
+    refs.back.hidden = n !== 2;
+    refs.stepLabel.textContent = n === 1 ? 'Крок 1 з 2 · Товар' : 'Крок 2 з 2 · Контакти та доставка';
+    refs.bar.style.width = n === 1 ? '50%' : '100%';
+    refs.body.scrollTop = 0;
+    hideError();
+    refresh();
+    if (n === 2) {
+      pushHistory(2);
+      if (focus !== false && !(refs.name.value.trim())) refs.name.focus({ preventScroll: true });
+    }
+  }
+
+  // Назад: з кроку 2 на крок 1 (кнопка «Назад» телефона працює так само)
+  function goBack() {
+    if (state.step === 2) {
+      if (historyDepth >= 2) history.back();
+      else showStep(1, false);
+    } else {
+      close();
+    }
+  }
+
+  function primaryAction() {
+    if (state.step === 1 && !quickReady()) {
+      var missing = optionMissing();
+      if (missing) { highlightMissing(); return; }
+      showStep(2, true);
+      return;
+    }
+    submit();
+  }
+
+  /* ---------- Історія браузера: «Назад» закриває шторку, а не сторінку ---------- */
+
+  var historyDepth = 0;
+  var ignorePop = false;
+
+  function pushHistory(level) {
+    try {
+      if (historyDepth >= level) return;
+      history.pushState({ qo: level }, '');
+      historyDepth = level;
+    } catch (e) { /* історія недоступна */ }
+  }
+
+  function popHistory() {
+    if (!historyDepth) return;
+    var steps = historyDepth;
+    historyDepth = 0;
+    try {
+      ignorePop = true;
+      history.go(-steps);
+    } catch (e) { ignorePop = false; }
+  }
+
+  window.addEventListener('popstate', function () {
+    if (ignorePop) { ignorePop = false; return; }
+    if (!dialog || !dialog.open) { historyDepth = 0; return; }
+    if (state && state.step === 2 && historyDepth >= 2) {
+      historyDepth = 1;
+      showStep(1, false);
+    } else {
+      historyDepth = 0;
+      close();
+    }
+  });
 
   function refresh() {
     var product = state.product;
@@ -744,12 +868,18 @@
     setFieldInvalid('name', state.touched.name && !nameValid());
     setFieldInvalid('phone', state.touched.phone && !phoneValid());
 
-    var missing = firstMissing();
+    var missing = state.step === 1 ? optionMissing() : firstMissing();
     // Підсвітка «зверни увагу» гасне, щойно поле виправлено
     dialog.querySelectorAll('.is-attention').forEach(function (field) {
       if (!missing || field.dataset.qoField !== missing.key) field.classList.remove('is-attention');
     });
     refs.ctaHint.textContent = missing ? missing.text : '';
+    var totalText = money(source.price * state.qty, product.currency);
+    if (state.step === 2) refs.submitLabel.textContent = 'Замовити · ' + totalText;
+    else if (quickReady()) refs.submitLabel.textContent = 'Замовити як ' + (refs.name.value.trim().split(' ')[0] || 'раніше') + ' · ' + totalText;
+    else refs.submitLabel.textContent = 'Далі';
+    refs.recap.hidden = !(state.step === 1 && quickReady());
+    if (!refs.recap.hidden) refs.recapLine.textContent = recapText();
     refs.submit.setAttribute('aria-disabled', missing || state.submitting ? 'true' : 'false');
     refs.submit.classList.toggle('is-loading', state.submitting);
     refs.submit.setAttribute('aria-busy', state.submitting ? 'true' : 'false');
@@ -769,6 +899,8 @@
   function highlightMissing() {
     var missing = firstMissing();
     if (!missing) return;
+    var needStep = missing.key.indexOf('option-') === 0 ? 1 : 2;
+    if (state.step !== needStep) showStep(needStep, false);
     if (missing.key === 'name') state.touched.name = true;
     if (missing.key === 'phone') state.touched.phone = true;
     refresh();
@@ -844,6 +976,15 @@
     function setOpen(open) {
       list.hidden = !open;
       root.classList.toggle('is-open', open);
+      if (open) {
+        // Якщо знизу замало місця (клавіатура), список відкривається вгору
+        root.classList.remove('is-up');
+        var host = refs.body.getBoundingClientRect();
+        var box = input.getBoundingClientRect();
+        var below = host.bottom - box.bottom;
+        var above = box.top - host.top;
+        if (list.offsetHeight > below - 8 && above > below) root.classList.add('is-up');
+      }
       input.setAttribute('aria-expanded', open ? 'true' : 'false');
       if (!open) {
         active = -1;
@@ -1349,6 +1490,22 @@
   }
 
   /* ---------- Кнопки на сторінці ---------- */
+
+  // Готуємо попап до відкриття, щойно палець торкнувся кнопки: відкривається миттєво
+  var warmed = {};
+  function warm(e) {
+    var trigger = e.target.closest && e.target.closest('[data-qo-open]');
+    if (!trigger || warmed[trigger.dataset.qoProduct]) return;
+    warmed[trigger.dataset.qoProduct] = true;
+    try {
+      init();
+      var product = loadProduct(trigger.dataset.qoProduct);
+      if (product && product.image) new Image().src = product.image;
+    } catch (err) { /* підготовка не критична */ }
+  }
+  ['touchstart', 'pointerover', 'focusin'].forEach(function (name) {
+    document.addEventListener(name, warm, { passive: true, capture: true });
+  });
 
   document.addEventListener('click', function (e) {
     var trigger = e.target.closest && e.target.closest('[data-qo-open]');

@@ -32,6 +32,16 @@ const open = async (page) => {
   await page.waitForTimeout(400);
 };
 
+// Крок 1 → крок 2, якщо ми ще на першому
+const toContacts = async (page) => {
+  if ((await page.textContent('[data-qo-step-label]')).startsWith('Крок 1')) {
+    if (!(await page.$('[data-qo-option="0"][aria-checked="true"]'))) await page.click('.qo-choice[data-qo-value="Чорний"]');
+    if (!(await page.$('[data-qo-option="1"][aria-checked="true"]'))) await page.click('.qo-choice[data-qo-value="M"]');
+    await page.click('[data-qo-submit]');
+  }
+  await page.waitForFunction(() => document.querySelector('[data-qo-step="2"]') && !document.querySelector('[data-qo-step="2"]').hidden);
+};
+
 async function flow(name, viewport) {
   const { page, ctx, shot, errors } = await session(name, viewport, '?hour=12');
   await shot('0-page');
@@ -98,6 +108,13 @@ async function flow(name, viewport) {
   assert.match(await page.textContent('[data-qo-total]'), /1\s?780/);
   assert.equal(await page.textContent('[data-qo-badge]'), '−19%');
 
+  // Крок 1 → «Далі» → крок 2
+  assert.equal(await page.textContent('[data-qo-submit-label]'), 'Далі');
+  await shot('3a-step1-ready');
+  await page.click('[data-qo-submit]');
+  assert.equal(await page.textContent('[data-qo-step-label]'), 'Крок 2 з 2 · Контакти та доставка');
+  assert.equal(await page.isVisible('[data-qo-back]'), true);
+
   // Клік по неактивній кнопці підсвічує поле, а не відправляє
   await page.click('[data-qo-submit]', { force: true });
   assert.equal(await page.evaluate(() => window.__orders.length), 0);
@@ -105,7 +122,9 @@ async function flow(name, viewport) {
   await shot('3-missing-name');
 
   // Маска телефону
+  await toContacts(page);
   await page.fill('[data-qo-name]', 'Іван');
+  await toContacts(page);
   await page.fill('[data-qo-city]', 'Львів');
   await page.click('[data-qo-phone]');
   await page.keyboard.type('0671234567');
@@ -184,6 +203,7 @@ for (const mode of ['network', 'soldout', 'invalid']) {
   await open(page);
   await page.click('.qo-choice[data-qo-value="Чорний"]');
   await page.click('.qo-choice[data-qo-value="M"]');
+  await toContacts(page);
   await page.fill('[data-qo-name]', 'Олена');
   await page.click('[data-qo-phone]');
   await page.keyboard.type('501112233');
@@ -239,6 +259,7 @@ for (const [hour, expected] of [[5, 'dark'], [6, 'light'], [12, 'light'], [16, '
   await open(page);
   await page.click('.qo-choice[data-qo-value="Чорний"]');
   await page.click('.qo-choice[data-qo-value="M"]');
+  await toContacts(page);
   await page.fill('[data-qo-name]', 'Олена');
   await page.click('[data-qo-phone]');
   await page.keyboard.type('501112233');
@@ -263,6 +284,9 @@ for (const [hour, expected] of [[5, 'dark'], [6, 'light'], [12, 'light'], [16, '
 {
   const { page, ctx, shot } = await session('mobile-afterhours', { width: 390, height: 844 }, '?hours=off');
   await open(page);
+  await page.click('.qo-choice[data-qo-value="Чорний"]');
+  await page.click('.qo-choice[data-qo-value="M"]');
+  await toContacts(page);
   assert.equal(await page.isVisible('[data-qo-hours-note]'), true);
   assert.match(await page.textContent('[data-qo-hours-note]'), /з 10:00 до 20:00/);
   await shot('open');
@@ -312,12 +336,14 @@ const options = (name) => `${combo(name)} [role="option"]`;
 async function basics(page, { phone = '501112233' } = {}) {
   await page.click('.qo-choice[data-qo-value="Чорний"]');
   await page.click('.qo-choice[data-qo-value="M"]');
+  await toContacts(page);
   await page.fill('[data-qo-name]', 'Олена Коваль');
   await page.click('[data-qo-phone]');
   await page.keyboard.type(phone);
 }
 
 async function pickCity(page, text = 'Черн') {
+  await toContacts(page);
   await page.click('[data-qo-city]');
   await page.keyboard.type(text);
   await page.waitForSelector(options('city'));
@@ -417,6 +443,7 @@ for (const [name, viewport] of [['desktop', { width: 1280, height: 820 }], ['mob
   assert.match(await page.inputValue('[data-qo-point]'), /Відділення №3/);
 
   // Користувач передумав і змінив місто: відділення скинуто, блок зник до нового вибору
+  await toContacts(page);
   await page.fill('[data-qo-city]', 'Черн');
   assert.equal(await page.isVisible('[data-qo-np]'), false);
   await page.waitForSelector(options('city'));
@@ -443,6 +470,7 @@ for (const [name, viewport] of [['desktop', { width: 1280, height: 820 }], ['mob
   const { page, ctx, shot } = await session('np-down', { width: 390, height: 844 }, '?hour=12&np=down');
   await open(page);
   await basics(page);
+  await toContacts(page);
   await page.click('[data-qo-city]');
   await page.keyboard.type('Хмельницький');
   await page.waitForFunction(() => /введіть вручну/.test(document.querySelector('[data-qo-combo="city"] .qo-combo__note')?.textContent || ''));
@@ -492,6 +520,7 @@ for (const [name, viewport] of [['desktop', { width: 1280, height: 820 }], ['mob
 {
   const { page, ctx } = await session('np-keys', { width: 1280, height: 820 }, '?hour=12');
   await open(page);
+  await toContacts(page);
   await page.click('[data-qo-city]');
   await page.keyboard.type('Ки');
   await page.waitForSelector(options('city'));

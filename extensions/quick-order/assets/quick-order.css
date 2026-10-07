@@ -144,7 +144,7 @@ html.qo-lock { overflow: hidden; }
     left: 0;
     right: 0;
     bottom: 0;
-    max-height: 92dvh;
+    height: min(88dvh, 720px);
     border-radius: var(--qo-radius) var(--qo-radius) 0 0;
     transform: translateY(100%);
   }
@@ -194,45 +194,47 @@ html.qo-lock { overflow: hidden; }
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 24px 24px 8px;
+  padding: 18px 24px 8px;
   -webkit-overflow-scrolling: touch;
 }
 @media (max-width: 640px) {
-  .qo-body { padding: 8px 16px 8px; }
+  .qo-body { padding: 14px 16px 12px; }
 }
 
 .qo-view[hidden] { display: none; }
 
 /* ---------- Товар ---------- */
 
-.qo-product {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-  padding-right: 32px;
-  margin-bottom: 20px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--qo-line);
-}
-.qo-product__media {
+.qo-head {
   flex: none;
-  width: 96px;
-  height: 96px;
+  padding: 20px 56px 0 24px;
+  border-bottom: 1px solid var(--qo-line);
+  touch-action: pan-x;
+}
+.qo-head__row { display: flex; gap: 12px; align-items: center; }
+.qo-head__media {
+  flex: none;
+  width: 64px;
+  height: 64px;
   background: var(--qo-soft);
   overflow: hidden;
 }
-.qo-product__media img {
+.qo-head__media img {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
   transition: opacity 0.2s;
 }
-.qo-product__media img.is-swapping { opacity: 0; }
-.qo-product__info { min-width: 0; }
+.qo-head__media img.is-swapping { opacity: 0; }
+.qo-head__info { min-width: 0; }
 
 .qo-title {
-  margin: 0 0 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0 0 4px;
   font-family: var(--heading-font-family, inherit);
   font-weight: var(--heading-font-weight, 600);
   font-size: 16px;
@@ -260,10 +262,40 @@ html.qo-lock { overflow: hidden; }
 }
 
 @media (max-width: 640px) {
-  .qo-product { touch-action: pan-x; gap: 12px; margin-bottom: 14px; padding-bottom: 14px; }
-  .qo-product__media { width: 72px; height: 72px; }
-  .qo-title { font-size: 15px; }
+  .qo-head { padding: 6px 52px 0 16px; }
+  .qo-head__media { width: 48px; height: 48px; }
+  .qo-title { font-size: 14px; -webkit-line-clamp: 1; }
 }
+
+/* Кроки */
+.qo-steps { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 4px 0 0; position: relative; }
+.qo-steps__back {
+  flex: none; appearance: none; border: 0; background: none; padding: 6px 8px 6px 0;
+  font: inherit; font-size: 13px; color: var(--qo-ink); cursor: pointer;
+}
+.qo-steps__back[hidden] { display: none; }
+.qo-steps__label { font-size: 12px; letter-spacing: 0.04em; color: var(--qo-muted); white-space: nowrap; }
+.qo-steps__bar { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: transparent; }
+.qo-steps__bar i { display: block; height: 100%; width: 50%; background: var(--qo-strong); transition: width 0.25s var(--qo-ease); }
+
+.qo-step { display: flex; flex-direction: column; gap: 18px; }
+.qo-step[hidden] { display: none; }
+@media (max-width: 640px) { .qo-step { gap: 14px; } }
+
+/* Збережені дані повторного клієнта */
+.qo-recap {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 14px; border: 1px solid var(--qo-line); border-radius: var(--qo-radius); background: var(--qo-soft);
+}
+.qo-recap[hidden] { display: none; }
+.qo-recap__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.qo-recap__title { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--qo-muted); }
+.qo-recap__line { font-size: 14px; line-height: 1.35; color: var(--qo-ink); overflow-wrap: anywhere; }
+.qo-recap__edit {
+  flex: none; appearance: none; border: 0; background: none; padding: 8px 0 8px 8px; font: inherit; font-size: 13px;
+  color: var(--qo-ink); text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
+}
+.qo-banner { margin: 0; padding: 10px 12px; text-align: left; background: var(--qo-soft); border-radius: var(--qo-radius); }
 
 /* ---------- Поля ---------- */
 
@@ -472,15 +504,22 @@ html.qo-lock { overflow: hidden; }
   border-top: 1px solid var(--qo-line);
 }
 @media (max-width: 640px) {
-  .qo-footer { padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); }
+  .qo-footer { padding: 8px 16px calc(10px + env(safe-area-inset-bottom)); }
 }
 .qo-footer[hidden] { display: none; }
 
-.qo-hint--cta { min-height: 18px; margin-bottom: 8px; text-align: center; }
-.qo-hint--cta:empty { display: none; }
+.qo-footer { position: relative; }
+.qo-hint--cta { height: 18px; margin-bottom: 6px; text-align: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
+/* Помилка накладається над кнопкою й не зсуває форму */
 .qo-error {
-  margin: 0 0 8px;
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: calc(100% + 8px);
+  z-index: 3;
+  margin: 0;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
   padding: 10px 12px;
   font-size: 13px;
   line-height: 1.4;
@@ -600,13 +639,14 @@ html.qo-lock { overflow: hidden; }
 .qo-btn:focus-visible { outline: 2px solid var(--qo-strong); outline-offset: 2px; }
 
 /* Екран успіху: футер із формою ховаємо */
-.qo-dialog.is-success .qo-footer { display: none; }
+.qo-dialog.is-success .qo-footer,
+.qo-dialog.is-success .qo-head { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .qo-sheet,
   .qo-dialog::backdrop,
   .qo-sticky,
-  .qo-product__media img { transition: none; }
+  .qo-head__media img { transition: none; }
   .qo-field.is-attention { animation: none; }
   .qo-spinner { animation-duration: 1.6s; }
 }
@@ -757,3 +797,14 @@ html.qo-lock { overflow: hidden; }
 }
 .qo-sizehelper__result { margin: 10px 0 0; font-size: 13px; line-height: 1.4; color: var(--qo-ink); }
 .qo-sizehelper__result:empty { display: none; }
+
+/* Клавіатура відкрита: стискаємо шапку, ховаємо зайве */
+.qo-kb .qo-head__media,
+.qo-kb .qo-price,
+.qo-kb .qo-hint--cta,
+.qo-kb .qo-grabber { display: none; }
+.qo-kb .qo-head { padding-top: 10px; }
+.qo-kb .qo-title { margin: 0; }
+
+/* Список відкривається вгору, якщо знизу мало місця */
+.qo-combo.is-up .qo-combo__list { top: auto; bottom: calc(100% + 4px); }

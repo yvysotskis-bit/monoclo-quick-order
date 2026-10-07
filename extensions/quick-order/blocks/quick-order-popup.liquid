@@ -42,21 +42,29 @@
         <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
       </button>
 
+      <div class="qo-head" data-qo-head data-qo-swipe>
+        <div class="qo-head__row">
+          <div class="qo-head__media"><img alt="" width="96" height="96" data-qo-image></div>
+          <div class="qo-head__info">
+            <h2 class="qo-title" id="qo-title" data-qo-title></h2>
+            <p class="qo-price">
+              <span class="qo-price__now" data-qo-price></span>
+              <s class="qo-price__old" data-qo-compare hidden></s>
+              <span class="qo-badge" data-qo-badge hidden></span>
+            </p>
+          </div>
+        </div>
+        <div class="qo-steps" data-qo-steps>
+          <button type="button" class="qo-steps__back" data-qo-back hidden>‹ Назад</button>
+          <span class="qo-steps__label" data-qo-step-label aria-live="polite"></span>
+          <span class="qo-steps__bar" aria-hidden="true"><i data-qo-bar></i></span>
+        </div>
+      </div>
+
       <div class="qo-body" data-qo-body>
         <section class="qo-view" data-qo-form-view>
-          <div class="qo-product" data-qo-swipe>
-            <div class="qo-product__media"><img alt="" width="96" height="96" data-qo-image></div>
-            <div class="qo-product__info">
-              <h2 class="qo-title" id="qo-title" data-qo-title></h2>
-              <p class="qo-price">
-                <span class="qo-price__now" data-qo-price></span>
-                <s class="qo-price__old" data-qo-compare hidden></s>
-                <span class="qo-badge" data-qo-badge hidden></span>
-              </p>
-            </div>
-          </div>
-
           <form class="qo-form" id="qo-form" novalidate autocomplete="on" data-qo-form>
+            <div class="qo-step" data-qo-step="1">
             <div data-qo-options></div>
 
             <div class="qo-field">
@@ -69,22 +77,34 @@
               <p class="qo-stock" data-qo-stock hidden></p>
             </div>
 
+            <div class="qo-recap" data-qo-recap hidden>
+              <div class="qo-recap__text">
+                <span class="qo-recap__title">Дані для замовлення</span>
+                <span class="qo-recap__line" data-qo-recap-line></span>
+              </div>
+              <button type="button" class="qo-recap__edit" data-qo-edit-data>Змінити</button>
+            </div>
+            </div>
+
+            <div class="qo-step" data-qo-step="2" hidden>
+            <p class="qo-note qo-note--hours qo-banner" data-qo-hours-note hidden></p>
+
             <div class="qo-field" data-qo-field="name">
               <label class="qo-label" for="qo-name">Ваше імʼя</label>
-              <input class="qo-input" id="qo-name" name="name" type="text" autocomplete="name" placeholder="Як до вас звертатися" maxlength="60" required data-qo-name>
+              <input class="qo-input" id="qo-name" name="name" type="text" autocomplete="given-name" autocapitalize="words" enterkeyhint="next" placeholder="Як до вас звертатися" maxlength="60" required data-qo-name>
               <p class="qo-hint qo-hint--field" data-qo-field-hint="name">Вкажіть імʼя, щоб менеджер знав, як до вас звертатися</p>
             </div>
 
             <div class="qo-field" data-qo-field="surname">
               <label class="qo-label" for="qo-surname">Прізвище <span class="qo-optional">(для накладної Нової пошти)</span></label>
-              <input class="qo-input" id="qo-surname" name="surname" type="text" autocomplete="family-name" placeholder="Ваше прізвище" maxlength="60" data-qo-surname>
+              <input class="qo-input" id="qo-surname" name="surname" type="text" autocomplete="family-name" autocapitalize="words" enterkeyhint="next" placeholder="Ваше прізвище" maxlength="60" data-qo-surname>
             </div>
 
             <div class="qo-field" data-qo-field="phone">
               <label class="qo-label" for="qo-phone">Номер телефону</label>
               <div class="qo-phone">
                 <span class="qo-phone__prefix" aria-hidden="true">+380</span>
-                <input class="qo-input qo-input--phone" id="qo-phone" name="tel" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="(__) ___ __ __" required data-qo-phone aria-describedby="qo-phone-hint">
+                <input class="qo-input qo-input--phone" id="qo-phone" name="tel" type="tel" inputmode="numeric" autocomplete="tel-national" enterkeyhint="next" placeholder="(__) ___ __ __" required data-qo-phone aria-describedby="qo-phone-hint">
               </div>
               <p class="qo-hint qo-hint--field" id="qo-phone-hint" data-qo-field-hint="phone">Менеджер звʼяжеться за цим номером</p>
             </div>
@@ -156,6 +176,7 @@
               <dt>Разом</dt>
               <dd data-qo-total></dd>
             </dl>
+            </div>
           </form>
         </section>
 
@@ -185,14 +206,13 @@
       </div>
 
       <footer class="qo-footer" data-qo-footer>
-        <p class="qo-hint qo-hint--cta" data-qo-cta-hint role="status" aria-live="polite"></p>
         <p class="qo-error" data-qo-error role="alert" hidden></p>
+        <p class="qo-hint qo-hint--cta" data-qo-cta-hint role="status" aria-live="polite"></p>
         <button type="submit" form="qo-form" class="qo-submit" data-qo-submit aria-disabled="true">
-          <span class="qo-submit__label">Замовити</span>
+          <span class="qo-submit__label" data-qo-submit-label>Далі</span>
           <span class="qo-spinner" aria-hidden="true"></span>
         </button>
-        <p class="qo-note" data-qo-note>{{ s.response_note | escape }}</p>
-        <p class="qo-note qo-note--hours" data-qo-hours-note hidden></p>
+        <p class="qo-note" data-qo-note hidden>{{ s.response_note | escape }}</p>
       </footer>
     </div>
   </dialog>
