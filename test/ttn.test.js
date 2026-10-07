@@ -100,3 +100,16 @@ test('без ключа Нової пошти кнопки ТТН немає', a
   await pay(ctx.app, 'inv-1', 20000);
   assert.equal(ctx.fetchFn.tg('sendMessage').at(-1).body.reply_markup, undefined);
 });
+
+test('«To many requests» від Нової пошти: ТТН повторює запит і створюється', async () => {
+  const { createNovaPoshta } = await import('../server/novaposhta.js');
+  let n = 0;
+  const fetchFn = async () => {
+    n += 1;
+    return Response.json(n < 3 ? { success: false, errors: ['To many requests'] } : { success: true, data: [{ ok: 1 }] });
+  };
+  const np = createNovaPoshta({ apiKey: 'k', fetchFn, sleep: async () => {} });
+  assert.deepEqual(await np.call('A', 'b', {}, { retries: 3 }), [{ ok: 1 }]);
+  n = 0;
+  await assert.rejects(np.call('A', 'b', {}), /many requests/i);
+});

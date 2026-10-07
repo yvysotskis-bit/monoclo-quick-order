@@ -20,7 +20,8 @@ export function recipientNames({ name, surname }) {
 const uah = (cents) => (cents % 100 === 0 ? String(cents / 100) : (cents / 100).toFixed(2));
 
 export function createTtnService({ np, config, store, now = () => new Date() }) {
-  const first = async (model, method, props) => (await np.call(model, method, props))[0];
+  const call = (model, method, props) => np.call(model, method, props, { retries: 3 });
+  const first = async (model, method, props) => (await call(model, method, props))[0];
 
   // Відправник знаходиться один раз і зберігається в базі
   async function sender() {
@@ -35,7 +36,7 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
     const phone = config.npSenderPhone || text(contact.Phones).split(',')[0];
     if (!phone) throw new Error('не вказано телефон відправника (змінна NP_SENDER_PHONE)');
 
-    const rows = await np.call('AddressGeneral', 'getWarehouses', {
+    const rows = await call('AddressGeneral', 'getWarehouses', {
       CityName: config.npSenderCity, Limit: '500', Page: '1', Language: 'UA',
     });
     const warehouse = rows.find((r) => text(r.Number) === config.npSenderWarehouse && r.CategoryOfWarehouse !== 'Postomat');
@@ -73,9 +74,14 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
 
     const from = await sender();
     // CityRef (довідник міст) відрізняється від SettlementRef, тому беремо його з будь-якої точки населеного пункту
-    const probe = await first('AddressGeneral', 'getWarehouses', { SettlementRef: delivery.city.ref, Limit: '1', Language: 'UA' });
-    if (!probe?.CityRef) throw new Error('Нова пошта не має відділень у цьому населеному пункті');
-    const cityRef = probe.CityRef;
+    const cityKey = `np_city:${delivery.city.ref}`;
+    let cityRef = store.getMeta(cityKey);
+    if (!cityRef) {
+      const probe = await first('AddressGeneral', 'getWarehouses', { SettlementRef: delivery.city.ref, Limit: '1', Language: 'UA' });
+      if (!probe?.CityRef) throw new Error('Нова пошта не має відділень у цьому населеному пункті');
+      cityRef = probe.CityRef;
+      store.setMeta(cityKey, cityRef);
+    }
 
     const recipient = await first('Counterparty', 'save', {
       FirstName: names.first,

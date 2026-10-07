@@ -37,8 +37,8 @@ export function normalizeStreet(raw) {
   };
 }
 
-export function createNovaPoshta({ apiKey, fetchFn }) {
-  async function call(modelName, calledMethod, methodProperties) {
+export function createNovaPoshta({ apiKey, fetchFn, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+  async function call(modelName, calledMethod, methodProperties, { retries = 0 } = {}) {
     const res = await fetchFn(API_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -48,6 +48,12 @@ export function createNovaPoshta({ apiKey, fetchFn }) {
     if (!res.ok) throw new Error(`Нова пошта відповіла ${res.status}`);
     const data = await res.json().catch(() => null);
     if (!data?.success) {
+      // Обмеження частоти запитів: чекаємо й пробуємо знову (лише там, де це дозволено)
+      const text = (data?.errors || []).join(' ');
+      if (retries > 0 && /many requests/i.test(text)) {
+        await sleep(2000);
+        return call(modelName, calledMethod, methodProperties, { retries: retries - 1 });
+      }
       // Ключ у помилку не потрапляє: лише відповідь API
       throw new Error(`Нова пошта: ${(data?.errors || []).join('; ') || 'невідома помилка'}`);
     }
