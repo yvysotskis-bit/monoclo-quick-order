@@ -129,7 +129,12 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
       RecipientsPhone: d.phone.replace(/\D/g, ''),
     };
     if (cod > 0 && !noCod) {
-      props.BackwardDeliveryData = [{ PayerType: 'Recipient', CargoType: 'Money', RedeliveryString: uah(cod) }];
+      // «Контроль оплати» (оплата товару при отриманні) або класичний «Грошовий переказ»
+      if (config.npCodMode === 'transfer') {
+        props.BackwardDeliveryData = [{ PayerType: 'Recipient', CargoType: 'Money', RedeliveryString: uah(cod) }];
+      } else {
+        props.AfterpaymentOnGoodsCost = uah(cod);
+      }
     }
 
     const doc = await first('InternetDocument', 'save', props);

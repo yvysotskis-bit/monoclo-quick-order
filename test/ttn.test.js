@@ -45,7 +45,8 @@ test('після оплати зʼявляється кнопка ТТН, ТТН
   assert.equal(p.PayerType, 'Recipient');
   assert.equal(p.ServiceType, 'WarehouseWarehouse');
   assert.equal(p.Cost, '1780');
-  assert.deepEqual(p.BackwardDeliveryData, [{ PayerType: 'Recipient', CargoType: 'Money', RedeliveryString: '1580' }]);
+  assert.equal(p.AfterpaymentOnGoodsCost, '1580');
+  assert.equal(p.BackwardDeliveryData, undefined);
   assert.equal(p.SenderAddress, 'sender-wh');
   assert.equal(p.RecipientAddress, NP.branch);
   assert.equal(p.CityRecipient, 'city-ref');
@@ -65,7 +66,7 @@ test('після оплати зʼявляється кнопка ТТН, ТТН
 test('повна оплата: післяплати немає', async () => {
   const { app, fetchFn } = await paidOrder({ surname: 'Петренко', delivery: warehouse }, 178000, 'pay:full');
   await press(app, 'ttn:1');
-  assert.equal(docCalls(fetchFn)[0].body.methodProperties.BackwardDeliveryData, undefined);
+  assert.equal(docCalls(fetchFn)[0].body.methodProperties.AfterpaymentOnGoodsCost, undefined);
 });
 
 test('адресна доставка: створюється адреса одержувача', async () => {
@@ -125,7 +126,7 @@ test('післяплата недоступна: пропонується ТТН
 
   await press(app, 'ttn0:1');
   const p = docCalls(fetchFn).at(-1).body.methodProperties;
-  assert.equal(p.BackwardDeliveryData, undefined);
+  assert.equal(p.AfterpaymentOnGoodsCost, undefined);
   assert.match(fetchFn.tg('sendMessage').at(-1).body.text, /БЕЗ післяплати/);
   assert.equal(store.getOrder(1).ttn_number, '20451234567890');
 });

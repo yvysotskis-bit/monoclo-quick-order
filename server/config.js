@@ -65,6 +65,8 @@ export function loadConfig(env = process.env) {
     npSenderWarehouse: optional('NP_SENDER_WAREHOUSE') || '31',
     npSenderPhone: optional('NP_SENDER_PHONE'),
     npParcel: { weightKg: number('NP_WEIGHT_KG', 1), length: number('NP_LENGTH_CM', 30), width: number('NP_WIDTH_CM', 25), height: number('NP_HEIGHT_CM', 5) },
+    // control = «Контроль оплати» (за замовчуванням), transfer = «Грошовий переказ»
+    npCodMode: optional('NP_COD_MODE') === 'transfer' ? 'transfer' : 'control',
     npDescription: optional('NP_DESCRIPTION') || 'Monoclo',
 
     // Передоплата через Monobank (Plata by mono): без токена кнопка «Передоплата» не показується
