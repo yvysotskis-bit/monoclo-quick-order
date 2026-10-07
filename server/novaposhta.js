@@ -4,7 +4,7 @@ const API_URL = 'https://api.novaposhta.ua/v2.0/json/';
 
 // Типи відділень у довіднику Нової пошти
 export const TYPE_BRANCH = '841339c7-591a-42e2-8233-7a0a00f0ed6f'; // Поштове відділення
-export const TYPE_POSTOMAT = '95dc212d-479c-4ffb-a8ab-8c1b9073d0bc'; // Поштомат
+export const TYPE_POSTOMAT = 'f9316480-5f2d-425d-bc2c-ac7cd29decf0'; // Поштомат
 
 const text = (value) => (typeof value === 'string' ? value.trim() : '');
 
@@ -62,18 +62,40 @@ export function createNovaPoshta({ apiKey, fetchFn }) {
 
     // kind: 'warehouse' (відділення) або 'postomat'
     async searchPoints({ settlement, query, kind }) {
-      const rows = await call('AddressGeneral', 'getWarehouses', {
-        SettlementRef: settlement,
-        FindByString: query || '',
-        TypeOfWarehouseRef: kind === 'postomat' ? TYPE_POSTOMAT : TYPE_BRANCH,
-        Limit: '100',
-        Page: '1',
-        Language: 'UA',
-      });
-      return rows
-        .filter((r) => (kind === 'postomat' ? r.CategoryOfWarehouse === 'Postomat' : r.CategoryOfWarehouse !== 'Postomat'))
+      const wantPostomat = kind === 'postomat';
+      const isPostomat = (r) =>
+        r.CategoryOfWarehouse === 'Postomat' ||
+        r.TypeOfWarehouse === TYPE_POSTOMAT ||
+        /поштомат/i.test(text(r.Description));
+      const q = text(query).toLowerCase();
+      const matches = (r) =>
+        !q ||
+        [r.Number, r.Description, r.ShortAddress].some((v) => text(v).toLowerCase().includes(q));
+      const fetchPage = (extra, page) =>
+        call('AddressGeneral', 'getWarehouses', {
+          SettlementRef: settlement,
+          Limit: '500',
+          Page: String(page),
+          Language: 'UA',
+          ...extra,
+        });
+
+      // Пошук за типом (швидко); номер/адресу фільтруємо самі, бо FindByString їх часто не знаходить
+      let rows = await fetchPage(wantPostomat ? { TypeOfWarehouseRef: TYPE_POSTOMAT } : {}, 1);
+      let picked = rows.filter((r) => isPostomat(r) === wantPostomat).filter(matches);
+      if (!picked.length && wantPostomat) {
+        // Запасний шлях: усі точки міста (до 3 сторінок), поштомати відбираємо самі
+        rows = [];
+        for (let page = 1; page <= 3; page += 1) {
+          const chunk = await fetchPage({}, page);
+          rows = rows.concat(chunk);
+          if (chunk.length < 500) break;
+        }
+        picked = rows.filter(isPostomat).filter(matches);
+      }
+      return picked
         .slice(0, 40)
-        .map((r) => normalizePoint(r, kind === 'postomat' ? 'postomat' : 'branch'))
+        .map((r) => normalizePoint(r, wantPostomat ? 'postomat' : 'branch'))
         .filter((p) => p.ref && p.name);
     },
 

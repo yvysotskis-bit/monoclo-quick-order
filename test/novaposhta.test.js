@@ -162,3 +162,24 @@ test('KeyCRM відхилив поля доставки (422): замовлен�
   assert.deepEqual(attempts[1].body.shipping, { shipping_address_city: 'Чернівці' });
   assert.match(attempts[1].body.manager_comment, /Відділення №3/);
 });
+
+test('поштомати: якщо фільтр за типом нічого не дав, добираємо з усіх точок міста і шукаємо за номером', async () => {
+  const { createNovaPoshta } = await import('../server/novaposhta.js');
+  const calls = [];
+  const fetchFn = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push(body.methodProperties);
+    const rows = body.methodProperties.TypeOfWarehouseRef
+      ? []
+      : [
+        { Ref: 'r1', Number: '65634', Description: 'Поштомат "Нова Пошта" №65634: вул. Головна, 1', ShortAddress: 'вул. Головна, 1', CategoryOfWarehouse: 'Postomat' },
+        { Ref: 'r2', Number: '5', Description: 'Відділення №5', ShortAddress: 'x', CategoryOfWarehouse: 'Branch' },
+      ];
+    return Response.json({ success: true, data: rows });
+  };
+  const np = createNovaPoshta({ apiKey: 'k', fetchFn });
+  const found = await np.searchPoints({ settlement: 'ref', query: '65634', kind: 'postomat' });
+  assert.equal(found.length, 1);
+  assert.equal(found[0].number, '65634');
+  assert.equal(calls.length, 2);
+});

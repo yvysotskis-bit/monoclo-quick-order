@@ -120,7 +120,7 @@ export function mockFetch({ productResponse } = {}) {
         ] }] });
       }
       if (calledMethod === 'getWarehouses') {
-        const postomat = p.TypeOfWarehouseRef === '95dc212d-479c-4ffb-a8ab-8c1b9073d0bc';
+        const postomat = p.TypeOfWarehouseRef === 'f9316480-5f2d-425d-bc2c-ac7cd29decf0';
         const rows = postomat
           ? [{ Ref: NP.postomat, Number: '4101', Description: 'Поштомат "Нова Пошта" №4101: вул. Головна, 12', ShortAddress: 'вул. Головна, 12', CategoryOfWarehouse: 'Postomat' }]
           : [
