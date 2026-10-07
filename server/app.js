@@ -4,6 +4,7 @@ import { validateSubmission } from './validate.js';
 import { fetchProduct, optionPairs } from './shopify-product.js';
 import { createTelegram } from './telegram.js';
 import { createKeycrm } from './keycrm.js';
+import { createNovaPoshta } from './novaposhta.js';
 import { createMonobank } from './monobank.js';
 import {
   dateKey,
@@ -90,8 +91,12 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       token: config.keycrmToken,
       sourceId: config.keycrmSourceId,
       statusMap: config.keycrmStatusMap,
+      deliveryServiceId: config.keycrmNovaPoshtaServiceId,
       fetchFn,
     })
+    : null;
+  const novaPoshta = config.novaPoshtaApiKey
+    ? createNovaPoshta({ apiKey: config.novaPoshtaApiKey, fetchFn })
     : null;
 
   // Передоплата працює, лише коли є токен Monobank і публічна адреса сервера (для вебхука)
@@ -274,6 +279,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         name: input.name,
         phone: input.phone,
         city: input.city,
+        delivery: input.delivery,
         comment: input.comment,
         utm: input.utm,
         referrer: input.referrer,
@@ -609,6 +615,61 @@ p{margin:8px 0;color:#555}</style></head>
 <script>setTimeout(function(){location.href=${JSON.stringify(link)};},150);</script></body></html>`;
   }
 
+  /* ---------- Нова пошта: підказки міст, відділень, вулиць ---------- */
+
+  const npCache = new Map();
+  const NP_CACHE_TTL_MS = 10 * 60 * 1000;
+  const NP_CACHE_MAX = 500;
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  // Однакові запити (наприклад, «Київ») не навантажують API Нової пошти щоразу
+  async function cached(key, loader) {
+    const hit = npCache.get(key);
+    if (hit && hit.expires > Date.now()) return hit.value;
+    const value = await loader();
+    if (npCache.size >= NP_CACHE_MAX) npCache.delete(npCache.keys().next().value);
+    npCache.set(key, { value, expires: Date.now() + NP_CACHE_TTL_MS });
+    return value;
+  }
+
+  async function novaPoshtaLookup(req, url, kind) {
+    // Запит має прийти через App Proxy свого магазину
+    if (!verifyProxySignature(url.searchParams, config.apiSecret) || url.searchParams.get('shop') !== config.shop) {
+      throw new HttpError(401, 'unauthorized', 'Недійсний підпис');
+    }
+    if (!novaPoshta) throw new HttpError(503, 'np_disabled', 'Нова пошта не підключена');
+    if (!store.takeHit(`np:${clientIp(req)}`, 120, 60_000, now().getTime())) {
+      throw new HttpError(429, 'rate_limited', 'Забагато запитів');
+    }
+
+    const q = (url.searchParams.get('q') || '').trim().slice(0, 60);
+    const settlement = url.searchParams.get('settlement') || '';
+    try {
+      if (kind === 'cities') {
+        if (q.length < 2) return { ok: true, items: [] };
+        return { ok: true, items: await cached(`c:${q.toLowerCase()}`, () => novaPoshta.searchCities(q)) };
+      }
+      if (!UUID.test(settlement)) throw new HttpError(422, 'bad_request', 'Оберіть місто');
+      if (kind === 'points') {
+        const pointKind = url.searchParams.get('kind') === 'postomat' ? 'postomat' : 'warehouse';
+        return {
+          ok: true,
+          items: await cached(`p:${pointKind}:${settlement}:${q.toLowerCase()}`,
+            () => novaPoshta.searchPoints({ settlement, query: q, kind: pointKind })),
+        };
+      }
+      if (q.length < 2) return { ok: true, items: [] };
+      return {
+        ok: true,
+        items: await cached(`s:${settlement}:${q.toLowerCase()}`, () => novaPoshta.searchStreets({ settlement, query: q })),
+      };
+    } catch (err) {
+      if (err instanceof HttpError) throw err;
+      log.error('nova poshta lookup failed', err.message);
+      throw new HttpError(502, 'upstream', 'Нова пошта недоступна');
+    }
+  }
+
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const send = (code, body) => {
@@ -626,6 +687,8 @@ p{margin:8px 0;color:#555}</style></head>
         const { code, body } = status();
         return send(code, body);
       }
+      const np = req.method === 'GET' && /^\/proxy\/np\/(cities|points|streets)$/.exec(url.pathname);
+      if (np) return send(200, await novaPoshtaLookup(req, url, np[1]));
       if (req.method === 'POST' && url.pathname === '/proxy/submit') return send(200, await submit(req, url));
       if (req.method === 'POST' && url.pathname === '/telegram/webhook') return send(200, await telegramWebhook(req));
       if (req.method === 'POST' && url.pathname === '/mono/webhook') return send(200, await monoWebhook(req));

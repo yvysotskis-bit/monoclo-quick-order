@@ -19,6 +19,22 @@ export function describeSource({ utm = {}, referrer = '', click = '' } = {}) {
   return referrer || '';
 }
 
+// Доставка Новою поштою людською мовою; повертає масив рядків (порожній, якщо нічого не вказано)
+export function describeDelivery(delivery) {
+  if (!delivery) return [];
+  const { method, city, point, street, house, apartment } = delivery;
+  const lines = [];
+  const place = city?.present || city?.name;
+  if (place) lines.push(`📍 ${place}`);
+  if (method === 'warehouse' || method === 'postomat') {
+    if (point?.name) lines.push(`🚚 Нова пошта: ${point.name}`);
+  } else if (method === 'courier') {
+    const address = [street?.name, house && `буд. ${house}`, apartment && `кв. ${apartment}`].filter(Boolean).join(', ');
+    lines.push(`🚚 Нова пошта, адресна доставка${address ? `: ${address}` : ''}`);
+  }
+  return lines;
+}
+
 export function buildOrderMessage(o) {
   const lines = [
     `<b>🛍 Швидке замовлення #${escapeHtml(o.orderNumber)}</b>`,
@@ -35,7 +51,9 @@ export function buildOrderMessage(o) {
     `👤 ${escapeHtml(o.name)}`,
     `📞 ${escapeHtml(o.phone)}`,
   );
-  if (o.city) lines.push(`📍 ${escapeHtml(o.city)}`);
+  const delivery = describeDelivery(o.delivery);
+  if (delivery.length) lines.push(...delivery.map(escapeHtml));
+  else if (o.city) lines.push(`📍 ${escapeHtml(o.city)}`);
   if (o.comment) lines.push(`💬 ${escapeHtml(o.comment)}`);
   const source = describeSource(o);
   lines.push('', `📈 ${source ? escapeHtml(source) : 'прямий візит'}`, '#Monoclo');

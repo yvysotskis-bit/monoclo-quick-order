@@ -55,6 +55,11 @@ export function loadConfig(env = process.env) {
     keycrmToken: optional('KEYCRM_API_KEY'),
     keycrmSourceId: number('KEYCRM_SOURCE_ID', 216),
     keycrmStatusMap: parseJson(optional('KEYCRM_STATUS_MAP'), 'KEYCRM_STATUS_MAP'),
+    // Служба доставки «Нова пошта» у KeyCRM (Налаштування → Служби доставки); 0 = не вказувати
+    keycrmNovaPoshtaServiceId: number('KEYCRM_NOVA_POSHTA_SERVICE_ID', 0),
+
+    // Нова пошта: ключ з кабінету my.novaposhta.ua. Без нього місто й відділення вводяться вручну
+    novaPoshtaApiKey: optional('NOVA_POSHTA_API_KEY'),
 
     // Передоплата через Monobank (Plata by mono): без токена кнопка «Передоплата» не показується
     monobankToken: optional('MONOBANK_TOKEN'),

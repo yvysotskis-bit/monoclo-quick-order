@@ -24,6 +24,8 @@ export const config = {
   keycrmStatusMap: {},
   keycrmPaymentMethodId: 0,
   monobankToken: '',
+  novaPoshtaApiKey: '',
+  keycrmNovaPoshtaServiceId: 0,
   prepayAmountUah: 200,
   payMaxAmountUah: 50000,
   payValiditySeconds: 86400,
@@ -39,6 +41,16 @@ export const config = {
 const monoKeys = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
 const monoPublicPem = monoKeys.publicKey.export({ type: 'spki', format: 'pem' });
 export const signMono = (raw) => crypto.sign('sha256', Buffer.from(raw), monoKeys.privateKey).toString('base64');
+
+// Ідентифікатори з довідника Нової пошти для тестів
+export const NP = {
+  city: 'e71a0b8e-9b3d-4a39-8a1f-111111111111',
+  branch: 'd1a8e3e2-1111-4a39-8a1f-222222222222',
+  branch2: 'd1a8e3e2-1111-4a39-8a1f-333333333333',
+  postomat: 'd1a8e3e2-1111-4a39-8a1f-444444444444',
+  leak: 'd1a8e3e2-1111-4a39-8a1f-555555555555',
+  street: 'a1a8e3e2-1111-4a39-8a1f-666666666666',
+};
 
 export const product = {
   handle: 'tee',
@@ -97,15 +109,44 @@ export function mockFetch({ productResponse } = {}) {
         return Response.json({ invoiceId: `inv-${fn.invoices}`, pageUrl: `https://pay.mono.bank/inv-${fn.invoices}` });
       }
     }
+    if (u.startsWith('https://api.novaposhta.ua/')) {
+      fn.np += 1;
+      if (fn.fail.novaposhta) return new Response('{"success":false,"errors":["boom"]}', { status: 200 });
+      const { calledMethod, methodProperties: p } = call.body;
+      if (calledMethod === 'searchSettlements') {
+        return Response.json({ success: true, data: [{ TotalCount: '2', Addresses: [
+          { Ref: NP.city, MainDescription: 'Чернівці', Present: 'м. Чернівці, Чернівецька обл.', Area: 'Чернівецька', Region: '', Warehouses: '58' },
+          { Ref: 'ffffffff-0000-0000-0000-000000000001', MainDescription: 'Чернівці', Present: 'с. Чернівці, Вінницька обл.', Area: 'Вінницька', Region: 'Могилів-Подільський', Warehouses: '1' },
+        ] }] });
+      }
+      if (calledMethod === 'getWarehouses') {
+        const postomat = p.TypeOfWarehouseRef === '95dc212d-479c-4ffb-a8ab-8c1b9073d0bc';
+        const rows = postomat
+          ? [{ Ref: NP.postomat, Number: '4101', Description: 'Поштомат "Нова Пошта" №4101: вул. Головна, 12', ShortAddress: 'вул. Головна, 12', CategoryOfWarehouse: 'Postomat' }]
+          : [
+            { Ref: NP.branch, Number: '3', Description: 'Відділення №3: вул. Ольги Кобилянської, 1', ShortAddress: 'вул. Ольги Кобилянської, 1', CategoryOfWarehouse: 'Branch' },
+            { Ref: NP.branch2, Number: '12', Description: 'Відділення №12: просп. Незалежності, 5', ShortAddress: 'просп. Незалежності, 5', CategoryOfWarehouse: 'Branch' },
+            { Ref: NP.leak, Number: '9999', Description: 'Поштомат, що не має бути серед відділень', CategoryOfWarehouse: 'Postomat' },
+          ];
+        return Response.json({ success: true, data: rows.filter((r) => !p.FindByString || r.Description.includes(p.FindByString)) });
+      }
+      if (calledMethod === 'searchSettlementStreets') {
+        return Response.json({ success: true, data: [{ Addresses: [{ SettlementStreetRef: NP.street, Present: 'вул. Головна', SettlementStreetDescription: 'Головна' }] }] });
+      }
+    }
     if (u.startsWith('https://openapi.keycrm.app/')) {
       if (fn.fail.keycrm) return new Response('{"message":"boom"}', { status: 500 });
+      if (fn.fail.keycrmShipping && call.body?.shipping?.shipping_service) {
+        return new Response('{"message":"shipping invalid"}', { status: 422 });
+      }
       return Response.json({ id: 777 });
     }
     throw new Error(`unexpected fetch ${u}`);
   };
   fn.calls = calls;
-  fn.fail = { telegram: false, keycrm: false, monobank: false };
+  fn.fail = { telegram: false, keycrm: false, monobank: false, novaposhta: false, keycrmShipping: false };
   fn.invoices = 0;
+  fn.np = 0;
   fn.mono = () => calls.filter((c) => c.url.includes('api.monobank.ua') && c.url.endsWith('/invoice/create'));
   fn.monoRemoved = () => calls.filter((c) => c.url.endsWith('/invoice/remove'));
   fn.tg = (method) => calls.filter((c) => c.url.includes('api.telegram.org') && c.url.endsWith(`/${method}`));

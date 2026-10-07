@@ -39,6 +39,35 @@ function cleanUtm(raw) {
   return utm;
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const METHODS = ['warehouse', 'postomat', 'courier'];
+
+// Доставка Новою поштою: усе необовʼязкове й очищується від розмітки. Ідентифікатори (ref) беремо лише у форматі UUID.
+export function cleanDelivery(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const ref = (value) => (typeof value === 'string' && UUID.test(value) ? value : '');
+  const method = METHODS.includes(raw.method) ? raw.method : '';
+
+  const city = {
+    ref: ref(raw.city?.ref),
+    name: cleanText(raw.city?.name, 80),
+    present: cleanText(raw.city?.present, 120),
+    area: cleanText(raw.city?.area, 80),
+  };
+  const point = {
+    ref: ref(raw.point?.ref),
+    number: cleanText(raw.point?.number, 20),
+    name: cleanText(raw.point?.name, 200),
+  };
+  const street = { ref: ref(raw.street?.ref), name: cleanText(raw.street?.name, 120) };
+  const house = cleanText(raw.house, 20);
+  const apartment = cleanText(raw.apartment, 20);
+
+  const hasAnything = city.name || point.name || street.name || house || apartment;
+  if (!hasAnything) return null;
+  return { method, city, point, street, house, apartment };
+}
+
 export function validateSubmission(body, { maxQty }) {
   if (!body || typeof body !== 'object') return fail('bad_request', 'Некоректний запит');
 
@@ -66,7 +95,9 @@ export function validateSubmission(body, { maxQty }) {
     ? body.client_id
     : '';
 
-  const city = cleanText(body.city, 60);
+  const delivery = cleanDelivery(body.delivery);
+  // Місто: обране зі списку Нової пошти або введене вручну
+  const city = delivery?.city.name || cleanText(body.city, 60);
   const click = ['fbclid', 'gclid', 'ttclid'].includes(body.click) ? body.click : '';
 
   return {
@@ -74,6 +105,7 @@ export function validateSubmission(body, { maxQty }) {
     value: {
       handle,
       city,
+      delivery,
       utm: cleanUtm(body.utm),
       referrer: cleanText(body.referrer, 100),
       click,
