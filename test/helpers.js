@@ -139,6 +139,7 @@ export function mockFetch({ productResponse } = {}) {
       if (calledMethod === 'getStreet') return Response.json({ success: true, data: [{ Ref: 'street-ref' }] });
       if (calledMethod === 'save' && call.body.modelName === 'Address') return Response.json({ success: true, data: [{ Ref: 'address-ref' }] });
       if (calledMethod === 'save' && call.body.modelName === 'InternetDocument') {
+        if (fn.fail.npCod && p.BackwardDeliveryData) return Response.json({ success: false, errors: ['Передана послуга Післяплата недоступна'], data: [] });
         return Response.json({ success: true, data: [{ Ref: 'doc-ref', IntDocNumber: '20451234567890' }] });
       }
       if (calledMethod === 'getWarehouses') {

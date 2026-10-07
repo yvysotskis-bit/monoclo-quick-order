@@ -27,6 +27,7 @@ import {
   describeDelivery,
   buildTtnFailedMessage,
   ttnKeyboard,
+  ttnNoCodKeyboard,
   buildPayFailedMessage,
   buildPaymentMessage,
   parseAmountKopecks,
@@ -318,7 +319,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     if (query.data === 'pay:link') return paymentLink(query, 'prepay');
     if (query.data === 'pay:full') return paymentLink(query, 'full');
     if (query.data === 'pay:custom') return customAmountPrompt(query);
-    if (query.data?.startsWith('ttn:')) return createTtn(query);
+    if (query.data?.startsWith('ttn:') || query.data?.startsWith('ttn0:')) return createTtn(query);
 
     const match = STATUS_ACTION.exec(query.data || '');
     if (!match) return { ok: true };
@@ -503,7 +504,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   async function createTtn(query) {
     const message = query.message;
     const answer = (text) => telegram.answerCallback(query.id, text).catch(() => {});
-    const order = store.getOrder(Number(query.data.slice(4)));
+    const noCod = query.data.startsWith('ttn0:');
+    const order = store.getOrder(Number(query.data.slice(query.data.indexOf(':') + 1)));
     if (!ttnService) { await answer('Нова пошта не налаштована'); return { ok: true }; }
     if (!order) { await answer('Замовлення не знайдено'); return { ok: true }; }
     if (order.ttn_number) { await answer(`ТТН уже створено: ${order.ttn_number}`); return { ok: true }; }
@@ -511,7 +513,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     await once('ttn', order.id, async () => {
       const replyTo = order.tg_message_id || message.message_id;
       try {
-        const ttn = await ttnService.create({ order, paidCents: store.paidTotal(order.id) });
+        const ttn = await ttnService.create({ order, paidCents: store.paidTotal(order.id), noCod });
         store.setTtn(order.id, ttn.number, ttn.ref);
         let tracked = false;
         if (keycrm && order.crm_order_id) {
@@ -526,13 +528,17 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
           number: ttn.number,
           codUah: ttn.codUah,
           costUah: ttn.costUah,
+          unpaidUah: ttn.unpaidUah,
           address: describeDelivery(order.data.delivery).join('\n'),
           tracked,
         }), { replyTo });
         await answer('ТТН створено');
       } catch (err) {
         log.error('ttn failed', err.message);
-        await telegram.sendText(buildTtnFailedMessage(order.order_number, err.message), { replyTo }).catch(() => {});
+        await telegram.sendText(buildTtnFailedMessage(order.order_number, err.message), {
+          replyTo,
+          replyMarkup: /післяплат/i.test(err.message) && store.paidTotal(order.id) < order.data.totalCents ? ttnNoCodKeyboard(order.id) : undefined,
+        }).catch(() => {});
         await answer('Не вдалося створити ТТН');
       }
     });

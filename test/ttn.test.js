@@ -113,3 +113,19 @@ test('«To many requests» від Нової пошти: ТТН повторює
   n = 0;
   await assert.rejects(np.call('A', 'b', {}), /many requests/i);
 });
+
+test('післяплата недоступна: пропонується ТТН без післяплати, і вона створюється', async () => {
+  const { app, fetchFn, store } = await paidOrder({ surname: 'Петренко', delivery: warehouse });
+  fetchFn.fail.npCod = true;
+  await press(app, 'ttn:1');
+  const failed = fetchFn.tg('sendMessage').at(-1);
+  assert.match(failed.body.text, /Післяплата недоступна/);
+  assert.equal(failed.body.reply_markup.inline_keyboard[0][0].callback_data, 'ttn0:1');
+  assert.equal(store.getOrder(1).ttn_number, null);
+
+  await press(app, 'ttn0:1');
+  const p = docCalls(fetchFn).at(-1).body.methodProperties;
+  assert.equal(p.BackwardDeliveryData, undefined);
+  assert.match(fetchFn.tg('sendMessage').at(-1).body.text, /БЕЗ післяплати/);
+  assert.equal(store.getOrder(1).ttn_number, '20451234567890');
+});

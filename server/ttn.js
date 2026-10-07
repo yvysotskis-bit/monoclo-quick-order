@@ -63,7 +63,7 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
   }
 
   // order — рядок із бази; paidCents — сума, сплачена наперед
-  async function create({ order, paidCents }) {
+  async function create({ order, paidCents, noCod = false }) {
     const d = order.data;
     const delivery = d.delivery;
     if (!delivery?.method) throw new Error('клієнт не обрав спосіб доставки Новою поштою');
@@ -128,7 +128,7 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
       ContactRecipient: contactRef,
       RecipientsPhone: d.phone.replace(/\D/g, ''),
     };
-    if (cod > 0) {
+    if (cod > 0 && !noCod) {
       props.BackwardDeliveryData = [{ PayerType: 'Recipient', CargoType: 'Money', RedeliveryString: uah(cod) }];
     }
 
@@ -137,7 +137,8 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
     return {
       number: doc.IntDocNumber,
       ref: doc.Ref || '',
-      codUah: cod / 100,
+      codUah: noCod ? 0 : cod / 100,
+      unpaidUah: noCod ? cod / 100 : 0,
       costUah: d.totalCents / 100,
     };
   }
