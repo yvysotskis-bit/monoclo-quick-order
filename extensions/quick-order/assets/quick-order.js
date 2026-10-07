@@ -295,6 +295,8 @@
       }
     });
     refs.back.addEventListener('click', function () { goBack(); });
+    // Підказка «Оберіть колір» клікабельна: веде до поля, якого бракує
+    refs.ctaHint.addEventListener('click', function () { if (refs.ctaHint.textContent) highlightMissing(); });
     // Ctrl/⌘+Enter відправляє замовлення з будь-якого поля
     dialog.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && state && state.step === 2) {

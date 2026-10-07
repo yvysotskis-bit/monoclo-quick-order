@@ -831,3 +831,5 @@ html.qo-lock { overflow: hidden; }
   .qo-trust li::before { content: '✓'; color: var(--qo-strong); font-weight: 600; }
   .qo-keys { display: block; margin: 10px 0 0; font-size: 11px; text-align: center; color: var(--qo-placeholder); }
 }
+
+.qo-hint--cta:not(:empty) { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; color: var(--qo-ink); }
