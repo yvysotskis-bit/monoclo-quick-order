@@ -206,6 +206,20 @@ async function flow(name, viewport) {
 await flow('desktop', { width: 1280, height: 820 });
 await flow('mobile', { width: 390, height: 844 });
 
+// Підбір розміру без вибраного кольору: попап підказує, що ще потрібно
+{
+  const { page, ctx, errors } = await session('size-first', { width: 390, height: 844 }, '?hour=12');
+  await open(page);
+  await page.click('.qo-sizehelper__toggle');
+  await page.fill('.qo-sizehelper__field:nth-child(1) input', '180');
+  await page.fill('.qo-sizehelper__field:nth-child(2) input', '78');
+  await page.click('.qo-sizehelper__go');
+  assert.match(await page.textContent('.qo-sizehelper__result'), /Оберіть колір/);
+  assert.equal(await page.evaluate(() => !!document.querySelector('[data-qo-field="option-0"].is-attention')), true);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
 // Помилки відправки
 for (const mode of ['network', 'soldout', 'invalid']) {
   const { page, ctx, shot, errors } = await session(`mobile-${mode}`, { width: 390, height: 844 }, `?mode=${mode}`);

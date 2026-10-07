@@ -587,6 +587,12 @@
       if (valueAvailable(optionIndex, size)) {
         selectValue(optionIndex, size);
         result.textContent = 'Рекомендуємо ' + size + ' і вже обрали його. Усі наші речі оверсайз: якщо хочете щільніше, візьміть на розмір менше.';
+        // Бракує іншого варіанта (наприклад, кольору): показуємо його й підсвічуємо
+        var next = optionMissing();
+        if (next) {
+          result.textContent = 'Рекомендуємо ' + size + ' і вже обрали його. ' + next.text + '.';
+          highlightMissing();
+        }
       } else {
         result.textContent = 'Рекомендуємо ' + size + ', але в обраному кольорі його зараз немає. Спробуйте інший колір.';
       }
