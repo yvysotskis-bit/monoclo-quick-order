@@ -808,3 +808,26 @@ html.qo-lock { overflow: hidden; }
 
 /* Список відкривається вгору, якщо знизу мало місця */
 .qo-combo.is-up .qo-combo__list { top: auto; bottom: calc(100% + 4px); }
+
+/* ---------- Комп'ютер: усе на одному екрані, підсумок і кнопка завжди видно ---------- */
+.qo-footer__sum, .qo-trust, .qo-keys { display: none; }
+@media (min-width: 641px) {
+  .qo-footer__sum { display: block; margin-bottom: 12px; }
+  .qo-footer__sumrow { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--qo-muted); }
+  .qo-footer__sumrow strong { font-size: 22px; font-weight: 600; color: var(--qo-ink); }
+  .qo-footer__deliv { margin: 4px 0 0; font-size: 12px; line-height: 1.4; color: var(--qo-muted); }
+  .qo-footer__deliv[hidden] { display: none; }
+  .qo-summary { display: none; }
+  .qo-steps { display: none; }
+  .qo-head { padding: 22px 56px 16px 24px; }
+  .qo-head__media { width: 72px; height: 72px; }
+  .qo-step { gap: 18px; }
+  .qo-form { gap: 18px; }
+  .qo-trust {
+    display: grid; gap: 4px; margin: 12px 0 0; padding: 0; list-style: none;
+    font-size: 12px; color: var(--qo-muted);
+  }
+  .qo-trust li { display: flex; gap: 8px; align-items: baseline; }
+  .qo-trust li::before { content: '✓'; color: var(--qo-strong); font-weight: 600; }
+  .qo-keys { display: block; margin: 10px 0 0; font-size: 11px; text-align: center; color: var(--qo-placeholder); }
+}

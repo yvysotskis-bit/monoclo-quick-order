@@ -19,6 +19,24 @@ export function normalizeCity(raw) {
   };
 }
 
+const DAYS = [['Monday', 'Пн'], ['Tuesday', 'Вт'], ['Wednesday', 'Ср'], ['Thursday', 'Чт'], ['Friday', 'Пт'], ['Saturday', 'Сб'], ['Sunday', 'Нд']];
+
+// Графік роботи коротко: «Пн–Пт 09:00–20:00, Сб–Нд 09:00–18:00»; вихідні пропускаються
+export function formatSchedule(schedule) {
+  if (!schedule || typeof schedule !== 'object') return '';
+  const groups = [];
+  for (const [key, label] of DAYS) {
+    const value = text(schedule[key]).replace('-', '–');
+    const open = value && value !== '–' && !/^0?0:00–0?0:00$/.test(value);
+    const last = groups.at(-1);
+    if (last && last.value === (open ? value : '') && last.open === open) last.to = label;
+    else groups.push({ from: label, to: label, value: open ? value : '', open });
+  }
+  const parts = groups.filter((g) => g.open).map((g) => `${g.from === g.to ? g.from : `${g.from}–${g.to}`} ${g.value}`);
+  if (parts.length === 1 && groups.length === 1) return `Щодня ${groups[0].value}`;
+  return parts.join(', ');
+}
+
 export function normalizePoint(raw, kind) {
   const description = text(raw.Description);
   return {
@@ -26,6 +44,7 @@ export function normalizePoint(raw, kind) {
     number: text(raw.Number),
     name: description,
     address: text(raw.ShortAddress),
+    hours: formatSchedule(raw.Schedule),
     kind,
   };
 }

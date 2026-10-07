@@ -183,3 +183,14 @@ test('поштомати: якщо фільтр за типом нічого н�
   assert.equal(found[0].number, '65634');
   assert.equal(calls.length, 2);
 });
+
+test('графік відділення: стислий запис, вихідні пропускаються', async () => {
+  const { formatSchedule } = await import('../server/novaposhta.js');
+  const day = (v) => v;
+  assert.equal(formatSchedule({ Monday: '09:00-20:00', Tuesday: '09:00-20:00', Wednesday: '09:00-20:00', Thursday: '09:00-20:00', Friday: '09:00-20:00', Saturday: '09:00-18:00', Sunday: '09:00-18:00' }),
+    'Пн–Пт 09:00–20:00, Сб–Нд 09:00–18:00');
+  assert.equal(formatSchedule({ Monday: '08:00-21:00', Tuesday: '08:00-21:00', Wednesday: '08:00-21:00', Thursday: '08:00-21:00', Friday: '08:00-21:00', Saturday: '09:00-15:00', Sunday: '-' }),
+    'Пн–Пт 08:00–21:00, Сб 09:00–15:00');
+  assert.equal(formatSchedule(null), '');
+  assert.equal(day('x'), 'x');
+});

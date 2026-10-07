@@ -206,12 +206,23 @@
       </div>
 
       <footer class="qo-footer" data-qo-footer>
+        <div class="qo-footer__sum" aria-live="polite">
+          <div class="qo-footer__sumrow"><span data-qo-sum-label>Разом</span><strong data-qo-sum-total></strong></div>
+          <p class="qo-footer__deliv" data-qo-sum-delivery hidden></p>
+        </div>
         <p class="qo-error" data-qo-error role="alert" hidden></p>
         <p class="qo-hint qo-hint--cta" data-qo-cta-hint role="status" aria-live="polite"></p>
         <button type="submit" form="qo-form" class="qo-submit" data-qo-submit aria-disabled="true">
           <span class="qo-submit__label" data-qo-submit-label>Далі</span>
           <span class="qo-spinner" aria-hidden="true"></span>
         </button>
+        {%- if s.trust_lines != blank -%}
+          <ul class="qo-trust">
+            {%- assign trust = s.trust_lines | newline_to_br | split: '<br />' -%}
+            {%- for line in trust -%}{%- assign line_text = line | strip -%}{%- if line_text != blank -%}<li>{{ line_text | escape }}</li>{%- endif -%}{%- endfor -%}
+          </ul>
+        {%- endif -%}
+        <p class="qo-keys">Enter або Ctrl+Enter — замовити · Esc — закрити</p>
         <p class="qo-note" data-qo-note hidden>{{ s.response_note | escape }}</p>
       </footer>
     </div>
@@ -370,6 +381,12 @@
       "label": "Робити доставку обовʼязковою",
       "info": "Без вибору міста й відділення (або адреси) замовлення не відправиться. Це може зменшити кількість замовлень.",
       "default": false
+    },
+    {
+      "type": "textarea",
+      "id": "trust_lines",
+      "label": "Переваги біля кнопки «Замовити» (по одній на рядок)",
+      "info": "Показуються галочками поруч із кнопкою на комп'ютері. Наприклад: Огляд посилки перед оплатою. Пишіть лише те, що справді діє. Порожньо — блок не показується."
     },
     {
       "type": "checkbox",

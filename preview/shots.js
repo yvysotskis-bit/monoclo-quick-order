@@ -109,11 +109,20 @@ async function flow(name, viewport) {
   assert.equal(await page.textContent('[data-qo-badge]'), '−19%');
 
   // Крок 1 → «Далі» → крок 2
-  assert.equal(await page.textContent('[data-qo-submit-label]'), 'Далі');
-  await shot('3a-step1-ready');
-  await page.click('[data-qo-submit]');
-  assert.equal(await page.textContent('[data-qo-step-label]'), 'Крок 2 з 2 · Контакти та доставка');
-  assert.equal(await page.isVisible('[data-qo-back]'), true);
+  if (viewport.width < 700) {
+    assert.equal(await page.textContent('[data-qo-submit-label]'), 'Далі');
+    await shot('3a-step1-ready');
+    await page.click('[data-qo-submit]');
+    assert.equal(await page.textContent('[data-qo-step-label]'), 'Крок 2 з 2 · Контакти та доставка');
+    assert.equal(await page.isVisible('[data-qo-back]'), true);
+  } else {
+    // Комп'ютер: усе на одному екрані, підсумок біля кнопки
+    assert.match(await page.textContent('[data-qo-submit-label]'), /Замовити · /);
+    assert.equal(await page.isVisible('[data-qo-name]'), true);
+    assert.equal(await page.isVisible('[data-qo-steps]'), false);
+    assert.match(await page.textContent('[data-qo-sum-total]'), /1\s?780/);
+    assert.match(await page.textContent('[data-qo-sum-label]'), /2 × 890/);
+  }
 
   // Клік по неактивній кнопці підсвічує поле, а не відправляє
   await page.click('[data-qo-submit]', { force: true });

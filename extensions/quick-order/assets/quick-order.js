@@ -256,6 +256,9 @@
       recapLine: $('[data-qo-recap-line]'),
       editData: $('[data-qo-edit-data]'),
       submitLabel: $('[data-qo-submit-label]'),
+      sumLabel: $('[data-qo-sum-label]'),
+      sumTotal: $('[data-qo-sum-total]'),
+      sumDelivery: $('[data-qo-sum-delivery]'),
       step1: $('[data-qo-step="1"]'),
       step2: $('[data-qo-step="2"]')
     };
@@ -292,6 +295,17 @@
       }
     });
     refs.back.addEventListener('click', function () { goBack(); });
+    // Ctrl/⌘+Enter відправляє замовлення з будь-якого поля
+    dialog.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && state && state.step === 2) {
+        e.preventDefault();
+        primaryAction();
+      }
+    });
+    // Зміна розміру вікна між телефоном і комп'ютером
+    window.matchMedia('(min-width: 641px)').addEventListener('change', function () {
+      if (dialog.open && state) showStep(state.step, false);
+    });
     refs.editData.addEventListener('click', function () { showStep(2, true); });
     // Поле у фокусі завжди прокручується в видиму зону над клавіатурою
     refs.form.addEventListener('focusin', function (e) {
@@ -374,6 +388,14 @@
       requestAnimationFrame(function () { dialog.classList.add('is-open'); });
     });
     sheet.focus({ preventScroll: true });
+    if (isDesktop()) {
+      // Курсор одразу в першому порожньому полі: можна одразу писати
+      setTimeout(function () {
+        if (!dialog.open) return;
+        var target = optionMissing() ? refs.options.querySelector('.qo-choice[tabindex="0"], .qo-choice') : (refs.name.value.trim() ? (digits().length === 9 ? null : refs.phone) : refs.name);
+        if (target) target.focus({ preventScroll: true });
+      }, 320);
+    }
   }
 
   // На телефоні піднімаємо панель над клавіатурою й обмежуємо її висоту видимою частиною екрана
@@ -761,17 +783,32 @@
     return parts.filter(Boolean).join(' · ');
   }
 
+  // На комп'ютері обидва кроки видно одразу: місця достатньо, зайві дотики не потрібні
+  function isDesktop() { return window.matchMedia('(min-width: 641px)').matches; }
+
+  function deliverySummary() {
+    var d = state.delivery;
+    var place = d.city ? (d.city.present || d.city.name) : cityText();
+    if (!place) return '';
+    var how = '';
+    if (d.method === 'courier') how = d.street ? d.street.name + (refs.house.value ? ', ' + refs.house.value.trim() : '') : 'адресна доставка';
+    else if (d.point) how = d.point.name.split(':')[0];
+    return 'Нова пошта · ' + [how, place].filter(Boolean).join(', ');
+  }
+
   function showStep(n, focus) {
+    var both = isDesktop();
+    if (both) n = 2;
     state.step = n;
-    refs.step1.hidden = n !== 1;
-    refs.step2.hidden = n !== 2;
-    refs.back.hidden = n !== 2;
+    refs.step1.hidden = !both && n !== 1;
+    refs.step2.hidden = !both && n !== 2;
+    refs.back.hidden = both || n !== 2;
     refs.stepLabel.textContent = n === 1 ? 'Крок 1 з 2 · Товар' : 'Крок 2 з 2 · Контакти та доставка';
     refs.bar.style.width = n === 1 ? '50%' : '100%';
     refs.body.scrollTop = 0;
     hideError();
     refresh();
-    if (n === 2) {
+    if (n === 2 && !both) {
       pushHistory(2);
       if (focus !== false && !(refs.name.value.trim())) refs.name.focus({ preventScroll: true });
     }
@@ -878,6 +915,10 @@
     if (state.step === 2) refs.submitLabel.textContent = 'Замовити · ' + totalText;
     else if (quickReady()) refs.submitLabel.textContent = 'Замовити як ' + (refs.name.value.trim().split(' ')[0] || 'раніше') + ' · ' + totalText;
     else refs.submitLabel.textContent = 'Далі';
+    refs.sumLabel.textContent = state.qty > 1 ? state.qty + ' × ' + money(source.price, product.currency) : 'Разом';
+    refs.sumTotal.textContent = totalText;
+    refs.sumDelivery.textContent = deliverySummary();
+    refs.sumDelivery.hidden = !refs.sumDelivery.textContent;
     refs.recap.hidden = !(state.step === 1 && quickReady());
     if (!refs.recap.hidden) refs.recapLine.textContent = recapText();
     refs.submit.setAttribute('aria-disabled', missing || state.submitting ? 'true' : 'false');
@@ -900,7 +941,7 @@
     var missing = firstMissing();
     if (!missing) return;
     var needStep = missing.key.indexOf('option-') === 0 ? 1 : 2;
-    if (state.step !== needStep) showStep(needStep, false);
+    if (!isDesktop() && state.step !== needStep) showStep(needStep, false);
     if (missing.key === 'name') state.touched.name = true;
     if (missing.key === 'phone') state.touched.phone = true;
     refresh();
@@ -1204,7 +1245,8 @@
           q: query
         }, signal);
       },
-      main: function (p) { return p.name; },
+      main: function (p) { return p.name.split(':')[0]; },
+      sub: function (p) { return [p.address, p.hours].filter(Boolean).join(' · '); },
       label: function (p) { return p.name; },
       onType: function () { state.delivery.point = null; refresh(); },
       onPick: function (p) { state.delivery.point = p; refresh(); }
