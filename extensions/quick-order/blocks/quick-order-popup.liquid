@@ -82,9 +82,54 @@
             </div>
 
             {%- if s.show_city -%}
-              <div class="qo-field">
-                <label class="qo-label" for="qo-city">Місто <span class="qo-optional">(необовʼязково)</span></label>
-                <input class="qo-input" id="qo-city" name="city" type="text" autocomplete="address-level2" placeholder="Наприклад, Київ" maxlength="60" data-qo-city>
+              <div class="qo-delivery" data-qo-delivery data-np="{{ s.np_enabled }}" data-np-require="{{ s.np_require }}">
+                <div class="qo-field" data-qo-field="city">
+                  <label class="qo-label" for="qo-city">Місто{%- unless s.np_require %} <span class="qo-optional">(необовʼязково)</span>{%- endunless -%}</label>
+                  <div class="qo-combo" data-qo-combo="city">
+                    <input class="qo-input" id="qo-city" name="city" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="qo-city-list" autocomplete="off" autocapitalize="words" placeholder="Почніть вводити, наприклад «Київ»" maxlength="80" data-qo-city>
+                    <ul class="qo-combo__list" id="qo-city-list" role="listbox" hidden></ul>
+                  </div>
+                  <p class="qo-hint qo-hint--field" data-qo-field-hint="city">Оберіть місто зі списку, і ми запропонуємо відділення Нової пошти</p>
+                </div>
+
+                <div class="qo-np" data-qo-np hidden>
+                  <div class="qo-field">
+                    <span class="qo-label" id="qo-method-label">Доставка Новою поштою</span>
+                    <div class="qo-segment" role="radiogroup" aria-labelledby="qo-method-label">
+                      <button type="button" class="qo-segment__btn" role="radio" aria-checked="true" data-qo-method="warehouse">Відділення</button>
+                      <button type="button" class="qo-segment__btn" role="radio" aria-checked="false" tabindex="-1" data-qo-method="postomat">Поштомат</button>
+                      <button type="button" class="qo-segment__btn" role="radio" aria-checked="false" tabindex="-1" data-qo-method="courier">Адресна</button>
+                    </div>
+                  </div>
+
+                  <div class="qo-field" data-qo-field="point" data-qo-point-field>
+                    <label class="qo-label" for="qo-point" data-qo-point-label>Відділення</label>
+                    <div class="qo-combo" data-qo-combo="point">
+                      <input class="qo-input" id="qo-point" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="qo-point-list" autocomplete="off" placeholder="Номер або адреса відділення" maxlength="80" data-qo-point>
+                      <ul class="qo-combo__list" id="qo-point-list" role="listbox" hidden></ul>
+                    </div>
+                  </div>
+
+                  <div class="qo-np__courier" data-qo-courier hidden>
+                    <div class="qo-field" data-qo-field="street">
+                      <label class="qo-label" for="qo-street">Вулиця</label>
+                      <div class="qo-combo" data-qo-combo="street">
+                        <input class="qo-input" id="qo-street" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="qo-street-list" autocomplete="off" placeholder="Почніть вводити назву вулиці" maxlength="80" data-qo-street>
+                        <ul class="qo-combo__list" id="qo-street-list" role="listbox" hidden></ul>
+                      </div>
+                    </div>
+                    <div class="qo-row">
+                      <div class="qo-field" data-qo-field="house">
+                        <label class="qo-label" for="qo-house">Будинок</label>
+                        <input class="qo-input" id="qo-house" type="text" autocomplete="off" maxlength="20" data-qo-house>
+                      </div>
+                      <div class="qo-field">
+                        <label class="qo-label" for="qo-apartment">Квартира</label>
+                        <input class="qo-input" id="qo-apartment" type="text" autocomplete="off" maxlength="20" data-qo-apartment>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             {%- endif -%}
 
@@ -281,8 +326,22 @@
     {
       "type": "checkbox",
       "id": "show_city",
-      "label": "Показувати поле «Місто» (необовʼязкове)",
+      "label": "Показувати місто та доставку Новою поштою",
       "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "np_enabled",
+      "label": "Списки міст, відділень і поштоматів Нової пошти",
+      "info": "Клієнт обирає зі списку. Якщо вимкнути або сервіс недоступний, місто вводиться вручну.",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "np_require",
+      "label": "Робити доставку обовʼязковою",
+      "info": "Без вибору міста й відділення (або адреси) замовлення не відправиться. Це може зменшити кількість замовлень.",
+      "default": false
     },
     {
       "type": "url",

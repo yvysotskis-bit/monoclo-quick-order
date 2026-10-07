@@ -16,7 +16,13 @@
     network: 'Не вдалося зʼєднатися з сервером. Перевірте інтернет і натисніть «Замовити» ще раз.',
     generic: 'Щось пішло не так. Натисніть «Замовити» ще раз.',
     soldOutNow: 'На жаль, цей варіант щойно закінчився. Оберіть інший.',
-    product: 'Товар', qty: 'Кількість', total: 'Сума', phone: 'Телефон'
+    product: 'Товар', qty: 'Кількість', total: 'Сума', phone: 'Телефон',
+    chooseCity: 'Оберіть місто зі списку', enterCity: 'Вкажіть місто',
+    chooseBranch: 'Оберіть відділення', choosePostomat: 'Оберіть поштомат',
+    chooseStreet: 'Оберіть вулицю', enterHouse: 'Вкажіть номер будинку',
+    branch: 'Відділення', postomat: 'Поштомат',
+    branchHint: 'Номер або адреса відділення', postomatHint: 'Номер або адреса поштомата',
+    npLoading: 'Шукаємо…', npEmpty: 'Нічого не знайдено', npError: 'Список недоступний, введіть вручну'
   };
 
   var COLOR_OPTION = /^(colou?r|колір|кольор|цвет)/i;
@@ -196,6 +202,8 @@
       themeMode: dialog.dataset.themeMode || 'time',
       darkFrom: isNaN(Number(dialog.dataset.darkFrom)) ? 17 : Number(dialog.dataset.darkFrom),
       lightFrom: isNaN(Number(dialog.dataset.lightFrom)) ? 6 : Number(dialog.dataset.lightFrom),
+      np: !!dialog.querySelector('[data-qo-delivery][data-np="true"]'),
+      npRequire: !!dialog.querySelector('[data-qo-delivery][data-np-require="true"]'),
       trackGa: dialog.dataset.trackGa === 'true',
       trackMeta: dialog.dataset.trackMeta === 'true'
     };
@@ -213,6 +221,16 @@
       phone: $('[data-qo-phone]'),
       comment: $('[data-qo-comment]'),
       city: $('[data-qo-city]'),
+      cityHint: $('[data-qo-field-hint="city"]'),
+      deliveryRoot: $('[data-qo-delivery]'),
+      npBlock: $('[data-qo-np]'),
+      pointField: $('[data-qo-point-field]'),
+      pointLabel: $('[data-qo-point-label]'),
+      point: $('[data-qo-point]'),
+      courier: $('[data-qo-courier]'),
+      street: $('[data-qo-street]'),
+      house: $('[data-qo-house]'),
+      apartment: $('[data-qo-apartment]'),
       honeypot: $('[data-qo-honeypot]'),
       total: $('[data-qo-total]'),
       submit: $('[data-qo-submit]'),
@@ -231,7 +249,13 @@
     dialog.addEventListener('click', function (e) {
       if (e.target === dialog) close();
     });
-    dialog.addEventListener('cancel', function (e) { e.preventDefault(); close(); });
+    dialog.addEventListener('cancel', function (e) {
+      e.preventDefault();
+      // Esc спершу закриває відкритий список, а не весь попап
+      var closedList = false;
+      combos.forEach(function (c) { if (c.close()) closedList = true; });
+      if (!closedList) close();
+    });
     dialog.addEventListener('click', function (e) {
       if (e.target.closest('[data-qo-close]')) close();
     });
@@ -254,6 +278,7 @@
     });
 
     initSwipe();
+    initDelivery();
   }
 
   /* ---------- Відкриття / закриття ---------- */
@@ -283,6 +308,7 @@
       clientId: uuid(),
       trigger: trigger || null,
       touched: { name: false, phone: false },
+      delivery: { method: 'warehouse', city: null, point: null, street: null },
       prevDigits: ''
     };
 
@@ -295,7 +321,7 @@
     refs.phone.value = formatNational(nationalDigits(saved.phone || ''));
     state.prevDigits = nationalDigits(refs.phone.value);
     if (refs.comment) refs.comment.value = '';
-    if (refs.city) refs.city.value = saved.city || '';
+    restoreDelivery(saved);
     dialog.dataset.theme = pickTheme(cfg.themeMode, hourIn(cfg.tz, new Date()), cfg.darkFrom, cfg.lightFrom);
     refs.honeypot.value = '';
 
@@ -311,6 +337,7 @@
 
     dialog.classList.remove('is-success', 'is-open');
     dialog.showModal();
+    watchViewport(true);
     document.documentElement.classList.add('qo-lock');
     refs.body.scrollTop = 0;
     requestAnimationFrame(function () {
@@ -319,10 +346,32 @@
     sheet.focus({ preventScroll: true });
   }
 
+  // На телефоні піднімаємо панель над клавіатурою й обмежуємо її висоту видимою частиною екрана
+  function syncViewport() {
+    var vv = window.visualViewport;
+    if (!vv || !sheet || !window.matchMedia('(max-width: 640px)').matches) return;
+    var covered = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+    sheet.style.bottom = covered ? covered + 'px' : '';
+    sheet.style.maxHeight = covered ? Math.round(vv.height * 0.96) + 'px' : '';
+  }
+
+  function watchViewport(on) {
+    var vv = window.visualViewport;
+    if (!vv) return;
+    var method = on ? 'addEventListener' : 'removeEventListener';
+    vv[method]('resize', syncViewport);
+    vv[method]('scroll', syncViewport);
+    if (!on && sheet) {
+      sheet.style.bottom = '';
+      sheet.style.maxHeight = '';
+    }
+  }
+
   function close() {
     if (!dialog || !dialog.open || (state && state.submitting)) return;
     dialog.classList.remove('is-open');
     var finish = function () {
+      watchViewport(false);
       if (dialog.open) dialog.close();
       document.documentElement.classList.remove('qo-lock');
       sheet.style.transform = '';
@@ -543,7 +592,7 @@
     }
     if (!nameValid()) return { key: 'name', text: T.enterName };
     if (!phoneValid()) return { key: 'phone', text: T.enterPhone };
-    return null;
+    return deliveryMissing();
   }
 
   function refresh() {
@@ -620,7 +669,8 @@
     void field.offsetWidth; // перезапуск анімації
     field.classList.add('is-attention');
     var focusable = field.querySelector('input, [aria-disabled="false"][tabindex="0"], .qo-choice[aria-disabled="false"]');
-    if (focusable && (missing.key === 'name' || missing.key === 'phone')) focusable.focus({ preventScroll: true });
+    var focusKeys = ['name', 'phone', 'city', 'point', 'street', 'house'];
+    if (focusable && focusKeys.indexOf(missing.key) !== -1) focusable.focus({ preventScroll: true });
   }
 
   /* ---------- Поля ---------- */
@@ -642,6 +692,358 @@
     if (d.length === 9) state.touched.phone = true;
     hideError();
     refresh();
+  }
+
+  /* ---------- Доставка: місто й відділення Нової пошти ---------- */
+
+  var combos = [];
+  var npState = { available: true };
+
+  function apiBase() { return cfg.endpoint.replace(/\/submit$/, ''); }
+
+  // Запит до нашого сервера (він сам звертається до API Нової пошти з прихованим ключем)
+  function npFetch(path, params, signal) {
+    var query = new URLSearchParams(params).toString();
+    return fetch(apiBase() + '/np/' + path + '?' + query, { signal: signal, headers: { Accept: 'application/json' } })
+      .then(function (res) {
+        return res.json().catch(function () { return null; }).then(function (data) {
+          if (!res.ok || !data || !data.ok) {
+            var err = new Error('np');
+            err.code = (data && data.code) || ('http_' + res.status);
+            throw err;
+          }
+          return data.items || [];
+        });
+      });
+  }
+
+  // Випадаючий список з пошуком (WAI-ARIA combobox): стрілки, Enter, Esc, дотики
+  function createCombobox(root, o) {
+    var input = root.querySelector('input');
+    var list = root.querySelector('[role="listbox"]');
+    var items = [];
+    var active = -1;
+    var timer = null;
+    var controller = null;
+    var seq = 0;
+    var api = {};
+
+    function setOpen(open) {
+      list.hidden = !open;
+      root.classList.toggle('is-open', open);
+      input.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (!open) {
+        active = -1;
+        input.removeAttribute('aria-activedescendant');
+      }
+    }
+
+    function note(text) {
+      list.textContent = '';
+      var row = el('li', 'qo-combo__note', text);
+      row.setAttribute('role', 'presentation');
+      list.appendChild(row);
+      setOpen(true);
+      list.scrollIntoView({ block: 'nearest' });
+    }
+
+    function renderItems() {
+      list.textContent = '';
+      items.forEach(function (item, i) {
+        var row = el('li', 'qo-combo__opt');
+        row.id = list.id + '-' + i;
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', 'false');
+        row.dataset.i = String(i);
+        row.appendChild(el('span', 'qo-combo__main', o.main(item)));
+        var sub = o.sub ? o.sub(item) : '';
+        if (sub) row.appendChild(el('span', 'qo-combo__sub', sub));
+        list.appendChild(row);
+      });
+      active = -1;
+      setOpen(true);
+      list.scrollIntoView({ block: 'nearest' });
+    }
+
+    function highlight(index) {
+      var rows = list.querySelectorAll('[role="option"]');
+      if (!rows.length) return;
+      if (index < 0) index = rows.length - 1;
+      if (index >= rows.length) index = 0;
+      Array.prototype.forEach.call(rows, function (row, k) {
+        row.setAttribute('aria-selected', k === index ? 'true' : 'false');
+      });
+      active = index;
+      input.setAttribute('aria-activedescendant', rows[index].id);
+      rows[index].scrollIntoView({ block: 'nearest' });
+    }
+
+    var focused = function () { return document.activeElement === input; };
+
+    function run(query) {
+      // Пошук спрацював після того, як клієнт пішов з поля: список не відкриваємо
+      if (!focused()) { setOpen(false); return; }
+      if (controller) controller.abort();
+      controller = typeof AbortController === 'function' ? new AbortController() : null;
+      var mine = ++seq;
+      note(T.npLoading);
+      o.fetch(query, controller && controller.signal).then(function (result) {
+        if (mine !== seq) return;
+        items = result;
+        if (!focused()) { setOpen(false); return; }
+        if (items.length) renderItems(); else note(T.npEmpty);
+      }, function (err) {
+        if (mine !== seq || (err && err.name === 'AbortError')) return;
+        items = [];
+        if (focused()) note(T.npError); else setOpen(false);
+        if (o.onError) o.onError(err);
+      });
+    }
+
+    function schedule(immediate) {
+      clearTimeout(timer);
+      var query = input.value.trim();
+      if (!o.enabled()) { setOpen(false); return; }
+      if (query.length < (o.minChars || 0)) { seq++; setOpen(false); return; }
+      timer = setTimeout(function () { run(query); }, immediate ? 0 : 250);
+    }
+
+    function pick(index) {
+      var item = items[index];
+      if (!item) return;
+      clearTimeout(timer);
+      seq++;
+      input.value = o.label(item);
+      setOpen(false);
+      o.onPick(item);
+    }
+
+    input.addEventListener('input', function () { o.onType(input.value); schedule(false); });
+    input.addEventListener('focus', function () {
+      if (input.value && o.hasValue()) input.select();
+      if (o.loadOnFocus && !o.hasValue()) schedule(true);
+      // На телефоні піднімаємо поле, щоб список не ховався під клавіатурою
+      if (window.matchMedia('(max-width: 640px)').matches) {
+        setTimeout(function () { root.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 300);
+      }
+    });
+    input.addEventListener('keydown', function (e) {
+      var open = !list.hidden;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (!open) schedule(true); else highlight(active + 1);
+      } else if (e.key === 'ArrowUp' && open) {
+        e.preventDefault();
+        highlight(active - 1);
+      } else if (e.key === 'Enter' && open && active >= 0) {
+        e.preventDefault();
+        pick(active);
+      } else if (e.key === 'Escape' && open) {
+        e.preventDefault();
+        e.stopPropagation();
+        setOpen(false);
+      }
+    });
+    input.addEventListener('blur', function () { setTimeout(function () { setOpen(false); }, 150); });
+    list.addEventListener('mousedown', function (e) { e.preventDefault(); }); // не втрачати фокус поля
+    list.addEventListener('click', function (e) {
+      var row = e.target.closest('[role="option"]');
+      if (row) pick(Number(row.dataset.i));
+    });
+
+    api.close = function () { var was = !list.hidden; setOpen(false); return was; };
+    api.reset = function () { clearTimeout(timer); seq++; items = []; setOpen(false); };
+    combos.push(api);
+    return api;
+  }
+
+  // Місто для повідомлення: обране зі списку (коротка назва) або введене вручну
+  function cityText() {
+    if (!refs.city) return '';
+    return state.delivery && state.delivery.city ? state.delivery.city.name : refs.city.value.trim();
+  }
+
+  function deliveryActive() {
+    return !!(refs.deliveryRoot && cfg.np && npState.available && state.delivery.city);
+  }
+
+  var CITY_HINT = 'Оберіть місто зі списку, і ми запропонуємо відділення Нової пошти';
+
+  function showNp() {
+    if (refs.npBlock) refs.npBlock.hidden = !deliveryActive();
+    if (refs.cityHint) {
+      refs.cityHint.hidden = deliveryActive();
+      refs.cityHint.textContent = npState.available && cfg.np ? CITY_HINT : 'Введіть місто, менеджер уточнить відділення';
+    }
+  }
+
+  function clearPoint() {
+    state.delivery.point = null;
+    if (refs.point) refs.point.value = '';
+    if (refs.pointCombo) refs.pointCombo.reset();
+  }
+
+  function clearStreet() {
+    state.delivery.street = null;
+    if (refs.street) refs.street.value = '';
+    if (refs.house) refs.house.value = '';
+    if (refs.apartment) refs.apartment.value = '';
+    if (refs.streetCombo) refs.streetCombo.reset();
+  }
+
+  function setMethod(method) {
+    state.delivery.method = method;
+    refs.deliveryRoot.querySelectorAll('[data-qo-method]').forEach(function (btn) {
+      var on = btn.dataset.qoMethod === method;
+      btn.setAttribute('aria-checked', on ? 'true' : 'false');
+      btn.tabIndex = on ? 0 : -1;
+    });
+    var courier = method === 'courier';
+    refs.pointField.hidden = courier;
+    refs.courier.hidden = !courier;
+    refs.pointLabel.textContent = method === 'postomat' ? T.postomat : T.branch;
+    refs.point.placeholder = method === 'postomat' ? T.postomatHint : T.branchHint;
+    clearPoint();
+    clearStreet();
+  }
+
+  function initDelivery() {
+    if (!refs.deliveryRoot || refs.cityCombo) return;
+    var box = function (name) { return refs.deliveryRoot.querySelector('[data-qo-combo="' + name + '"]'); };
+
+    refs.cityCombo = createCombobox(box('city'), {
+      minChars: 2,
+      enabled: function () { return cfg.np && npState.available; },
+      hasValue: function () { return !!state.delivery.city; },
+      fetch: function (query, signal) { return npFetch('cities', { q: query }, signal); },
+      main: function (c) { return c.present || c.name; },
+      sub: function (c) { return c.warehouses ? c.warehouses + ' відділень Нової пошти' : ''; },
+      label: function (c) { return c.present || c.name; },
+      onType: function () {
+        // Місто, змінене вручну, більше не привʼязане до списку: відділення обирається заново
+        state.delivery.city = null;
+        clearPoint();
+        clearStreet();
+        showNp();
+        refresh();
+      },
+      onPick: function (c) {
+        state.delivery.city = c;
+        clearPoint();
+        clearStreet();
+        showNp();
+        refresh();
+      },
+      // Нова пошта недоступна: лишається звичайне текстове поле, замовлення не блокується
+      onError: function () { npState.available = false; showNp(); refresh(); }
+    });
+
+    refs.pointCombo = createCombobox(box('point'), {
+      minChars: 0,
+      loadOnFocus: true,
+      enabled: function () { return deliveryActive() && state.delivery.method !== 'courier'; },
+      hasValue: function () { return !!state.delivery.point; },
+      fetch: function (query, signal) {
+        return npFetch('points', {
+          settlement: state.delivery.city.ref,
+          kind: state.delivery.method === 'postomat' ? 'postomat' : 'warehouse',
+          q: query
+        }, signal);
+      },
+      main: function (p) { return p.name; },
+      label: function (p) { return p.name; },
+      onType: function () { state.delivery.point = null; refresh(); },
+      onPick: function (p) { state.delivery.point = p; refresh(); }
+    });
+
+    refs.streetCombo = createCombobox(box('street'), {
+      minChars: 2,
+      enabled: function () { return deliveryActive() && state.delivery.method === 'courier'; },
+      hasValue: function () { return !!state.delivery.street; },
+      fetch: function (query, signal) { return npFetch('streets', { settlement: state.delivery.city.ref, q: query }, signal); },
+      main: function (st) { return st.name; },
+      label: function (st) { return st.name; },
+      onType: function () { state.delivery.street = null; refresh(); },
+      onPick: function (st) { state.delivery.street = st; refresh(); }
+    });
+
+    refs.deliveryRoot.querySelectorAll('[data-qo-method]').forEach(function (btn) {
+      btn.addEventListener('click', function () { setMethod(btn.dataset.qoMethod); refresh(); });
+      btn.addEventListener('keydown', function (e) {
+        var order = ['warehouse', 'postomat', 'courier'];
+        var step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+        if (!step) return;
+        e.preventDefault();
+        var next = order[(order.indexOf(btn.dataset.qoMethod) + step + order.length) % order.length];
+        setMethod(next);
+        refs.deliveryRoot.querySelector('[data-qo-method="' + next + '"]').focus();
+        refresh();
+      });
+    });
+    refs.house.addEventListener('input', refresh);
+  }
+
+  // Повертаємо те, що клієнт вводив минулого разу (місто, відділення), щоб не вводити знову
+  function restoreDelivery(saved) {
+    if (!refs.city) return;
+    refs.city.value = saved.city || '';
+    if (!refs.deliveryRoot) return;
+    setMethod('warehouse');
+    var d = saved.delivery;
+    if (d && d.city && d.city.ref) {
+      state.delivery.city = { ref: d.city.ref, name: d.city.name, present: d.city.present, area: d.city.area };
+      refs.city.value = d.city.present || d.city.name;
+      if (d.method) setMethod(d.method);
+      if (d.method === 'courier') {
+        if (d.street && d.street.name) {
+          state.delivery.street = d.street;
+          refs.street.value = d.street.name;
+        }
+        refs.house.value = d.house || '';
+        refs.apartment.value = d.apartment || '';
+      } else if (d.point && d.point.name) {
+        state.delivery.point = d.point;
+        refs.point.value = d.point.name;
+      }
+    }
+    showNp();
+  }
+
+  function deliveryMissing() {
+    if (!cfg.npRequire || !refs.deliveryRoot) return null;
+    var d = state.delivery;
+    if (!npState.available || !cfg.np) {
+      return cityText() ? null : { key: 'city', text: T.enterCity };
+    }
+    if (!d.city) return { key: 'city', text: T.chooseCity };
+    if (d.method === 'courier') {
+      if (!d.street) return { key: 'street', text: T.chooseStreet };
+      if (!refs.house.value.trim()) return { key: 'house', text: T.enterHouse };
+      return null;
+    }
+    if (!d.point) return { key: 'point', text: d.method === 'postomat' ? T.choosePostomat : T.chooseBranch };
+    return null;
+  }
+
+  function deliveryPayload() {
+    if (!refs.deliveryRoot) return null;
+    var d = state.delivery;
+    var out = {
+      city: d.city
+        ? { ref: d.city.ref, name: d.city.name, present: d.city.present, area: d.city.area }
+        : { name: cityText() }
+    };
+    if (deliveryActive()) {
+      out.method = d.method;
+      if (d.method === 'courier') {
+        if (d.street) out.street = { ref: d.street.ref, name: d.street.name };
+        out.house = refs.house.value.trim();
+        out.apartment = refs.apartment.value.trim();
+      } else if (d.point) {
+        out.point = { ref: d.point.ref, number: d.point.number, name: d.point.name };
+      }
+    }
+    return out;
   }
 
   /* ---------- Робочі години ---------- */
@@ -684,7 +1086,8 @@
       name: refs.name.value.trim(),
       phone: '+380' + digits(),
       comment: refs.comment ? refs.comment.value.trim() : '',
-      city: refs.city ? refs.city.value.trim() : '',
+      city: cityText(),
+      delivery: deliveryPayload(),
       utm: (readAttribution() || {}).utm || {},
       referrer: (readAttribution() || {}).referrer || '',
       click: (readAttribution() || {}).click || '',
@@ -742,7 +1145,7 @@
   }
 
   function onSuccess(data, variant, payload) {
-    writeStore({ name: payload.name, phone: digits(), city: payload.city });
+    writeStore({ name: payload.name, phone: digits(), city: payload.city, delivery: payload.delivery });
 
     refs.successTitle.textContent = T.thanks(data.order_number);
     refs.successSummary.textContent = '';

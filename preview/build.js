@@ -91,9 +91,9 @@ async function render(file, overrides = {}) {
 
 const stickyOn = process.argv.includes('--sticky');
 const button = await render('quick-order-button.liquid', stickyOn ? { sticky_mobile: true } : {});
-const popup = await render('quick-order-popup.liquid', {
-  size_guide_url: '#sizes', instagram_url: 'https://instagram.com/monoclo',
-});
+const popupSettings = { size_guide_url: '#sizes', instagram_url: 'https://instagram.com/monoclo' };
+const popup = await render('quick-order-popup.liquid', popupSettings);
+const popupRequired = await render('quick-order-popup.liquid', { ...popupSettings, np_require: true });
 
 // Імітація відповіді App Proxy
 const mock = `<script>
@@ -101,7 +101,47 @@ const mock = `<script>
   var q = new URLSearchParams(location.search);
   var mode = q.get('mode') || 'ok';
   window.__orders = [];
+  // Імітація Нової пошти (?np=down: сервіс недоступний)
+  var uid = function (n) { return '00000000-0000-4000-8000-' + String(n).padStart(12, '0'); };
+  var CHERN = { ref: uid(1), name: 'Чернівці', present: 'м. Чернівці, Чернівецька обл.', area: 'Чернівецька', region: '', warehouses: 58 };
+  var NPDATA = {
+    cities: [
+      CHERN,
+      { ref: uid(2), name: 'Чернівці', present: 'с. Чернівці, Вінницька обл.', area: 'Вінницька', region: 'Могилів-Подільський', warehouses: 1 },
+      { ref: uid(3), name: 'Київ', present: 'м. Київ, Київська обл.', area: 'Київська', region: '', warehouses: 700 },
+      { ref: uid(4), name: 'Київ', present: 'с. Київ, Закарпатська обл.', area: 'Закарпатська', region: '', warehouses: 0 }
+    ],
+    branches: Array.apply(null, Array(40)).map(function (_, i) {
+      return { ref: uid(100 + i), number: String(i + 1), name: 'Відділення №' + (i + 1) + ': вул. Тестова, ' + (i + 1), address: '', kind: 'branch' };
+    }),
+    postomats: [4101, 4102, 4103, 4104].map(function (n, i) {
+      return { ref: uid(200 + i), number: String(n), name: 'Поштомат "Нова Пошта" №' + n + ': вул. Головна, ' + (i + 1), address: '', kind: 'postomat' };
+    }),
+    streets: ['вул. Головна', 'вул. Героїв Майдану', 'просп. Незалежності'].map(function (n, i) { return { ref: uid(300 + i), name: n }; })
+  };
+  window.__np = [];
+  function np(url) {
+    var u = new URL(url, location.href);
+    var kind = u.pathname.split('/np/')[1];
+    var query = (u.searchParams.get('q') || '').toLowerCase();
+    window.__np.push({ kind: kind, q: u.searchParams.get('q'), settlement: u.searchParams.get('settlement'), pointKind: u.searchParams.get('kind') });
+    return new Promise(function (resolve) {
+      setTimeout(function () {
+        if (q.get('np') === 'down') return resolve(new Response(JSON.stringify({ ok: false, code: 'np_disabled' }), { status: 503 }));
+        var items = [];
+        if (kind === 'cities') items = NPDATA.cities.filter(function (c) { return c.name.toLowerCase().indexOf(query) === 0; });
+        if (kind === 'points') {
+          var all = u.searchParams.get('kind') === 'postomat' ? NPDATA.postomats : NPDATA.branches;
+          items = all.filter(function (p) { return !query || p.name.toLowerCase().indexOf(query) !== -1; }).slice(0, 40);
+        }
+        if (kind === 'streets') items = NPDATA.streets.filter(function (st) { return st.name.toLowerCase().indexOf(query) !== -1; });
+        resolve(new Response(JSON.stringify({ ok: true, items: items }), { status: 200 }));
+      }, 120);
+    });
+  }
+
   window.fetch = function (url, init) {
+    if (String(url).indexOf('/np/') !== -1) return np(String(url));
     var body = JSON.parse(init.body);
     window.__orders.push(body);
     return new Promise(function (resolve) {
@@ -131,7 +171,7 @@ const mock = `<script>
 })();
 </script>`;
 
-const page = `<!doctype html>
+const buildPage = (popupHtml) => `<!doctype html>
 <html lang="uk"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quick Order: прев'ю</title>
@@ -165,7 +205,7 @@ const page = `<!doctype html>
     <div class="filler"></div>
   </div>
 </main>
-${popup}
+${popupHtml}
 ${mock}
 <script>
   // Лише для прев'ю: слухач події успіху
@@ -175,5 +215,6 @@ ${mock}
 
 // Скрипти додатка підключено в popup.liquid через <script defer>; у прев'ю вони ідуть після mock
 fs.mkdirSync(outDir, { recursive: true });
-fs.writeFileSync(path.join(outDir, 'index.html'), page);
-console.log('preview/out/index.html готово');
+fs.writeFileSync(path.join(outDir, 'index.html'), buildPage(popup));
+fs.writeFileSync(path.join(outDir, 'required.html'), buildPage(popupRequired));
+console.log('preview/out/index.html і required.html готово');

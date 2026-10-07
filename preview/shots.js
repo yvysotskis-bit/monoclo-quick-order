@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const page_url = (q = '') => `file://${root}/preview/out/index.html${q}`;
+const page_url = (q = '', file = 'index.html') => `file://${root}/preview/out/${file}${q}`;
 const shots = path.join(root, 'preview/out/shots');
 fs.mkdirSync(shots, { recursive: true });
 
@@ -15,13 +15,13 @@ const browser = await chromium.launch({
   args: ['--no-sandbox'],
 });
 
-async function session(name, viewport, q = '') {
+async function session(name, viewport, q = '', file = 'index.html') {
   const ctx = await browser.newContext({ viewport, deviceScaleFactor: 2, locale: 'uk-UA', hasTouch: viewport.width < 700 });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-  await page.goto(page_url(q));
+  await page.goto(page_url(q, file));
   const shot = (n) => page.screenshot({ path: path.join(shots, `${name}-${n}.png`) });
   return { page, ctx, shot, errors };
 }
@@ -286,6 +286,209 @@ for (const theme of ['pill', 'square']) {
     m.refRadius);
   await shot('popup');
   assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
+
+// ---------- Доставка Новою поштою: списки міст, відділень, поштоматів, адресна доставка ----------
+const UID = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const combo = (name) => `[data-qo-combo="${name}"]`;
+const options = (name) => `${combo(name)} [role="option"]`;
+
+async function basics(page, { phone = '501112233' } = {}) {
+  await page.click('.qo-choice[data-qo-value="Чорний"]');
+  await page.click('.qo-choice[data-qo-value="M"]');
+  await page.fill('[data-qo-name]', 'Олена Коваль');
+  await page.click('[data-qo-phone]');
+  await page.keyboard.type(phone);
+}
+
+async function pickCity(page, text = 'Черн') {
+  await page.click('[data-qo-city]');
+  await page.keyboard.type(text);
+  await page.waitForSelector(options('city'));
+}
+
+for (const [name, viewport] of [['desktop', { width: 1280, height: 820 }], ['mobile', { width: 390, height: 844 }]]) {
+  const { page, ctx, shot, errors } = await session(`np-${name}`, viewport, '?hour=12');
+  await open(page);
+  await basics(page);
+
+  // Місто: підказки з назвами областей, вибір мишею
+  assert.equal(await page.isVisible('[data-qo-np]'), false, 'блок Нової пошти ховається, поки не обрано місто');
+  await pickCity(page);
+  const cities = await page.locator(options('city')).allTextContents();
+  assert.equal(cities.length, 2);
+  assert.match(cities[0], /м\. Чернівці, Чернівецька обл\./);
+  assert.match(cities[0], /58 відділень/);
+  assert.match(cities[1], /с\. Чернівці, Вінницька обл\./);
+  await shot('city-list');
+  await page.click(`${options('city')} >> nth=0`);
+  assert.equal(await page.inputValue('[data-qo-city]'), 'м. Чернівці, Чернівецька обл.');
+  assert.equal(await page.isVisible('[data-qo-np]'), true);
+  assert.equal(await page.getAttribute('[data-qo-method="warehouse"]', 'aria-checked'), 'true');
+
+  // Відділення: список відкривається одразу, пошук за номером, вибір клавіатурою
+  await page.click('[data-qo-point]');
+  await page.waitForSelector(options('point'));
+  assert.equal(await page.locator(options('point')).count(), 40);
+  await page.keyboard.type('12');
+  await page.waitForFunction(() => document.querySelectorAll('[data-qo-combo="point"] [role="option"]').length === 1);
+  assert.match(await page.locator(options('point')).first().textContent(), /Відділення №12/);
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  assert.match(await page.inputValue('[data-qo-point]'), /^Відділення №12:/);
+  assert.equal(await page.isVisible(`${combo('point')} [role="listbox"]`), false);
+  await shot('branch-picked');
+
+  // Поштомат: вибір відділення скидається, список поштоматів
+  await page.click('[data-qo-method="postomat"]');
+  assert.equal(await page.inputValue('[data-qo-point]'), '');
+  assert.equal((await page.textContent('[data-qo-point-label]')).trim(), 'Поштомат');
+  await page.click('[data-qo-point]');
+  await page.waitForSelector(options('point'));
+  assert.equal(await page.locator(options('point')).count(), 4);
+  await page.click(`${options('point')} >> nth=1`);
+  assert.match(await page.inputValue('[data-qo-point]'), /Поштомат "Нова Пошта" №4102/);
+
+  // Адресна доставка: вулиця зі списку, будинок, квартира; поле відділення ховається
+  await page.click('[data-qo-method="courier"]');
+  assert.equal(await page.isVisible('[data-qo-point-field]'), false);
+  assert.equal(await page.isVisible('[data-qo-courier]'), true);
+  await page.click('[data-qo-street]');
+  await page.keyboard.type('Гол');
+  await page.waitForSelector(options('street'));
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.inputValue('[data-qo-street]'), 'вул. Головна');
+  await page.fill('[data-qo-house]', '5');
+  await page.fill('[data-qo-apartment]', '12');
+  await shot('courier');
+
+  // Відправка: у замовлення йде структура доставки
+  await page.click('[data-qo-submit]');
+  await page.waitForSelector('[data-qo-success-view]:not([hidden])');
+  const order = await page.evaluate(() => window.__orders[0]);
+  assert.equal(order.city, 'Чернівці');
+  assert.deepEqual(order.delivery, {
+    city: { ref: UID(1), name: 'Чернівці', present: 'м. Чернівці, Чернівецька обл.', area: 'Чернівецька' },
+    method: 'courier',
+    street: { ref: UID(300), name: 'вул. Головна' },
+    house: '5',
+    apartment: '12',
+  });
+
+  // Повторне відкриття: місто й адреса запамʼятовані
+  await page.click('.qo-success [data-qo-close]');
+  await page.waitForFunction(() => !document.querySelector('[data-qo-dialog]').open);
+  await open(page);
+  assert.equal(await page.inputValue('[data-qo-city]'), 'м. Чернівці, Чернівецька обл.');
+  assert.equal(await page.getAttribute('[data-qo-method="courier"]', 'aria-checked'), 'true');
+  assert.equal(await page.inputValue('[data-qo-street]'), 'вул. Головна');
+  assert.equal(await page.inputValue('[data-qo-house]'), '5');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
+// Відділення: payload містить ref і номер; зміна міста скидає відділення
+{
+  const { page, ctx } = await session('np-branch', { width: 390, height: 844 }, '?hour=12');
+  await open(page);
+  await basics(page);
+  await pickCity(page, 'Київ');
+  await page.click(`${options('city')} >> nth=0`);
+  await page.click('[data-qo-point]');
+  await page.waitForSelector(options('point'));
+  await page.click(`${options('point')} >> nth=2`);
+  assert.match(await page.inputValue('[data-qo-point]'), /Відділення №3/);
+
+  // Користувач передумав і змінив місто: відділення скинуто, блок зник до нового вибору
+  await page.fill('[data-qo-city]', 'Черн');
+  assert.equal(await page.isVisible('[data-qo-np]'), false);
+  await page.waitForSelector(options('city'));
+  await page.click(`${options('city')} >> nth=0`);
+  assert.equal(await page.inputValue('[data-qo-point]'), '');
+
+  await page.click('[data-qo-point]');
+  await page.waitForSelector(options('point'));
+  await page.click(`${options('point')} >> nth=0`);
+  await page.click('[data-qo-submit]');
+  await page.waitForSelector('[data-qo-success-view]:not([hidden])');
+  const order = await page.evaluate(() => window.__orders[0]);
+  assert.equal(order.delivery.method, 'warehouse');
+  assert.deepEqual(order.delivery.point, { ref: UID(100), number: '1', name: 'Відділення №1: вул. Тестова, 1' });
+  assert.equal(order.delivery.street, undefined);
+  // Запити до сервера йшли з обраним містом і правильним типом пункту
+  const calls = await page.evaluate(() => window.__np);
+  assert.ok(calls.some((c) => c.kind === 'points' && c.settlement === UID(3) && c.pointKind === 'warehouse'));
+  await ctx.close();
+}
+
+// Нова пошта недоступна: звичайне текстове поле, замовлення не блокується
+{
+  const { page, ctx, shot } = await session('np-down', { width: 390, height: 844 }, '?hour=12&np=down');
+  await open(page);
+  await basics(page);
+  await page.click('[data-qo-city]');
+  await page.keyboard.type('Хмельницький');
+  await page.waitForFunction(() => /введіть вручну/.test(document.querySelector('[data-qo-combo="city"] .qo-combo__note')?.textContent || ''));
+  await shot('down');
+  await page.click('[data-qo-phone]'); // залишаємо поле
+  await page.waitForFunction(() => document.querySelector('[data-qo-combo="city"] [role="listbox"]').hidden);
+  assert.equal(await page.isVisible('[data-qo-np]'), false);
+  await page.click('[data-qo-submit]');
+  await page.waitForSelector('[data-qo-success-view]:not([hidden])');
+  const order = await page.evaluate(() => window.__orders[0]);
+  assert.equal(order.city, 'Хмельницький');
+  assert.deepEqual(order.delivery, { city: { name: 'Хмельницький' } });
+  await ctx.close();
+}
+
+// Обовʼязкова доставка: кнопка розблоковується лише після міста й відділення (або вулиці й будинку)
+{
+  const { page, ctx } = await session('np-required', { width: 390, height: 844 }, '?hour=12', 'required.html');
+  await open(page);
+  await basics(page);
+  const hint = () => page.textContent('[data-qo-cta-hint]');
+  assert.equal(await hint(), 'Оберіть місто зі списку');
+  assert.equal(await page.getAttribute('[data-qo-submit]', 'aria-disabled'), 'true');
+
+  await pickCity(page);
+  await page.click(`${options('city')} >> nth=0`);
+  assert.equal(await hint(), 'Оберіть відділення');
+  await page.click('[data-qo-method="postomat"]');
+  assert.equal(await hint(), 'Оберіть поштомат');
+  await page.click('[data-qo-method="courier"]');
+  assert.equal(await hint(), 'Оберіть вулицю');
+  await page.click('[data-qo-street]');
+  await page.keyboard.type('Гол');
+  await page.waitForSelector(options('street'));
+  await page.click(`${options('street')} >> nth=0`);
+  assert.equal(await hint(), 'Вкажіть номер будинку');
+  await page.fill('[data-qo-house]', '7');
+  assert.equal(await hint(), '');
+  assert.equal(await page.getAttribute('[data-qo-submit]', 'aria-disabled'), 'false');
+
+  await page.click('[data-qo-method="warehouse"]');
+  assert.equal(await hint(), 'Оберіть відділення');
+  await ctx.close();
+}
+
+// Клавіатура: Esc спершу закриває список, а не весь попап
+{
+  const { page, ctx } = await session('np-keys', { width: 1280, height: 820 }, '?hour=12');
+  await open(page);
+  await page.click('[data-qo-city]');
+  await page.keyboard.type('Ки');
+  await page.waitForSelector(options('city'));
+  assert.equal(await page.getAttribute('[data-qo-city]', 'aria-expanded'), 'true');
+  await page.keyboard.press('ArrowDown');
+  assert.ok(await page.getAttribute('[data-qo-city]', 'aria-activedescendant'));
+  await page.keyboard.press('Escape');
+  assert.equal(await page.getAttribute('[data-qo-city]', 'aria-expanded'), 'false');
+  assert.equal(await page.evaluate(() => document.querySelector('[data-qo-dialog]').open), true, 'попап лишається');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('[data-qo-dialog]').open);
   await ctx.close();
 }
 
