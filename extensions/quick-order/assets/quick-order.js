@@ -218,6 +218,7 @@
       qtyInput: $('[data-qo-qty-input]'),
       stock: $('[data-qo-stock]'),
       name: $('[data-qo-name]'),
+      surname: $('[data-qo-surname]'),
       phone: $('[data-qo-phone]'),
       comment: $('[data-qo-comment]'),
       city: $('[data-qo-city]'),
@@ -318,6 +319,7 @@
     refs.image.alt = product.title;
     refs.image.removeAttribute('src');
     refs.name.value = saved.name || '';
+    if (refs.surname) refs.surname.value = saved.surname || '';
     refs.phone.value = formatNational(nationalDigits(saved.phone || ''));
     state.prevDigits = nationalDigits(refs.phone.value);
     if (refs.comment) refs.comment.value = '';
@@ -1084,6 +1086,7 @@
       variant_id: variant.id,
       quantity: state.qty,
       name: refs.name.value.trim(),
+      surname: refs.surname ? refs.surname.value.trim() : '',
       phone: '+380' + digits(),
       comment: refs.comment ? refs.comment.value.trim() : '',
       city: cityText(),
@@ -1145,7 +1148,7 @@
   }
 
   function onSuccess(data, variant, payload) {
-    writeStore({ name: payload.name, phone: digits(), city: payload.city, delivery: payload.delivery });
+    writeStore({ name: payload.name, surname: payload.surname, phone: digits(), city: payload.city, delivery: payload.delivery });
 
     refs.successTitle.textContent = T.thanks(data.order_number);
     refs.successSummary.textContent = '';

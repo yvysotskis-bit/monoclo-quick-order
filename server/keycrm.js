@@ -119,6 +119,10 @@ export function createKeycrm({ token, sourceId, statusMap = {}, deliveryServiceI
         description,
       });
     },
+    // Записує номер ТТН у замовлення KeyCRM
+    async setTrackingCode(crmOrderId, code) {
+      await call('PUT', `/order/${crmOrderId}`, { shipping: { tracking_code: code } });
+    },
     // Повертає false, якщо для цього статусу не налаштовано відповідника в KeyCRM
     async updateStatus(crmOrderId, status) {
       const statusId = statusMap[status];

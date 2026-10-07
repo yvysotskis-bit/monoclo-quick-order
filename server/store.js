@@ -70,6 +70,8 @@ const ADDED_COLUMNS = {
   pay_amount: 'INTEGER',
   pay_created_at: 'INTEGER',
   pay_paid_at: 'INTEGER',
+  ttn_number: 'TEXT',
+  ttn_ref: 'TEXT',
 };
 
 function migrate(db) {
@@ -283,6 +285,10 @@ export class Store {
   }
 
   /* ---- статуси ---- */
+
+  setTtn(id, number, ref) {
+    this.run('UPDATE orders SET ttn_number = ?, ttn_ref = ? WHERE id = ?', number, ref, id);
+  }
 
   setStatus(id, status, by, at) {
     this.run(

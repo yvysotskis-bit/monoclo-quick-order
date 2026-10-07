@@ -5,6 +5,7 @@ import { fetchProduct, optionPairs } from './shopify-product.js';
 import { createTelegram } from './telegram.js';
 import { createKeycrm } from './keycrm.js';
 import { createNovaPoshta } from './novaposhta.js';
+import { createTtnService } from './ttn.js';
 import { createMonobank } from './monobank.js';
 import {
   dateKey,
@@ -22,6 +23,10 @@ import {
   buildOrderMessage,
   buildAmountPrompt,
   buildPaidMessage,
+  buildTtnMessage,
+  describeDelivery,
+  buildTtnFailedMessage,
+  ttnKeyboard,
   buildPayFailedMessage,
   buildPaymentMessage,
   parseAmountKopecks,
@@ -98,6 +103,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   const novaPoshta = config.novaPoshtaApiKey
     ? createNovaPoshta({ apiKey: config.novaPoshtaApiKey, fetchFn })
     : null;
+
+  const ttnService = novaPoshta ? createTtnService({ np: novaPoshta, config, store, now }) : null;
 
   // Передоплата працює, лише коли є токен Monobank і публічна адреса сервера (для вебхука)
   const monobank = config.monobankToken && config.publicUrl
@@ -277,6 +284,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         totalCents: variant.price * input.quantity,
         currency: config.currency,
         name: input.name,
+        surname: input.surname,
         phone: input.phone,
         city: input.city,
         delivery: input.delivery,
@@ -310,6 +318,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     if (query.data === 'pay:link') return paymentLink(query, 'prepay');
     if (query.data === 'pay:full') return paymentLink(query, 'full');
     if (query.data === 'pay:custom') return customAmountPrompt(query);
+    if (query.data?.startsWith('ttn:')) return createTtn(query);
 
     const match = STATUS_ACTION.exec(query.data || '');
     if (!match) return { ok: true };
@@ -489,6 +498,47 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     return { ok: true };
   }
 
+  /* ---------- ТТН Нової пошти ---------- */
+
+  async function createTtn(query) {
+    const message = query.message;
+    const answer = (text) => telegram.answerCallback(query.id, text).catch(() => {});
+    const order = store.getOrder(Number(query.data.slice(4)));
+    if (!ttnService) { await answer('Нова пошта не налаштована'); return { ok: true }; }
+    if (!order) { await answer('Замовлення не знайдено'); return { ok: true }; }
+    if (order.ttn_number) { await answer(`ТТН уже створено: ${order.ttn_number}`); return { ok: true }; }
+
+    await once('ttn', order.id, async () => {
+      const replyTo = order.tg_message_id || message.message_id;
+      try {
+        const ttn = await ttnService.create({ order, paidCents: store.paidTotal(order.id) });
+        store.setTtn(order.id, ttn.number, ttn.ref);
+        let tracked = false;
+        if (keycrm && order.crm_order_id) {
+          tracked = await keycrm.setTrackingCode(order.crm_order_id, ttn.number).then(() => true, (e) => {
+            log.error('keycrm tracking', e.message);
+            return false;
+          });
+        }
+        await telegram.clearButtons(message.message_id).catch(() => {});
+        await telegram.sendText(buildTtnMessage({
+          orderNumber: order.order_number,
+          number: ttn.number,
+          codUah: ttn.codUah,
+          costUah: ttn.costUah,
+          address: describeDelivery(order.data.delivery).join('\n'),
+          tracked,
+        }), { replyTo });
+        await answer('ТТН створено');
+      } catch (err) {
+        log.error('ttn failed', err.message);
+        await telegram.sendText(buildTtnFailedMessage(order.order_number, err.message), { replyTo }).catch(() => {});
+        await answer('Не вдалося створити ТТН');
+      }
+    });
+    return { ok: true };
+  }
+
   // Вебхук банку: підпис обовʼязково перевіряється, інакше будь-хто міг би «оплатити» замовлення
   async function monoWebhook(req) {
     if (!monobank) throw new HttpError(404, 'not_found', 'Not found');
@@ -522,7 +572,10 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         kind: payment.kind,
         totalCents: order.data.totalCents,
         paidCents: store.paidTotal(order.id),
-      }), { replyTo }).catch((e) => log.error('paid notice failed', e.message));
+      }), {
+        replyTo,
+        replyMarkup: ttnService && order.data.delivery?.method && !order.ttn_number ? ttnKeyboard(order.id) : undefined,
+      }).catch((e) => log.error('paid notice failed', e.message));
       await syncCrmPayment(payment, order);
     } else if (status === 'failure' || status === 'reversed') {
       await telegram.sendText(buildPayFailedMessage(order.order_number, body.failureReason), { replyTo }).catch((e) => log.error('pay failed notice failed', e.message));

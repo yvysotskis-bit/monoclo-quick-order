@@ -26,6 +26,11 @@ export const config = {
   monobankToken: '',
   novaPoshtaApiKey: '',
   keycrmNovaPoshtaServiceId: 0,
+  npSenderCity: 'Чернівці',
+  npSenderWarehouse: '31',
+  npSenderPhone: '',
+  npParcel: { weightKg: 1, length: 30, width: 25, height: 5 },
+  npDescription: 'Monoclo',
   prepayAmountUah: 200,
   payMaxAmountUah: 50000,
   payValiditySeconds: 86400,
@@ -119,12 +124,29 @@ export function mockFetch({ productResponse } = {}) {
           { Ref: 'ffffffff-0000-0000-0000-000000000001', MainDescription: 'Чернівці', Present: 'с. Чернівці, Вінницька обл.', Area: 'Вінницька', Region: 'Могилів-Подільський', Warehouses: '1' },
         ] }] });
       }
+      if (calledMethod === 'getCounterparties') return Response.json({ success: true, data: [{ Ref: 'sender-cp' }] });
+      if (calledMethod === 'getCounterpartyContactPersons') return Response.json({ success: true, data: [{ Ref: 'sender-contact', Phones: '380501112233' }] });
+      if (calledMethod === 'getWarehouses' && p.CityName) {
+        return Response.json({ success: true, data: [
+          { Ref: 'sender-wh', Number: '31', CityRef: 'sender-city', CategoryOfWarehouse: 'Branch' },
+          { Ref: 'other-wh', Number: '5', CityRef: 'sender-city', CategoryOfWarehouse: 'Branch' },
+        ] });
+      }
+      if (calledMethod === 'save' && call.body.modelName === 'Counterparty') {
+        if (fn.fail.npTtn) return Response.json({ success: false, errors: ['Recipient invalid'], data: [] });
+        return Response.json({ success: true, data: [{ Ref: 'recipient-cp', ContactPerson: { data: [{ Ref: 'recipient-contact' }] } }] });
+      }
+      if (calledMethod === 'getStreet') return Response.json({ success: true, data: [{ Ref: 'street-ref' }] });
+      if (calledMethod === 'save' && call.body.modelName === 'Address') return Response.json({ success: true, data: [{ Ref: 'address-ref' }] });
+      if (calledMethod === 'save' && call.body.modelName === 'InternetDocument') {
+        return Response.json({ success: true, data: [{ Ref: 'doc-ref', IntDocNumber: '20451234567890' }] });
+      }
       if (calledMethod === 'getWarehouses') {
         const postomat = p.TypeOfWarehouseRef === 'f9316480-5f2d-425d-bc2c-ac7cd29decf0';
         const rows = postomat
-          ? [{ Ref: NP.postomat, Number: '4101', Description: 'Поштомат "Нова Пошта" №4101: вул. Головна, 12', ShortAddress: 'вул. Головна, 12', CategoryOfWarehouse: 'Postomat' }]
+          ? [{ Ref: NP.postomat, CityRef: 'city-ref', Number: '4101', Description: 'Поштомат "Нова Пошта" №4101: вул. Головна, 12', ShortAddress: 'вул. Головна, 12', CategoryOfWarehouse: 'Postomat' }]
           : [
-            { Ref: NP.branch, Number: '3', Description: 'Відділення №3: вул. Ольги Кобилянської, 1', ShortAddress: 'вул. Ольги Кобилянської, 1', CategoryOfWarehouse: 'Branch' },
+            { Ref: NP.branch, CityRef: 'city-ref', Number: '3', Description: 'Відділення №3: вул. Ольги Кобилянської, 1', ShortAddress: 'вул. Ольги Кобилянської, 1', CategoryOfWarehouse: 'Branch' },
             { Ref: NP.branch2, Number: '12', Description: 'Відділення №12: просп. Незалежності, 5', ShortAddress: 'просп. Незалежності, 5', CategoryOfWarehouse: 'Branch' },
             { Ref: NP.leak, Number: '9999', Description: 'Поштомат, що не має бути серед відділень', CategoryOfWarehouse: 'Postomat' },
           ];

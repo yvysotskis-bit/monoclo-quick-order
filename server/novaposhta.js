@@ -55,6 +55,7 @@ export function createNovaPoshta({ apiKey, fetchFn }) {
   }
 
   return {
+    call,
     async searchCities(query) {
       const rows = await call('Address', 'searchSettlements', { CityName: query, Limit: '10', Page: '1' });
       return (rows[0]?.Addresses || []).map(normalizeCity).filter((c) => c.ref && c.name);

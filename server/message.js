@@ -48,7 +48,7 @@ export function buildOrderMessage(o) {
     `Кількість: ${o.quantity}`,
     `Сума: <b>${escapeHtml(formatMoney(o.totalCents, o.currency))}</b>`,
     '',
-    `👤 ${escapeHtml(o.name)}`,
+    `👤 ${escapeHtml([o.name, o.surname].filter(Boolean).join(' '))}`,
     `📞 ${escapeHtml(o.phone)}`,
   );
   const delivery = describeDelivery(o.delivery);
@@ -205,3 +205,22 @@ export function buildAmountPrompt({ orderNumber, userId, userName, maxUah }) {
 export function buildReminder(orderNumber, minutes) {
   return `⏰ Замовлення #${orderNumber} уже ${minutes} хв без відповіді менеджера.\nНатисніть «✅ Взято в роботу», коли почнете його опрацьовувати.`;
 }
+
+// Кнопка під повідомленням про оплату: менеджер сам запускає створення ТТН
+export const ttnKeyboard = (orderId) => ({
+  inline_keyboard: [[{ text: '📦 Створити ТТН', callback_data: `ttn:${orderId}` }]],
+});
+
+export function buildTtnMessage({ orderNumber, number, codUah, costUah, address, tracked }) {
+  const lines = [`📦 <b>ТТН Нової пошти створено: <code>${escapeHtml(number)}</code></b> · замовлення #${escapeHtml(orderNumber)}`];
+  if (address) lines.push(escapeHtml(address));
+  lines.push(`Оголошена вартість: ${escapeHtml(formatMoney(Math.round(costUah * 100)))}`);
+  lines.push(codUah > 0
+    ? `Післяплата при отриманні: ${escapeHtml(formatMoney(Math.round(codUah * 100)))}`
+    : 'Замовлення оплачено повністю, післяплати немає.');
+  lines.push(tracked ? '✅ Номер записано в KeyCRM.' : '⚠️ Номер не вдалося записати в KeyCRM, додайте його вручну.');
+  return lines.join('\n');
+}
+
+export const buildTtnFailedMessage = (orderNumber, reason) =>
+  `⚠️ Не вдалося створити ТТН за замовленням #${escapeHtml(orderNumber)}: ${escapeHtml(reason)}\nВиправте дані й натисніть «📦 Створити ТТН» ще раз або створіть ТТН у кабінеті вручну.`;

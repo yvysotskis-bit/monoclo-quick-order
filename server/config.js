@@ -60,6 +60,12 @@ export function loadConfig(env = process.env) {
 
     // Нова пошта: ключ з кабінету my.novaposhta.ua. Без нього місто й відділення вводяться вручну
     novaPoshtaApiKey: optional('NOVA_POSHTA_API_KEY'),
+    // Відправка (ТТН): місто й номер відділення відправника, розміри пакета за замовчуванням
+    npSenderCity: optional('NP_SENDER_CITY') || 'Чернівці',
+    npSenderWarehouse: optional('NP_SENDER_WAREHOUSE') || '31',
+    npSenderPhone: optional('NP_SENDER_PHONE'),
+    npParcel: { weightKg: number('NP_WEIGHT_KG', 1), length: number('NP_LENGTH_CM', 30), width: number('NP_WIDTH_CM', 25), height: number('NP_HEIGHT_CM', 5) },
+    npDescription: optional('NP_DESCRIPTION') || 'Monoclo',
 
     // Передоплата через Monobank (Plata by mono): без токена кнопка «Передоплата» не показується
     monobankToken: optional('MONOBANK_TOKEN'),

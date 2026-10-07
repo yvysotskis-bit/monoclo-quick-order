@@ -83,6 +83,11 @@
 
             {%- if s.show_city -%}
               <div class="qo-delivery" data-qo-delivery data-np="{{ s.np_enabled }}" data-np-require="{{ s.np_require }}">
+                <div class="qo-field" data-qo-field="surname">
+                  <label class="qo-label" for="qo-surname">Прізвище <span class="qo-optional">(для накладної Нової пошти)</span></label>
+                  <input class="qo-input" id="qo-surname" name="surname" type="text" autocomplete="family-name" placeholder="Ваше прізвище" maxlength="60" data-qo-surname>
+                </div>
+
                 <div class="qo-field" data-qo-field="city">
                   <label class="qo-label" for="qo-city">Місто{%- unless s.np_require %} <span class="qo-optional">(необовʼязково)</span>{%- endunless -%}</label>
                   <div class="qo-combo" data-qo-combo="city">

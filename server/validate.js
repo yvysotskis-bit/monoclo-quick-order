@@ -112,6 +112,7 @@ export function validateSubmission(body, { maxQty }) {
       variantId,
       quantity,
       name,
+      surname: cleanText(body.surname, 60),
       phone,
       comment: cleanText(body.comment, 300),
       pageUrl,
