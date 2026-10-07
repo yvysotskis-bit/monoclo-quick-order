@@ -54,6 +54,7 @@ export function buildOrderMessage(o) {
   const delivery = describeDelivery(o.delivery);
   if (delivery.length) lines.push(...delivery.map(escapeHtml));
   else if (o.city) lines.push(`📍 ${escapeHtml(o.city)}`);
+  if (o.body) lines.push(`📏 Зріст ${o.body.height} см, вага ${o.body.weight} кг`);
   if (o.comment) lines.push(`💬 ${escapeHtml(o.comment)}`);
   const source = describeSource(o);
   lines.push('', `📈 ${source ? escapeHtml(source) : 'прямий візит'}`, '#Monoclo');

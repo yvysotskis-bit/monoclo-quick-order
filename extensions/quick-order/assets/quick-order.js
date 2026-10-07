@@ -196,6 +196,9 @@
       workEnd: Number(dialog.dataset.workEnd),
       colorMap: parseColorMap(dialog.dataset.colorMap),
       sizeGuide: dialog.dataset.sizeGuideUrl || '',
+      sizeHelper: dialog.dataset.sizeHelper === 'true',
+      sizeMapTee: dialog.dataset.sizeMapTee || '',
+      sizeMapHoodie: dialog.dataset.sizeMapHoodie || '',
       instagram: dialog.dataset.instagramUrl || '',
       afterHoursText: dialog.dataset.afterHoursText || '',
       maxQty: Number(dialog.dataset.maxQty) || 10,
@@ -319,6 +322,7 @@
     refs.image.alt = product.title;
     refs.image.removeAttribute('src');
     refs.name.value = saved.name || '';
+    state.body = saved.body && saved.body.height && saved.body.weight ? saved.body : null;
     if (refs.surname) refs.surname.value = saved.surname || '';
     refs.phone.value = formatNational(nationalDigits(saved.phone || ''));
     state.prevDigits = nationalDigits(refs.phone.value);
@@ -432,6 +436,112 @@
     refresh();
   }
 
+
+  /* ---------- Підбір розміру за зростом і вагою ---------- */
+
+  var HOODIE_RE = /худі|hoodie|світшот|sweatshirt|кофта|зіп/i;
+
+  // «XS:55, S:65, M:75, XXL» -> [{size:'XS', max:55}, ..., {size:'XXL', max:null}]
+  function parseSizeMap(raw) {
+    return String(raw || '').split(',').map(function (part) {
+      var bits = part.split(':');
+      var size = bits[0].trim().toUpperCase();
+      var max = bits.length > 1 ? Number(bits[1]) : null;
+      return size ? { size: size, max: isFinite(max) ? max : null } : null;
+    }).filter(Boolean);
+  }
+
+  // Вага, скоригована на зріст (базовий зріст 175 см). Повертає розмір з таблиці або null
+  function recommendSize(height, weight, values, title) {
+    var map = parseSizeMap(HOODIE_RE.test(title) ? cfg.sizeMapHoodie : cfg.sizeMapTee);
+    if (!map.length) return null;
+    var score = weight + (height - 175) * 0.5;
+    var index = map.length - 1;
+    for (var k = 0; k < map.length; k += 1) {
+      if (map[k].max == null || score < map[k].max) { index = k; break; }
+    }
+    // Найближчий розмір, який існує в цього товару
+    var have = {};
+    values.forEach(function (v) { have[String(v).toUpperCase()] = v; });
+    for (var d = 0; d < map.length; d += 1) {
+      var up = map[index + d];
+      var down = map[index - d];
+      if (up && have[up.size]) return have[up.size];
+      if (down && have[down.size]) return have[down.size];
+    }
+    return null;
+  }
+
+  function buildSizeHelper(optionIndex, option) {
+    var wrap = el('div', 'qo-sizehelper');
+    var toggle = el('button', 'qo-sizehelper__toggle', 'Не знаєте розмір? Підібрати за зростом і вагою');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-expanded', 'false');
+    var panel = el('div', 'qo-sizehelper__panel');
+    panel.hidden = true;
+
+    function numberField(label, placeholder, min, max) {
+      var box = el('label', 'qo-sizehelper__field');
+      box.appendChild(el('span', '', label));
+      var input = el('input', 'qo-input');
+      input.type = 'text';
+      input.inputMode = 'numeric';
+      input.maxLength = 3;
+      input.placeholder = placeholder;
+      input.autocomplete = 'off';
+      input.addEventListener('input', function () { input.value = input.value.replace(/\D/g, ''); });
+      input.dataset.min = min;
+      input.dataset.max = max;
+      box.appendChild(input);
+      return { box: box, input: input };
+    }
+    var h = numberField('Зріст, см', '180', 120, 220);
+    var w = numberField('Вага, кг', '75', 30, 200);
+    var row = el('div', 'qo-sizehelper__row');
+    row.appendChild(h.box);
+    row.appendChild(w.box);
+    var go = el('button', 'qo-sizehelper__go', 'Підібрати');
+    go.type = 'button';
+    row.appendChild(go);
+    var result = el('p', 'qo-sizehelper__result');
+    result.setAttribute('aria-live', 'polite');
+    panel.appendChild(row);
+    panel.appendChild(result);
+    wrap.appendChild(toggle);
+    wrap.appendChild(panel);
+
+    if (state.body) { h.input.value = state.body.height; w.input.value = state.body.weight; }
+
+    toggle.addEventListener('click', function () {
+      panel.hidden = !panel.hidden;
+      toggle.setAttribute('aria-expanded', String(!panel.hidden));
+      if (!panel.hidden) h.input.focus();
+    });
+
+    function inRange(input) {
+      var n = Number(input.value);
+      return n >= Number(input.dataset.min) && n <= Number(input.dataset.max) ? n : null;
+    }
+    go.addEventListener('click', function () {
+      var height = inRange(h.input);
+      var weight = inRange(w.input);
+      if (!height || !weight) {
+        result.textContent = 'Вкажіть зріст (120–220 см) і вагу (30–200 кг).';
+        return;
+      }
+      state.body = { height: height, weight: weight };
+      var size = recommendSize(height, weight, option.values, state.product.title);
+      if (!size) { result.textContent = 'Не вдалося підібрати розмір. Скористайтеся таблицею розмірів.'; return; }
+      if (valueAvailable(optionIndex, size)) {
+        selectValue(optionIndex, size);
+        result.textContent = 'Рекомендуємо ' + size + ' і вже обрали його. Усі наші речі оверсайз: якщо хочете щільніше, візьміть на розмір менше.';
+      } else {
+        result.textContent = 'Рекомендуємо ' + size + ', але в обраному кольорі його зараз немає. Спробуйте інший колір.';
+      }
+    });
+    return wrap;
+  }
+
   function renderOptions() {
     refs.options.textContent = '';
     state.product.options.forEach(function (option, i) {
@@ -487,6 +597,7 @@
       });
 
       field.appendChild(group);
+      if (cfg.sizeHelper && SIZE_OPTION.test(option.name)) field.appendChild(buildSizeHelper(i, option));
       refs.options.appendChild(field);
     });
   }
@@ -1087,6 +1198,7 @@
       quantity: state.qty,
       name: refs.name.value.trim(),
       surname: refs.surname ? refs.surname.value.trim() : '',
+      body: state.body || undefined,
       phone: '+380' + digits(),
       comment: refs.comment ? refs.comment.value.trim() : '',
       city: cityText(),
@@ -1148,7 +1260,7 @@
   }
 
   function onSuccess(data, variant, payload) {
-    writeStore({ name: payload.name, surname: payload.surname, phone: digits(), city: payload.city, delivery: payload.delivery });
+    writeStore({ body: payload.body, name: payload.name, surname: payload.surname, phone: digits(), city: payload.city, delivery: payload.delivery });
 
     refs.successTitle.textContent = T.thanks(data.order_number);
     refs.successSummary.textContent = '';

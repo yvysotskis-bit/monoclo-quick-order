@@ -89,3 +89,13 @@ test('конфіг обрізає пробіли й переноси рядкі�
   assert.equal(cfg.shop, 'shop.myshopify.com');
   assert.equal(cfg.telegramToken, 'tok');
 });
+
+test('зріст і вага з підбору розміру: валідуються, показуються менеджеру', async () => {
+  const { cleanBody } = await import('../server/validate.js');
+  const { buildOrderMessage } = await import('../server/message.js');
+  assert.deepEqual(cleanBody({ height: '180', weight: 75.4 }), { height: 180, weight: 75 });
+  for (const bad of [null, {}, { height: 80, weight: 70 }, { height: 180, weight: 500 }, { height: 'x', weight: 70 }]) assert.equal(cleanBody(bad), null);
+  const text = buildOrderMessage({ orderNumber: '1', when: 'x', productTitle: 'T', options: [], quantity: 1, totalCents: 100, name: 'Іван', surname: 'Петренко', phone: '+380', body: { height: 180, weight: 75 }, utm: {} });
+  assert.match(text, /📏 Зріст 180 см, вага 75 кг/);
+  assert.match(text, /Іван Петренко/);
+});

@@ -24,6 +24,9 @@
     data-timezone="Europe/Kyiv"
     data-color-map="{{ s.color_map | escape }}"
     data-size-guide-url="{{ s.size_guide_url | escape }}"
+    data-size-helper="{{ s.size_helper }}"
+    data-size-map-tee="{{ s.size_map_tee | default: 'XS:55, S:65, M:75, L:85, XL:95, XXL' | escape }}"
+    data-size-map-hoodie="{{ s.size_map_hoodie | default: 'S:65, M:75, L:88, XL:100, XXL' | escape }}"
     data-instagram-url="{{ s.instagram_url | escape }}"
     data-after-hours-text="{{ s.after_hours_text | escape }}"
     data-max-qty="10"
@@ -347,6 +350,26 @@
       "label": "Робити доставку обовʼязковою",
       "info": "Без вибору міста й відділення (або адреси) замовлення не відправиться. Це може зменшити кількість замовлень.",
       "default": false
+    },
+    {
+      "type": "checkbox",
+      "id": "size_helper",
+      "label": "Показувати «Підібрати розмір за зростом і вагою»",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "size_map_tee",
+      "label": "Підбір розміру: футболки та інше",
+      "default": "XS:55, S:65, M:75, L:85, XL:95, XXL",
+      "info": "Розмір і верхня межа ваги в кг для людини зростом 175 см. Наприклад «M:75» означає: до 75 кг. Останній розмір без числа."
+    },
+    {
+      "type": "text",
+      "id": "size_map_hoodie",
+      "label": "Підбір розміру: худі та светри",
+      "default": "S:65, M:75, L:88, XL:100, XXL",
+      "info": "Той самий формат. Для товарів із «худі», «hoodie» чи «світшот» у назві."
     },
     {
       "type": "url",

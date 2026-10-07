@@ -286,6 +286,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         currency: config.currency,
         name: input.name,
         surname: input.surname,
+        body: input.body,
         phone: input.phone,
         city: input.city,
         delivery: input.delivery,

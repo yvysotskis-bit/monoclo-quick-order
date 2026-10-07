@@ -735,3 +735,25 @@ html.qo-lock { overflow: hidden; }
 .qo-segment__btn:focus-visible { outline: 2px solid var(--qo-strong); outline-offset: 2px; }
 
 .qo-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* Підбір розміру */
+.qo-sizehelper { margin-top: 10px; }
+.qo-sizehelper__toggle {
+  appearance: none; background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; font-size: 13px; color: var(--qo-ink);
+  text-decoration: underline; text-underline-offset: 3px;
+}
+.qo-sizehelper__panel {
+  margin-top: 10px; padding: 12px; border: 1px solid var(--qo-line);
+  border-radius: var(--qo-radius); background: var(--qo-soft);
+}
+.qo-sizehelper__panel[hidden] { display: none; }
+.qo-sizehelper__row { display: flex; gap: 8px; align-items: flex-end; }
+.qo-sizehelper__field { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; font-size: 12px; color: var(--qo-muted); }
+.qo-sizehelper__go {
+  appearance: none; cursor: pointer; font: inherit; font-size: 14px; font-weight: 600;
+  padding: 0 16px; height: 48px; border: 0; border-radius: var(--qo-radius);
+  background: var(--qo-strong); color: var(--qo-on-strong);
+}
+.qo-sizehelper__result { margin: 10px 0 0; font-size: 13px; line-height: 1.4; color: var(--qo-ink); }
+.qo-sizehelper__result:empty { display: none; }

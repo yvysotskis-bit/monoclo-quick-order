@@ -57,6 +57,20 @@ async function flow(name, viewport) {
   assert.equal(await page.getAttribute('.qo-choice[data-qo-value="L"]', 'aria-disabled'), 'false');
   await shot('2-color');
 
+  // Підбір розміру за зростом і вагою
+  await page.click('.qo-sizehelper__toggle');
+  await page.fill('.qo-sizehelper__field:nth-child(1) input', '180');
+  await page.fill('.qo-sizehelper__field:nth-child(2) input', '78');
+  await page.click('.qo-sizehelper__go');
+  assert.match(await page.textContent('.qo-sizehelper__result'), /Рекомендуємо L/);
+  assert.equal(await page.getAttribute('.qo-choice[data-qo-value="L"]', 'aria-checked'), 'true');
+  await shot('2b-size-helper');
+  await page.fill('.qo-sizehelper__field:nth-child(1) input', '90');
+  await page.click('.qo-sizehelper__go');
+  assert.match(await page.textContent('.qo-sizehelper__result'), /Вкажіть зріст/);
+  await page.fill('.qo-sizehelper__field:nth-child(1) input', '180');
+  await page.click('.qo-sizehelper__go');
+
   // Виділена кнопка при наведенні курсора лишається контрастною
   await page.click('.qo-choice[data-qo-value="Чорний"]');
   await page.click('.qo-choice[data-qo-value="S"]');

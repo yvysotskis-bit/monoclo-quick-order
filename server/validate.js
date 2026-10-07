@@ -68,6 +68,14 @@ export function cleanDelivery(raw) {
   return { method, city, point, street, house, apartment };
 }
 
+// Зріст і вага з підбору розміру: необовʼязково, поза межами відкидаємо
+export function cleanBody(raw) {
+  const height = Math.round(Number(raw?.height));
+  const weight = Math.round(Number(raw?.weight));
+  if (!(height >= 120 && height <= 220 && weight >= 30 && weight <= 200)) return null;
+  return { height, weight };
+}
+
 export function validateSubmission(body, { maxQty }) {
   if (!body || typeof body !== 'object') return fail('bad_request', 'Некоректний запит');
 
@@ -113,6 +121,7 @@ export function validateSubmission(body, { maxQty }) {
       quantity,
       name,
       surname: cleanText(body.surname, 60),
+      body: cleanBody(body.body),
       phone,
       comment: cleanText(body.comment, 300),
       pageUrl,
