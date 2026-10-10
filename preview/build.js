@@ -89,8 +89,7 @@ async function render(file, overrides = {}) {
   });
 }
 
-const stickyOn = process.argv.includes('--sticky');
-const button = await render('quick-order-button.liquid', stickyOn ? { sticky_mobile: true } : {});
+const button = await render('quick-order-button.liquid', {});
 const popupSettings = { size_guide_url: '#sizes', instagram_url: 'https://instagram.com/monoclo' };
 const popup = await render('quick-order-popup.liquid', popupSettings);
 const popupRequired = await render('quick-order-popup.liquid', { ...popupSettings, np_require: true });

@@ -1674,23 +1674,6 @@
   document.addEventListener('shopify:section:load', scheduleTheme);
   document.addEventListener('shopify:block:select', scheduleTheme);
 
-  // Sticky-кнопка внизу екрана, коли основна вийшла з поля зору
-  function initSticky() {
-    if (!('IntersectionObserver' in window)) return;
-    document.querySelectorAll('[data-qo-block]').forEach(function (block) {
-      var sticky = block.querySelector('[data-qo-sticky]');
-      var main = block.querySelector('.qo-trigger');
-      if (!sticky || !main || block.__qoSticky) return;
-      block.__qoSticky = true;
-      new IntersectionObserver(function (entries) {
-        var visible = entries[0].isIntersecting;
-        sticky.classList.toggle('is-visible', !visible);
-        sticky.setAttribute('aria-hidden', visible ? 'true' : 'false');
-        sticky.querySelector('button').tabIndex = visible ? -1 : 0;
-      }).observe(main);
-    });
-  }
-
   // М'яке підсвічування кнопки, якщо відвідувач довго не натискає (не більше 3 разів, не при reduce motion)
   function initNudge() {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -1737,9 +1720,8 @@
   }
 
   captureAttribution();
-  initSticky();
   initNudge();
-  document.addEventListener('shopify:section:load', function () { initSticky(); initNudge(); });
+  document.addEventListener('shopify:section:load', function () { initNudge(); });
 
   window.QuickOrder = {
     open: function (product) { open(product, null); },

@@ -24,19 +24,6 @@
       {{- block.settings.label | escape -}}
     </button>
 
-    {%- if block.settings.sticky_mobile -%}
-      <div class="qo-sticky" data-qo-sticky aria-hidden="true">
-        <button
-          type="button"
-          class="qo-trigger qo-trigger--solid"
-          data-qo-open
-          data-qo-product="qo-product-{{ block.id }}"
-          tabindex="-1"
-        >
-          {{- block.settings.label | escape -}}
-        </button>
-      </div>
-    {%- endif -%}
 
     {%- if request.design_mode -%}
       <p class="qo-editor-note" data-qo-editor-note hidden>
@@ -148,13 +135,6 @@
       "step": 2,
       "unit": "px",
       "default": 12
-    },
-    {
-      "type": "checkbox",
-      "id": "sticky_mobile",
-      "label": "Прилипаюча кнопка внизу на мобільному",
-      "info": "Зʼявляється, коли основна кнопка пішла за межі екрана. Може перетинатися з власною sticky-панеллю теми.",
-      "default": false
     }
   ]
 }
