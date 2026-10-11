@@ -212,7 +212,7 @@ export const ttnKeyboard = (orderId) => ({
   inline_keyboard: [[{ text: '📦 Створити ТТН', callback_data: `ttn:${orderId}` }]],
 });
 
-export function buildTtnMessage({ orderNumber, number, codUah, costUah, address, tracked, unpaidUah = 0 }) {
+export function buildTtnMessage({ orderNumber, number, codUah, costUah, address, tracked, unpaidUah = 0, statusFailed = false }) {
   const lines = [`📦 <b>ТТН Нової пошти створено: <code>${escapeHtml(number)}</code></b> · замовлення #${escapeHtml(orderNumber)}`];
   if (address) lines.push(escapeHtml(address));
   lines.push(`Оголошена вартість: ${escapeHtml(formatMoney(Math.round(costUah * 100)))}`);
@@ -224,6 +224,7 @@ export function buildTtnMessage({ orderNumber, number, codUah, costUah, address,
       : 'Замовлення оплачено повністю, післяплати немає.');
   }
   lines.push(tracked ? '✅ Номер записано в KeyCRM.' : '⚠️ Номер не вдалося записати в KeyCRM, додайте його вручну.');
+  if (statusFailed) lines.push('⚠️ Не вдалося змінити статус у KeyCRM, змініть його вручну.');
   return lines.join('\n');
 }
 

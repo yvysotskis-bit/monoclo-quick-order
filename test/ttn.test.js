@@ -130,3 +130,18 @@ test('післяплата недоступна: пропонується ТТН
   assert.match(fetchFn.tg('sendMessage').at(-1).body.text, /БЕЗ післяплати/);
   assert.equal(store.getOrder(1).ttn_number, '20451234567890');
 });
+
+test('після ТТН замовлення в KeyCRM переводиться в налаштований статус', async () => {
+  const ctx = makeApp({ cfg: { ...cfg, keycrmTtnStatusId: 42 } });
+  await submit(ctx.app, goodBody({ surname: 'Петренко', delivery: warehouse }));
+  await press(ctx.app, 'pay:link');
+  await pay(ctx.app, 'inv-1', 20000);
+  await press(ctx.app, 'ttn:1');
+  assert.ok(ctx.fetchFn.crm().some((c) => c.method === 'PUT' && c.body.status_id === 42));
+});
+
+test('без KEYCRM_TTN_STATUS_ID статус у KeyCRM після ТТН не чіпаємо', async () => {
+  const { app, fetchFn } = await paidOrder({ surname: 'Петренко', delivery: warehouse });
+  await press(app, 'ttn:1');
+  assert.ok(!fetchFn.crm().some((c) => c.method === 'PUT' && c.body.status_id));
+});

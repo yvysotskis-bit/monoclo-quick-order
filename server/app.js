@@ -523,6 +523,13 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
             return false;
           });
         }
+        let statusFailed = false;
+        if (keycrm && order.crm_order_id && config.keycrmTtnStatusId) {
+          await keycrm.setStatusId(order.crm_order_id, config.keycrmTtnStatusId).catch((e) => {
+            statusFailed = true;
+            log.error('keycrm ttn status', e.message);
+          });
+        }
         await telegram.clearButtons(message.message_id).catch(() => {});
         await telegram.sendText(buildTtnMessage({
           orderNumber: order.order_number,
@@ -532,6 +539,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
           unpaidUah: ttn.unpaidUah,
           address: describeDelivery(order.data.delivery).join('\n'),
           tracked,
+          statusFailed,
         }), { replyTo });
         await answer('ТТН створено');
       } catch (err) {

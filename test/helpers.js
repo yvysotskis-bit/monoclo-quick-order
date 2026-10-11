@@ -26,6 +26,7 @@ export const config = {
   monobankToken: '',
   novaPoshtaApiKey: '',
   keycrmNovaPoshtaServiceId: 0,
+  keycrmTtnStatusId: 0,
   npSenderCity: 'Чернівці',
   npSenderWarehouse: '31',
   npSenderPhone: '',

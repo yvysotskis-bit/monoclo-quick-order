@@ -56,6 +56,8 @@ export function loadConfig(env = process.env) {
     keycrmSourceId: number('KEYCRM_SOURCE_ID', 216),
     keycrmStatusMap: parseJson(optional('KEYCRM_STATUS_MAP'), 'KEYCRM_STATUS_MAP'),
     // Служба доставки «Нова пошта» у KeyCRM (Налаштування → Служби доставки); 0 = не вказувати
+    // Статус у KeyCRM, у який переводити замовлення після створення ТТН (id зі списку статусів); 0 = не змінювати
+    keycrmTtnStatusId: number('KEYCRM_TTN_STATUS_ID', 0),
     keycrmNovaPoshtaServiceId: number('KEYCRM_NOVA_POSHTA_SERVICE_ID', 0),
 
     // Нова пошта: ключ з кабінету my.novaposhta.ua. Без нього місто й відділення вводяться вручну
