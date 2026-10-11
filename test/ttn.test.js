@@ -145,3 +145,19 @@ test('без KEYCRM_TTN_STATUS_ID статус у KeyCRM після ТТН не 
   await press(app, 'ttn:1');
   assert.ok(!fetchFn.crm().some((c) => c.method === 'PUT' && c.body.status_id));
 });
+
+test('ТТН створено: замовлення в боті позначається «Відправлено», у KeyCRM ставиться статус', async () => {
+  const ctx = makeApp({ cfg: { ...cfg, keycrmStatusMap: { shipped: 55 } } });
+  await submit(ctx.app, goodBody({ surname: 'Петренко', delivery: warehouse }));
+  const orderMsgId = ctx.store.getOrder(1).tg_message_id;
+  await press(ctx.app, 'pay:link');
+  await pay(ctx.app, 'inv-1', 20000);
+  await press(ctx.app, 'ttn:1');
+
+  assert.equal(ctx.store.getOrder(1).status, 'shipped');
+  const edit = ctx.fetchFn.tg('editMessageText').at(-1).body;
+  assert.equal(edit.message_id, orderMsgId);
+  assert.match(edit.text, /Статус: 📦 Відправлено — ТТН 20451234567890/);
+  assert.equal(edit.parse_mode, 'HTML');
+  assert.ok(ctx.fetchFn.crm().some((c) => c.method === 'PUT' && c.body.status_id === 55));
+});
