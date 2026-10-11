@@ -19,8 +19,6 @@ import {
 } from './hours.js';
 import {
   STATUS_KEYS,
-  STATUSES,
-  escapeHtml,
   applyStatus,
   buildOrderMessage,
   buildAmountPrompt,
@@ -504,32 +502,6 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
 
   /* ---------- ТТН Нової пошти ---------- */
 
-  // ТТН з'явилась: замовлення в боті позначається виконаним («Відправлено»), нагадування припиняються
-  async function markShipped(order, number, actor) {
-    const date = now();
-    store.setStatus(order.id, 'shipped', actor, date.getTime());
-    if (!order.tg_message_id) return;
-    const fresh = store.getOrder(order.id);
-    const d = fresh.data;
-    const text = buildOrderMessage({
-      ...d,
-      orderNumber: fresh.order_number,
-      when: formatDateTime(new Date(fresh.created_at), config.timezone),
-    });
-    const line = `\n\nСтатус: ${STATUSES.shipped.label} — ТТН ${number}, ${actor}, ${formatTime(date, config.timezone)}`;
-    const pay = payInfo(fresh);
-    try {
-      await telegram.editMessage({
-        messageId: fresh.tg_message_id,
-        text: text + escapeHtml(line),
-        parseMode: 'HTML',
-        replyMarkup: statusKeyboard('shipped', newOrderKeyboard(d.productUrl, d.phone, config.publicUrl, pay), pay),
-      });
-    } catch (err) {
-      log.error('mark shipped failed', err.message);
-    }
-  }
-
   async function createTtn(query) {
     const message = query.message;
     const answer = (text) => telegram.answerCallback(query.id, text).catch(() => {});
@@ -552,17 +524,12 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
           });
         }
         let statusFailed = false;
-        if (keycrm && order.crm_order_id) {
-          // Свій статус після ТТН (id) має пріоритет, інакше «Відправлено» зі співставлення статусів
-          const set = config.keycrmTtnStatusId
-            ? keycrm.setStatusId(order.crm_order_id, config.keycrmTtnStatusId)
-            : keycrm.updateStatus(order.crm_order_id, 'shipped');
-          await set.catch((e) => {
+        if (keycrm && order.crm_order_id && config.keycrmTtnStatusId) {
+          await keycrm.setStatusId(order.crm_order_id, config.keycrmTtnStatusId).catch((e) => {
             statusFailed = true;
             log.error('keycrm ttn status', e.message);
           });
         }
-        await markShipped(order, ttn.number, actorName(query.from));
         await telegram.clearButtons(message.message_id).catch(() => {});
         await telegram.sendText(buildTtnMessage({
           orderNumber: order.order_number,

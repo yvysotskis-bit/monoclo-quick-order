@@ -40,12 +40,11 @@ export function createTelegram({ token, chatId, fetchFn }) {
       reply_parameters: replyTo ? { message_id: replyTo, allow_sending_without_reply: true } : undefined,
       reply_markup: { force_reply: true, selective: true, input_field_placeholder: 'Сума в гривнях, наприклад 1500' },
     }),
-    editMessage: ({ messageId, text, entities, parseMode, replyMarkup }) => call('editMessageText', {
+    editMessage: ({ messageId, text, entities, replyMarkup }) => call('editMessageText', {
       chat_id: chatId,
       message_id: messageId,
       text,
       entities,
-      parse_mode: parseMode,
       link_preview_options: { is_disabled: true },
       reply_markup: replyMarkup,
     }),
