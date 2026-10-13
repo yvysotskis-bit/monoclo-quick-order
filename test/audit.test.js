@@ -287,3 +287,40 @@ test('ТТН: якщо KeyCRM не прийняв трекінг-код, він 
   assert.equal(store.getOrder(1).ttn_crm_synced, 1);
   assert.ok(fetchFn.crmState.puts.some((b) => b.shipping?.tracking_code === '20451234567890'));
 });
+
+test('пошук відділень у великому місті: номер за межами першої сторінки (500) знаходиться', async () => {
+  const { createNovaPoshta } = await import('../server/novaposhta.js');
+  const all = Array.from({ length: 1200 }, (_, i) => ({
+    Ref: `ref-${i + 1}`, Number: String(i + 1), Description: `Відділення №${i + 1}: вул. Тестова, ${i + 1}`,
+    ShortAddress: `вул. Тестова, ${i + 1}`, CategoryOfWarehouse: 'Branch',
+  }));
+  const fetchFn = async (_url, init) => {
+    const p = JSON.parse(init.body).methodProperties;
+    // «Нова пошта» не знаходить номер через FindByString (як у реальному житті), лише віддає сторінки
+    if (p.FindByString) return Response.json({ success: true, data: [] });
+    const page = Number(p.Page);
+    return Response.json({ success: true, data: all.slice((page - 1) * 500, page * 500) });
+  };
+  const np = createNovaPoshta({ apiKey: 'k', fetchFn });
+  const found = await np.searchPoints({ settlement: 'x', query: '1111', kind: 'warehouse' });
+  assert.deepEqual(found.map((p) => p.number), ['1111']);
+});
+
+test('ТТН: двозначний відправник (кілька міст з такою назвою) відхиляється з поясненням, а не вгадується', async () => {
+  const { createTtnService } = await import('../server/ttn.js');
+  const { createNovaPoshta } = await import('../server/novaposhta.js');
+  const { config } = await import('./helpers.js');
+  const { openStore } = await import('../server/store.js');
+  const fetchFn = async (_u, init) => {
+    const b = JSON.parse(init.body);
+    if (b.calledMethod === 'getCounterparties') return Response.json({ success: true, data: [{ Ref: 'cp' }] });
+    if (b.calledMethod === 'getCounterpartyContactPersons') return Response.json({ success: true, data: [{ Ref: 'c', Phones: '380501112233' }] });
+    return Response.json({ success: true, data: [
+      { Ref: 'w1', Number: '31', CityRef: 'city-A', CategoryOfWarehouse: 'Branch' },
+      { Ref: 'w2', Number: '31', CityRef: 'city-B', CategoryOfWarehouse: 'Branch' },
+    ] });
+  };
+  const svc = createTtnService({ np: createNovaPoshta({ apiKey: 'k', fetchFn }), config: { ...config, novaPoshtaApiKey: 'k' }, store: openStore(':memory:') });
+  const order = { id: 1, order_number: '1', data: { delivery: { method: 'warehouse', city: { ref: 'e71a0b8e-9b3d-4a39-8a1f-111111111111' }, point: { ref: 'd1a8e3e2-1111-4a39-8a1f-222222222222' } }, name: 'Іван', surname: 'П', phone: '+380671234567', totalCents: 1000, options: [], quantity: 1, productTitle: 'T' } };
+  await assert.rejects(svc.create({ order, paidCents: 0 }), /кількох населених пунктах/);
+});

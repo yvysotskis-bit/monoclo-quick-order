@@ -220,6 +220,46 @@ await flow('mobile', { width: 390, height: 844 });
   await ctx.close();
 }
 
+// Мобільний: швидке замовлення для повторного клієнта, кнопка «Назад», подвійний клік
+{
+  const { page, ctx, errors } = await session('mobile-quick', { width: 390, height: 844 }, '?hour=12');
+  await open(page);
+  await toContacts(page);
+  // «Назад» телефона: з кроку 2 на крок 1, а не зі сторінки
+  await page.goBack();
+  await page.waitForFunction(() => !document.querySelector('[data-qo-step="1"]').hidden);
+  assert.equal(await page.evaluate(() => document.querySelector('[data-qo-dialog]').open), true);
+  assert.equal(await page.textContent('[data-qo-submit-label]'), 'Далі', 'новому клієнтові пропонується «Далі»');
+  // Ще одне «Назад» закриває шторку, але не сторінку
+  await page.goBack();
+  await page.waitForFunction(() => !document.querySelector('[data-qo-dialog]').open);
+  assert.equal(page.url().startsWith('file://'), true);
+
+  // Перше замовлення зберігає контакти
+  await open(page);
+  await toContacts(page);
+  await page.fill('[data-qo-name]', 'Олена');
+  await page.click('[data-qo-phone]');
+  await page.keyboard.type('501112233');
+  await page.click('[data-qo-submit]');
+  await page.waitForSelector('[data-qo-success-view]:not([hidden])');
+  await page.click('.qo-success [data-qo-close]');
+  await page.waitForFunction(() => !document.querySelector('[data-qo-dialog]').open);
+
+  // Друге: контакти вже відомі, головна кнопка на кроці 1 замовляє «як Олена»; подвійний клік дає одне замовлення
+  await open(page);
+  await page.click('.qo-choice[data-qo-value="Чорний"]');
+  await page.click('.qo-choice[data-qo-value="M"]');
+  assert.match(await page.textContent('[data-qo-submit-label]'), /^Замовити як Олена · /);
+  assert.equal(await page.isVisible('[data-qo-recap]'), true);
+  assert.match(await page.textContent('[data-qo-recap-line]'), /Олена · \+380 \(50\) 111 22 33/);
+  await page.dblclick('[data-qo-submit]');
+  await page.waitForSelector('[data-qo-success-view]:not([hidden])');
+  assert.equal(await page.evaluate(() => window.__orders.length), 2);
+  assert.deepEqual(errors.filter((e) => !/Failed to fetch/.test(e)), []);
+  await ctx.close();
+}
+
 // Помилки відправки
 for (const mode of ['network', 'soldout', 'invalid']) {
   const { page, ctx, shot, errors } = await session(`mobile-${mode}`, { width: 390, height: 844 }, `?mode=${mode}`);

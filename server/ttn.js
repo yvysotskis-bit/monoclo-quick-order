@@ -43,8 +43,13 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
     const rows = await call('AddressGeneral', 'getWarehouses', {
       CityName: config.npSenderCity, Limit: '500', Page: '1', Language: 'UA',
     });
-    const warehouse = rows.find((r) => text(r.Number) === config.npSenderWarehouse && r.CategoryOfWarehouse !== 'Postomat');
-    if (!warehouse) throw new Error(`не знайдено відділення №${config.npSenderWarehouse} у місті ${config.npSenderCity}`);
+    const matching = rows.filter((r) => text(r.Number) === config.npSenderWarehouse && r.CategoryOfWarehouse !== 'Postomat');
+    if (!matching.length) throw new Error(`не знайдено відділення №${config.npSenderWarehouse} у місті ${config.npSenderCity}`);
+    // Назву міста можуть носити кілька населених пунктів: вгадувати відправника не можна
+    if (new Set(matching.map((r) => r.CityRef)).size > 1) {
+      throw new Error(`відділення №${config.npSenderWarehouse} знайдено в кількох населених пунктах з назвою «${config.npSenderCity}», уточніть NP_SENDER_CITY`);
+    }
+    const warehouse = matching[0];
 
     const value = {
       counterparty: counterparty.Ref, contact: contact.Ref, phone,

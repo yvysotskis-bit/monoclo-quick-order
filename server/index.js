@@ -11,6 +11,9 @@ console.log(`База даних: ${config.dbPath}${config.dbPath.startsWith('/d
 console.log(`KeyCRM: ${app.keycrm ? `увімкнено, джерело ${config.keycrmSourceId}` : 'вимкнено (немає KEYCRM_API_KEY)'}`);
 
 const server = http.createServer((req, res) => app.handle(req, res));
+// За проксі Render з'єднання тримаються довше, ніж за замовчуванням у Node (5 с): інакше випадкові 502 на повторних запитах
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
 server.listen(config.port, () => {
   console.log(`quick-order слухає порт ${config.port}`);
 });

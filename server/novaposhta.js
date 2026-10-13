@@ -106,18 +106,20 @@ export function createNovaPoshta({ apiKey, fetchFn, sleep = (ms) => new Promise(
           ...extra,
         });
 
-      // Пошук за типом (швидко); номер/адресу фільтруємо самі, бо FindByString їх часто не знаходить
-      let rows = await fetchPage(wantPostomat ? { TypeOfWarehouseRef: TYPE_POSTOMAT } : {}, 1);
+      // 1) швидкий пошук на стороні Нової пошти (за типом і введеним текстом), результат ще раз фільтруємо самі
+      const typed = wantPostomat ? { TypeOfWarehouseRef: TYPE_POSTOMAT } : {};
+      let rows = await fetchPage(q ? { ...typed, FindByString: text(query) } : typed, 1);
       let picked = rows.filter((r) => isPostomat(r) === wantPostomat).filter(matches);
-      if (!picked.length && wantPostomat) {
-        // Запасний шлях: усі точки міста (до 3 сторінок), поштомати відбираємо самі
+      if (!picked.length) {
+        // 2) запасний шлях: перебираємо всі точки міста (у великих містах їх понад 500, тож кілька сторінок),
+        // потрібні відбираємо самі: Нова пошта не завжди знаходить номер чи адресу через FindByString
         rows = [];
-        for (let page = 1; page <= 3; page += 1) {
+        for (let page = 1; page <= 8; page += 1) {
           const chunk = await fetchPage({}, page);
           rows = rows.concat(chunk);
           if (chunk.length < 500) break;
         }
-        picked = rows.filter(isPostomat).filter(matches);
+        picked = rows.filter((r) => isPostomat(r) === wantPostomat).filter(matches);
       }
       return picked
         .slice(0, 40)
