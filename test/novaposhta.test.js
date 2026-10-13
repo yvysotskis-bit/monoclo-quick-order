@@ -75,7 +75,7 @@ test('збій Нової пошти → 502 без витоку ключа; л�
 
   fetchFn.fail.novaposhta = false;
   let last;
-  for (let i = 0; i < 125; i += 1) last = await get(app, '/proxy/np/cities', { q: `Місто${i}` });
+  for (let i = 0; i < 605; i += 1) last = await get(app, '/proxy/np/cities', { q: `Місто${i}` });
   assert.equal(last.status, 429);
 });
 

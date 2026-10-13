@@ -245,3 +245,45 @@ test('ТТН: після зміни API-ключа відправник визн
   assert.equal(senderCalls(), 2, 'з новим ключем відправник знаходиться заново');
   assert.ok(app1);
 });
+
+test('звіт: спам і скасовані не входять у суму; нічні замовлення не псують середній час відповіді', async () => {
+  const { buildWeeklyReport } = await import('../server/report.js');
+  const mk = (status, total, createdAt, firstResponse) => ({
+    status, created_at: createdAt, first_response_at: firstResponse,
+    data: { totalCents: total, quantity: 1, productTitle: 'T', afterHours: false, utm: {} },
+  });
+  const t0 = Date.parse('2026-10-20T00:00:00Z');
+  const orders = [
+    mk('confirmed', 100000, t0, t0 + 10 * 60_000),
+    mk('spam', 900000, t0, t0 + 60_000),
+    mk('cancelled', 500000, t0, t0 + 60_000),
+    // Нічне замовлення (створене о 01:00), відповідь о 10:05 при початку дня о 10:00: чекало 5 хв, а не 9 годин
+    mk('taken', 50000, t0 + 3600_000, t0 + 10 * 3600_000 + 5 * 60_000),
+  ];
+  const text = buildWeeklyReport(orders, {
+    from: t0, to: t0 + 7 * 86400_000, timezone: 'Europe/Kyiv', payments: [],
+    startOf: (o) => (o.created_at === t0 + 3600_000 ? t0 + 10 * 3600_000 : o.created_at),
+  });
+  assert.match(text, /Сума \(без спаму й скасованих\): <b>1\s?500\s₴/);
+  assert.match(text, /Середній час до першої відповіді: 4 хв/);
+});
+
+test('ТТН: якщо KeyCRM не прийняв трекінг-код, він дописується фоновою чергою; збій повідомлення не видається за невдалу ТТН', async () => {
+  const { app, fetchFn, store, now } = makeApp({ cfg: { monobankToken: 'M', novaPoshtaApiKey: 'npkey', keycrmToken: 'crm' } });
+  const city = { ref: 'e71a0b8e-9b3d-4a39-8a1f-111111111111', name: 'Чернівці', present: 'м. Чернівці', area: 'Чернівецька' };
+  const point = { ref: 'd1a8e3e2-1111-4a39-8a1f-222222222222', number: '3', name: 'Відділення №3' };
+  await submit(app, goodBody({ surname: 'Петренко', delivery: { method: 'warehouse', city, point } }));
+  await press(app, 'pay:link');
+  await hook(app, { invoiceId: 'inv-1', status: 'success', amount: 20000, modifiedDate: '2025-10-05T12:00:05Z' });
+  fetchFn.fail.keycrm = true;
+  await press(app, 'ttn:1');
+  assert.equal(store.getOrder(1).ttn_number, '20451234567890');
+  assert.equal(store.getOrder(1).ttn_crm_synced, 0);
+  assert.doesNotMatch(fetchFn.sentMessages.at(-1).text, /Не вдалося створити ТТН/);
+  assert.match(fetchFn.sentMessages.at(-1).text, /не вдалося записати в KeyCRM/);
+  fetchFn.fail.keycrm = false;
+  now.advance(60_000);
+  await app.tick();
+  assert.equal(store.getOrder(1).ttn_crm_synced, 1);
+  assert.ok(fetchFn.crmState.puts.some((b) => b.shipping?.tracking_code === '20451234567890'));
+});

@@ -9,7 +9,7 @@ const plural = (n, one, few, many) => {
   return many;
 };
 
-export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH', payments = [] }) {
+export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH', payments = [], startOf = (o) => o.created_at }) {
   const title = `📊 <b>Звіт за тиждень ${formatDayMonth(new Date(from), timezone)}–${formatDayMonth(new Date(to), timezone)}</b>`;
   if (!orders.length) return `${title}\n\nЗамовлень за цей період не було.`;
 
@@ -24,12 +24,14 @@ export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH'
 
   for (const o of orders) {
     counts[o.status] = (counts[o.status] || 0) + 1;
-    sum += o.data.totalCents;
+    // У суму не входять спам і скасовані замовлення
+    if (o.status !== 'spam' && o.status !== 'cancelled') sum += o.data.totalCents;
     if (o.data.afterHours) afterHours += 1;
     products.set(o.data.productTitle, (products.get(o.data.productTitle) || 0) + o.data.quantity);
     const source = describeSource(o.data) || 'прямий візит';
     sources.set(source, (sources.get(source) || 0) + 1);
-    if (o.first_response_at) responseTimes.push(o.first_response_at - o.created_at);
+    // Нічні замовлення чекають не з моменту створення, а з початку робочого дня
+    if (o.first_response_at) responseTimes.push(Math.max(o.first_response_at - startOf(o), 0));
   }
 
   const top = (map, limit) => [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit);
@@ -37,7 +39,7 @@ export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH'
     title,
     '',
     `Замовлень: <b>${orders.length}</b> (поза робочим часом: ${afterHours})`,
-    `Сума: <b>${escapeHtml(formatMoney(sum, currency))}</b>`,
+    `Сума (без спаму й скасованих): <b>${escapeHtml(formatMoney(sum, currency))}</b>`,
     '',
     '<b>Статуси</b>',
     `🆕 Без відповіді: ${counts.new || 0}`,

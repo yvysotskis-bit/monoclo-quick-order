@@ -73,6 +73,7 @@ const ADDED_COLUMNS = {
   ttn_number: 'TEXT',
   ttn_ref: 'TEXT',
   crm_status: 'TEXT',
+  ttn_crm_synced: 'INTEGER NOT NULL DEFAULT 0',
 };
 
 function migrate(db) {
@@ -306,7 +307,16 @@ export class Store {
   /* ---- статуси ---- */
 
   setTtn(id, number, ref) {
-    this.run('UPDATE orders SET ttn_number = ?, ttn_ref = ? WHERE id = ?', number, ref, id);
+    this.run('UPDATE orders SET ttn_number = ?, ttn_ref = ?, ttn_crm_synced = 0 WHERE id = ?', number, ref, id);
+  }
+
+  // ТТН створено, але ще не записано в KeyCRM
+  ttnNotInCrm(limit = 10) {
+    return this.q('SELECT * FROM orders WHERE ttn_number IS NOT NULL AND crm_order_id IS NOT NULL AND ttn_crm_synced = 0 ORDER BY id LIMIT ?', limit);
+  }
+
+  markTtnInCrm(id) {
+    this.run('UPDATE orders SET ttn_crm_synced = 1 WHERE id = ?', id);
   }
 
   setStatus(id, status, by, at) {

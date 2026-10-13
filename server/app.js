@@ -249,7 +249,10 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const nowMs = date.getTime();
 
     // 2. Ліміт за IP до будь-якої важкої роботи
-    if (!store.takeHit(`ip:${clientIp(req)}`, 8, 10 * 60_000, nowMs)) {
+    // Ліміт щедрий: якщо Shopify передає одну й ту саму адресу для всіх, 8 замовлень за 10 хвилин на весь магазин блокували б людей.
+    // Основний захист від спаму: підпис проксі, honeypot і ліміт за номером.
+    if (!store.takeHit(`ip:${clientIp(req)}`, 30, 10 * 60_000, nowMs)) {
+      log.error('rate limited by ip', clientIp(req));
       throw new HttpError(429, 'rate_limited', 'Забагато спроб. Спробуйте трохи пізніше');
     }
 
@@ -552,6 +555,20 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
 
   /* ---------- ТТН Нової пошти ---------- */
 
+  // Номер ТТН у KeyCRM: якщо з першого разу не вдалось, фонова черга дописує його пізніше
+  async function syncTtnToCrm(orderId) {
+    const order = store.getOrder(orderId);
+    if (!keycrm || !order?.crm_order_id || !order.ttn_number) return false;
+    try {
+      await keycrm.setTrackingCode(order.crm_order_id, order.ttn_number);
+      store.markTtnInCrm(order.id);
+      return true;
+    } catch (err) {
+      log.error('keycrm tracking', err.message);
+      return false;
+    }
+  }
+
   async function createTtn(query) {
     const message = query.message;
     const answer = (text) => telegram.answerCallback(query.id, text).catch(() => {});
@@ -565,16 +582,22 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       // Поки чекали на чергу, ТТН могли створити в іншому запиті
       if (store.getOrder(order.id).ttn_number) { await answer('ТТН уже створено'); return true; }
       const replyTo = order.tg_message_id || message.message_id;
+      let ttn;
       try {
-        const ttn = await ttnService.create({ order, paidCents: store.paidTotal(order.id), noCod });
+        ttn = await ttnService.create({ order, paidCents: store.paidTotal(order.id), noCod });
         store.setTtn(order.id, ttn.number, ttn.ref);
-        let tracked = false;
-        if (keycrm && order.crm_order_id) {
-          tracked = await keycrm.setTrackingCode(order.crm_order_id, ttn.number).then(() => true, (e) => {
-            log.error('keycrm tracking', e.message);
-            return false;
-          });
-        }
+      } catch (err) {
+        log.error('ttn failed', err.message);
+        await telegram.sendText(buildTtnFailedMessage(order.order_number, err.message), {
+          replyTo,
+          replyMarkup: /післяплат/i.test(err.message) && store.paidTotal(order.id) < order.data.totalCents ? ttnNoCodKeyboard(order.id) : undefined,
+        }).catch(() => {});
+        await answer('Не вдалося створити ТТН');
+        return true;
+      }
+      // Далі ТТН уже існує: збій повідомлення чи KeyCRM не має виглядати як «не вдалося створити»
+      try {
+        const tracked = await syncTtnToCrm(order.id);
         let statusFailed = false;
         if (keycrm && order.crm_order_id && config.keycrmTtnStatusId) {
           await keycrm.setStatusId(order.crm_order_id, config.keycrmTtnStatusId).catch((e) => {
@@ -593,15 +616,10 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
           tracked,
           statusFailed,
         }), { replyTo });
-        await answer('ТТН створено');
       } catch (err) {
-        log.error('ttn failed', err.message);
-        await telegram.sendText(buildTtnFailedMessage(order.order_number, err.message), {
-          replyTo,
-          replyMarkup: /післяплат/i.test(err.message) && store.paidTotal(order.id) < order.data.totalCents ? ttnNoCodKeyboard(order.id) : undefined,
-        }).catch(() => {});
-        await answer('Не вдалося створити ТТН');
+        log.error('ttn notice failed', err.message);
       }
+      await answer('ТТН створено');
       return true;
     });
     if (!ran) await answer('ТТН уже створюється, зачекайте');
@@ -696,6 +714,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       timezone: config.timezone,
       currency: config.currency,
       payments: store.paidSince(from),
+      startOf: (o) => effectiveStart(o.created_at, config),
     });
     try {
       await telegram.sendText(text);
@@ -712,6 +731,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     for (const order of store.crmDue(date.getTime())) await deliverCrm(order);
     for (const payment of store.unsyncedPayments()) await syncCrmPayment(payment, store.getOrder(payment.order_id));
     await syncStatuses();
+    for (const order of store.ttnNotInCrm()) await syncTtnToCrm(order.id);
     store.pruneOldPrompts(date.getTime() - PROMPT_TTL_MS);
     await sendReminders(date);
     await sendWeeklyReport(date);
@@ -773,7 +793,8 @@ p{margin:8px 0;color:#555}</style></head>
       throw new HttpError(401, 'unauthorized', 'Недійсний підпис');
     }
     if (!novaPoshta) throw new HttpError(503, 'np_disabled', 'Нова пошта не підключена');
-    if (!store.takeHit(`np:${clientIp(req)}`, 120, 60_000, now().getTime())) {
+    if (!store.takeHit(`np:${clientIp(req)}`, 600, 60_000, now().getTime())) {
+      log.error('np lookups rate limited by ip', clientIp(req));
       throw new HttpError(429, 'rate_limited', 'Забагато запитів');
     }
 
