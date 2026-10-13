@@ -190,7 +190,16 @@ export function buildPaidMessage({ orderNumber, amountCents, kind, totalCents, p
   lines.push(rest > 0
     ? `Сплачено ${formatMoney(paidCents)} з ${formatMoney(totalCents)}, залишок ${formatMoney(rest)}.`
     : 'Замовлення оплачено повністю.');
+  if (rest < 0) lines.push(`⚠️ Сплачено більше за суму замовлення на ${formatMoney(-rest)}. Перевірте й за потреби поверніть різницю клієнту.`);
   return lines.join('\n');
+}
+
+export function buildReversedMessage(orderNumber, amountCents, inCrm) {
+  return `↩️ Оплату ${formatMoney(amountCents)} за замовленням #${orderNumber} повернено клієнту (повернення коштів у Monobank).${inCrm ? ' У KeyCRM цей платіж лишився, виправте його вручну.' : ''}`;
+}
+
+export function buildAmountMismatchMessage(orderNumber, expectedCents, actualCents) {
+  return `⚠️ Замовлення #${orderNumber}: сума відрізняється від рахунку. Очікували ${formatMoney(expectedCents)}, банк повідомив ${formatMoney(actualCents)}. Перевірте оплату в кабінеті Monobank.`;
 }
 
 export function buildPayFailedMessage(orderNumber, reason) {

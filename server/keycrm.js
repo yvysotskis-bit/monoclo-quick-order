@@ -75,7 +75,7 @@ export function createKeycrm({ token, sourceId, statusMap = {}, deliveryServiceI
         'content-type': 'application/json',
         accept: 'application/json',
       },
-      body: JSON.stringify(body),
+      body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(10000),
     });
     const text = await res.text();
@@ -93,7 +93,20 @@ export function createKeycrm({ token, sourceId, statusMap = {}, deliveryServiceI
   return {
     sourceId,
     statusMap,
+    // Замовлення вже могло бути створене (відповідь загубилась, перезапуск посеред відправки): шукаємо за source_uuid
+    async findOrderId(sourceUuid) {
+      const query = new URLSearchParams({ 'filter[source_uuid]': sourceUuid, limit: '1' });
+      const data = await call('GET', `/order?${query}`);
+      return data?.data?.[0]?.id ?? null;
+    },
+    // Чи є вже в замовленні платіж із такою ознакою в описі (захист від подвійного платежу)
+    async hasPayment(crmOrderId, marker) {
+      const data = await call('GET', `/order/${crmOrderId}?include=payments`);
+      return (data?.payments || []).some((p) => String(p.description || '').includes(marker));
+    },
     async createOrder(order) {
+      const existing = await this.findOrderId(`quick-${order.order_number}`);
+      if (existing) return existing;
       const payload = buildCrmOrder(order, { sourceId, deliveryServiceId });
       let data;
       try {

@@ -15,6 +15,9 @@ server.listen(config.port, () => {
   console.log(`quick-order слухає порт ${config.port}`);
 });
 
+// Непередбачений збій окремої операції не має обвалювати весь сервер
+process.on('unhandledRejection', (err) => console.error('unhandled rejection', err));
+
 // Фонова черга: повторні відправки, нагадування, тижневий звіт
 let running = false;
 const worker = setInterval(async () => {

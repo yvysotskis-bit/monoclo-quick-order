@@ -105,6 +105,7 @@ export function mockFetch({ productResponse } = {}) {
     }
     if (u.startsWith('https://api.telegram.org/')) {
       if (fn.fail.telegram) return Response.json({ ok: false, description: 'Bad Gateway' }, { status: 502 });
+      if (u.endsWith('/sendMessage')) fn.sentMessages.push(call.body);
       return Response.json({ ok: true, result: { message_id: ++messageId } });
     }
     if (u.startsWith('https://api.monobank.ua/')) {
@@ -160,10 +161,36 @@ export function mockFetch({ productResponse } = {}) {
       }
     }
     if (u.startsWith('https://openapi.keycrm.app/')) {
+      const url = new URL(u);
+      const crm = fn.crmState;
       if (fn.fail.keycrm) return new Response('{"message":"boom"}', { status: 500 });
+      // Пошук замовлення за source_uuid (захист від дублів) і читання оплат замовлення
+      if (call.method === 'GET' && url.pathname === '/v1/order') {
+        const uuid = url.searchParams.get('filter[source_uuid]');
+        return Response.json({ data: crm.orders.filter((o) => o.source_uuid === uuid) });
+      }
+      const single = call.method === 'GET' && /^\/v1\/order\/(\d+)$/.exec(url.pathname);
+      if (single) return Response.json({ id: Number(single[1]), payments: crm.payments.filter((p) => p.order_id === Number(single[1])) });
       if (fn.fail.keycrmShipping && call.body?.shipping?.shipping_service) {
         return new Response('{"message":"shipping invalid"}', { status: 422 });
       }
+      if (call.method === 'POST' && url.pathname === '/v1/order') {
+        if (fn.fail.keycrmLostResponse) {
+          // Замовлення створено, але відповідь «загубилась»
+          crm.orders.push({ id: 777, source_uuid: call.body.source_uuid });
+          return new Response('{"message":"gateway timeout"}', { status: 504 });
+        }
+        crm.orders.push({ id: 777, source_uuid: call.body.source_uuid });
+        return Response.json({ id: 777 });
+      }
+      const pay = call.method === 'POST' && /^\/v1\/order\/(\d+)\/payment$/.exec(url.pathname);
+      if (pay) {
+        if (fn.fail.keycrmPayment) return new Response('{"message":"boom"}', { status: 500 });
+        if (fn.paymentDelayMs) await new Promise((r) => setTimeout(r, fn.paymentDelayMs));
+        crm.payments.push({ id: crm.payments.length + 1, order_id: Number(pay[1]), description: call.body.description, amount: call.body.amount });
+        return Response.json({ id: crm.payments.length });
+      }
+      if (call.method === 'PUT') crm.puts.push(call.body);
       return Response.json({ id: 777 });
     }
     throw new Error(`unexpected fetch ${u}`);
@@ -171,11 +198,15 @@ export function mockFetch({ productResponse } = {}) {
   fn.calls = calls;
   fn.fail = { telegram: false, keycrm: false, monobank: false, novaposhta: false, keycrmShipping: false };
   fn.invoices = 0;
+  fn.sentMessages = [];
+  fn.crmState = { orders: [], payments: [], puts: [] };
   fn.np = 0;
   fn.mono = () => calls.filter((c) => c.url.includes('api.monobank.ua') && c.url.endsWith('/invoice/create'));
   fn.monoRemoved = () => calls.filter((c) => c.url.endsWith('/invoice/remove'));
   fn.tg = (method) => calls.filter((c) => c.url.includes('api.telegram.org') && c.url.endsWith(`/${method}`));
-  fn.crm = () => calls.filter((c) => c.url.includes('keycrm.app'));
+  // Лише запити, що змінюють дані (читання для перевірок не рахуємо)
+  fn.crm = () => calls.filter((c) => c.url.includes('keycrm.app') && c.method !== 'GET');
+  fn.crmReads = () => calls.filter((c) => c.url.includes('keycrm.app') && c.method === 'GET');
   return fn;
 }
 

@@ -29,6 +29,8 @@ import {
   ttnKeyboard,
   ttnNoCodKeyboard,
   buildPayFailedMessage,
+  buildReversedMessage,
+  buildAmountMismatchMessage,
   buildPaymentMessage,
   parseAmountKopecks,
   PAYMENT_KIND,
@@ -165,8 +167,9 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         const crmId = await keycrm.createOrder(order);
         store.markCrmSent(order.id, crmId);
         // Якщо менеджер уже встиг змінити статус у Telegram, підтягуємо його в CRM
+        // (якщо оновлення не вдасться, його підхопить syncStatuses у фоновій черзі)
+        await syncStatuses();
         const fresh = store.getOrder(order.id);
-        if (fresh.status !== 'new') await keycrm.updateStatus(crmId, fresh.status).catch((e) => log.error('keycrm status', e.message));
         for (const payment of store.paymentsForOrder(order.id)) {
           if (payment.status === 'success' && !payment.crm_synced) await syncCrmPayment(payment, { ...fresh, crm_order_id: crmId });
         }
@@ -185,17 +188,40 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   }
 
   // Оплата, що вже надійшла, фіксується в замовленні KeyCRM (якщо вказано спосіб оплати)
-  async function syncCrmPayment(payment, order) {
-    if (!keycrm || !config.keycrmPaymentMethodId || !order.crm_order_id) return;
-    try {
-      await keycrm.addPayment(order.crm_order_id, {
-        methodId: config.keycrmPaymentMethodId,
-        amountUah: payment.amount / 100,
-        description: `${PAYMENT_KIND[payment.kind] || 'Оплата'} Monobank, рахунок ${payment.invoice_id}`,
-      });
-      store.markPaymentSynced(payment.id);
-    } catch (err) {
-      log.error('keycrm payment failed', err.message);
+  // Платіж потрапляє в KeyCRM рівно один раз: вебхук і фонова черга не працюють одночасно, а перед додаванням
+  // перевіряється, чи такого платежу (за номером рахунку в описі) там уже немає, наприклад, якщо відповідь KeyCRM загубилась.
+  function syncCrmPayment(payment, order) {
+    if (!keycrm || !config.keycrmPaymentMethodId || !order.crm_order_id) return Promise.resolve(false);
+    return once('crm-pay', payment.id, async () => {
+      if (store.getPayment(payment.id)?.crm_synced) return true;
+      try {
+        if (!(await keycrm.hasPayment(order.crm_order_id, payment.invoice_id))) {
+          await keycrm.addPayment(order.crm_order_id, {
+            methodId: config.keycrmPaymentMethodId,
+            amountUah: payment.amount / 100,
+            description: `${PAYMENT_KIND[payment.kind] || 'Оплата'} Monobank, рахунок ${payment.invoice_id}`,
+          });
+        }
+        store.markPaymentSynced(payment.id);
+        return true;
+      } catch (err) {
+        log.error('keycrm payment failed', err.message);
+        return false;
+      }
+    });
+  }
+
+  // Статус замовлення в KeyCRM доганяє наш: збій окремого оновлення не губить зміну назавжди
+  async function syncStatuses() {
+    if (!keycrm) return;
+    for (const order of store.statusDrift()) {
+      try {
+        if (keycrm.statusMap[order.status]) await keycrm.updateStatus(order.crm_order_id, order.status);
+        store.markCrmStatus(order.id, order.status);
+      } catch (err) {
+        log.error('keycrm status', err.message);
+        break;
+      }
     }
   }
 
@@ -246,10 +272,6 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       return { ok: true, order_number: duplicate.order_number, after_hours: duplicate.data.afterHours };
     }
 
-    if (!store.takeHit(`phone:${input.phone}`, 3, 60 * 60_000, nowMs)) {
-      throw new HttpError(429, 'rate_limited', 'Забагато замовлень з цього номера. Спробуйте пізніше');
-    }
-
     // 5. Ціна й наявність беремо з магазину, а не з форми
     let product;
     try {
@@ -263,6 +285,15 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     if (!variant) throw new HttpError(422, 'variant', 'Цей варіант не знайдено', 'variant');
     if (!variant.available) {
       throw new HttpError(409, 'sold_out', 'На жаль, цей варіант щойно закінчився', 'variant');
+    }
+
+    // Під час перевірки товару могла надійти така сама заявка (подвійний клік): після await дивимось ще раз,
+    // між цією перевіркою і записом у базу немає жодного await
+    const raced = store.findDuplicate({ clientId: input.clientId, fingerprint, since: nowMs - DUPLICATE_WINDOW_MS });
+    if (raced) return { ok: true, order_number: raced.order_number, after_hours: raced.data.afterHours };
+    // Ліміт за номером рахуємо лише для замовлень, які справді дійшли до збереження
+    if (!store.takeHit(`phone:${input.phone}`, 3, 60 * 60_000, nowMs)) {
+      throw new HttpError(429, 'rate_limited', 'Забагато замовлень з цього номера. Спробуйте пізніше');
     }
 
     // 6. Спершу зберігаємо: з цього моменту замовлення не загубиться, навіть якщо Telegram або CRM недоступні
@@ -306,11 +337,29 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
 
   /* ---------- Статуси з Telegram ---------- */
 
+  // Telegram може доставити той самий апдейт двічі (повтор після повільної відповіді): друга копія ігнорується
+  const seenUpdates = new Set();
+
   async function telegramWebhook(req) {
     if (!safeEqual(req.headers['x-telegram-bot-api-secret-token'] || '', config.telegramWebhookSecret)) {
       throw new HttpError(401, 'unauthorized', 'Unauthorized');
     }
     const update = await readJson(req);
+    if (update.update_id != null) {
+      if (seenUpdates.has(update.update_id)) return { ok: true };
+      seenUpdates.add(update.update_id);
+      if (seenUpdates.size > 500) seenUpdates.delete(seenUpdates.values().next().value);
+    }
+    // Збій обробки не повертаємо як 5xx: Telegram тоді повторював би апдейт (і дії) знову й знову
+    try {
+      return await handleTelegramUpdate(update);
+    } catch (err) {
+      log.error('telegram update failed', err.message);
+      return { ok: true };
+    }
+  }
+
+  async function handleTelegramUpdate(update) {
     // Відповідь менеджера на прохання ввести суму
     if (update.message) return amountReply(update.message);
 
@@ -334,9 +383,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const status = action === 'reset' ? 'new' : action;
     if (order) {
       store.setStatus(order.id, status, actor, date.getTime());
-      if (keycrm && order.crm_order_id) {
-        await keycrm.updateStatus(order.crm_order_id, status).catch((e) => log.error('keycrm status', e.message));
-      }
+      await syncStatuses();
     }
 
     const next = applyStatus(
@@ -428,9 +475,11 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     }
 
     try {
-      const { payment, reused } = await issuePayment({ order, amount, kind, actor: actorName(query.from) });
-      await postPaymentLink(order, payment, message.message_id);
-      await answer(reused ? 'Посилання вже було, надіслав ще раз' : 'Посилання створено');
+      // Одночасні натискання не створюють кілька рахунків: другий чекає на перший не буде, а отримає відмову
+      const issued = await once('pay', order.id, () => issuePayment({ order, amount, kind, actor: actorName(query.from) }));
+      if (!issued) { await answer('Посилання вже створюється, зачекайте секунду'); return { ok: true }; }
+      await postPaymentLink(order, issued.payment, message.message_id);
+      await answer(issued.reused ? 'Посилання вже було, надіслав ще раз' : 'Посилання створено');
     } catch (err) {
       log.error('payment link failed', err.message);
       await answer('Не вдалося створити посилання. Спробуйте ще раз');
@@ -490,9 +539,10 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const order = store.getOrder(prompt.order_id);
     if (!order) return { ok: true };
     try {
-      const { payment } = await issuePayment({ order, amount, kind: 'custom', actor: actorName(message.from) });
+      const issued = await once('pay', order.id, () => issuePayment({ order, amount, kind: 'custom', actor: actorName(message.from) }));
+      if (!issued) { await reply('Посилання вже створюється, зачекайте секунду і спробуйте ще раз.'); return { ok: true }; }
       store.deletePrompt(prompt.message_id);
-      await postPaymentLink(order, payment, order.tg_message_id || message.message_id);
+      await postPaymentLink(order, issued.payment, order.tg_message_id || message.message_id);
     } catch (err) {
       log.error('custom payment failed', err.message);
       await reply('Не вдалося створити посилання. Спробуйте ще раз.');
@@ -511,7 +561,9 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     if (!order) { await answer('Замовлення не знайдено'); return { ok: true }; }
     if (order.ttn_number) { await answer(`ТТН уже створено: ${order.ttn_number}`); return { ok: true }; }
 
-    await once('ttn', order.id, async () => {
+    const ran = await once('ttn', order.id, async () => {
+      // Поки чекали на чергу, ТТН могли створити в іншому запиті
+      if (store.getOrder(order.id).ttn_number) { await answer('ТТН уже створено'); return true; }
       const replyTo = order.tg_message_id || message.message_id;
       try {
         const ttn = await ttnService.create({ order, paidCents: store.paidTotal(order.id), noCod });
@@ -550,7 +602,9 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         }).catch(() => {});
         await answer('Не вдалося створити ТТН');
       }
+      return true;
     });
+    if (!ran) await answer('ТТН уже створюється, зачекайте');
     return { ok: true };
   }
 
@@ -573,13 +627,17 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const payment = store.findPaymentByInvoice(body.invoiceId);
     if (!payment) return { ok: true };
     const status = String(body.status);
+    const modified = Date.parse(body.modifiedDate) || 0;
+    // Банк може повторювати й переставляти вебхуки: старіше за вже оброблене повідомлення ігноруємо
+    if (modified && payment.modified_at && modified < payment.modified_at) return { ok: true };
     if (payment.status === status) return { ok: true };
-    // Запізніле «processing» не скасовує вже отриману оплату
+    // Запізніле «processing» не скасовує вже отриману оплату; повернення коштів остаточне
     if (payment.status === 'success' && status !== 'reversed') return { ok: true };
+    if (payment.status === 'reversed') return { ok: true };
 
     const order = store.getOrder(payment.order_id);
     const replyTo = order.tg_message_id || undefined;
-    store.setPaymentStatus(payment.id, status, status === 'success' ? now().getTime() : null);
+    store.setPaymentStatus(payment.id, status, status === 'success' ? now().getTime() : null, modified || null);
     if (status === 'success') {
       await telegram.sendText(buildPaidMessage({
         orderNumber: order.order_number,
@@ -591,8 +649,16 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         replyTo,
         replyMarkup: ttnService && order.data.delivery?.method && !order.ttn_number ? ttnKeyboard(order.id) : undefined,
       }).catch((e) => log.error('paid notice failed', e.message));
+      // Банк повідомив іншу суму, ніж у нашому рахунку: це треба перевірити людині
+      if (Number.isInteger(body.finalAmount) && body.finalAmount !== payment.amount) {
+        await telegram.sendText(buildAmountMismatchMessage(order.order_number, payment.amount, body.finalAmount), { replyTo })
+          .catch((e) => log.error('mismatch notice failed', e.message));
+      }
       await syncCrmPayment(payment, order);
-    } else if (status === 'failure' || status === 'reversed') {
+    } else if (status === 'reversed') {
+      await telegram.sendText(buildReversedMessage(order.order_number, payment.amount, !!payment.crm_synced), { replyTo })
+        .catch((e) => log.error('reversed notice failed', e.message));
+    } else if (status === 'failure') {
       await telegram.sendText(buildPayFailedMessage(order.order_number, body.failureReason), { replyTo }).catch((e) => log.error('pay failed notice failed', e.message));
     }
     return { ok: true };
@@ -645,6 +711,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     for (const order of store.telegramDue(date.getTime())) await deliverTelegram(order);
     for (const order of store.crmDue(date.getTime())) await deliverCrm(order);
     for (const payment of store.unsyncedPayments()) await syncCrmPayment(payment, store.getOrder(payment.order_id));
+    await syncStatuses();
     store.pruneOldPrompts(date.getTime() - PROMPT_TTL_MS);
     await sendReminders(date);
     await sendWeeklyReport(date);

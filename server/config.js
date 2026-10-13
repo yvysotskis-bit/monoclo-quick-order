@@ -27,7 +27,11 @@ export function loadConfig(env = process.env) {
   const optional = (key) => env[key]?.trim() || '';
   const number = (key, fallback) => {
     const raw = optional(key);
-    return raw === '' ? fallback : Number(raw);
+    if (raw === '') return fallback;
+    // Помилка в числі (наприклад, «10 год») не має тихо перетворитися на NaN і зламати розклад чи ліміти
+    const value = Number(raw.replace(',', '.'));
+    if (!Number.isFinite(value)) throw new Error(`${key} має бути числом, а зараз «${raw}»`);
+    return value;
   };
 
   const shop = required('SHOPIFY_SHOP');

@@ -20,15 +20,29 @@ export function isWorkingTime(date, { workStart, workEnd, timezone }) {
   return hour >= workStart && hour < workEnd;
 }
 
-// Мілісекунди початку найближчого робочого дня, що настане після `date` (якщо зараз ще до початку, то сьогодні)
+// Зсув часової зони від UTC у мілісекундах на момент `ts`
+function offsetAt(ts, timeZone) {
+  const p = parts(new Date(ts), timeZone);
+  const asUtc = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), Number(p.second));
+  return asUtc - Math.floor(ts / 1000) * 1000;
+}
+
+// UTC-момент, коли в зоні `timeZone` настає локальна дата й година (враховує перехід на літній/зимовий час)
+function zonedTime(year, month, day, hour, timeZone) {
+  const guess = Date.UTC(year, month - 1, day, hour);
+  let result = guess - offsetAt(guess, timeZone);
+  const second = guess - offsetAt(result, timeZone);
+  if (second !== result) result = second;
+  return result;
+}
+
+// Мілісекунди початку найближчого робочого дня, що настане після `date` (якщо зараз ще до початку, то сьогодні).
+// Рахуємо за календарною датою зони, а не додаванням 24 годин, тому в дні переходу часу похибки немає.
 export function nextWorkStart(date, { workStart, timezone }) {
   const p = parts(date, timezone);
-  const sinceMidnight = (((Number(p.hour) * 60) + Number(p.minute)) * 60 + Number(p.second)) * 1000
-    + date.getMilliseconds();
-  const midnight = date.getTime() - sinceMidnight;
-  return Number(p.hour) < workStart
-    ? midnight + workStart * 3600e3
-    : midnight + (24 + workStart) * 3600e3;
+  const today = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day));
+  const day = new Date(Number(p.hour) < workStart ? today : today + 24 * 3600e3);
+  return zonedTime(day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate(), workStart, timezone);
 }
 
 // Коли «годинник очікування» менеджера почав іти: одразу, а для нічних замовлень з початку робочого дня

@@ -72,6 +72,7 @@ const ADDED_COLUMNS = {
   pay_paid_at: 'INTEGER',
   ttn_number: 'TEXT',
   ttn_ref: 'TEXT',
+  crm_status: 'TEXT',
 };
 
 function migrate(db) {
@@ -80,6 +81,8 @@ function migrate(db) {
     if (!existing.has(name)) db.exec(`ALTER TABLE orders ADD COLUMN ${name} ${type}`);
   }
   db.exec('CREATE INDEX IF NOT EXISTS orders_invoice ON orders (pay_invoice_id)');
+  const paymentColumns = new Set(db.prepare('PRAGMA table_info(payments)').all().map((c) => c.name));
+  if (!paymentColumns.has('modified_at')) db.exec('ALTER TABLE payments ADD COLUMN modified_at INTEGER');
   // Рахунки зі старої схеми (один на замовлення) переносимо в таблицю платежів; в CRM вони вже потрапили
   db.exec(`INSERT OR IGNORE INTO payments (order_id, invoice_id, amount, kind, url, status, created_at, paid_at, crm_synced)
     SELECT id, pay_invoice_id, COALESCE(pay_amount, 0), 'prepay', COALESCE(pay_url, ''),
@@ -186,9 +189,10 @@ export class Store {
 
   /* ---- KeyCRM ---- */
 
+  // Замовлення зі станом failed теж повертаються в чергу (раз на кілька годин): воно не має загубитися назавжди
   crmDue(now, limit = 10) {
     return this.q(
-      "SELECT * FROM orders WHERE crm_state = 'pending' AND (crm_next_at IS NULL OR crm_next_at <= ?) ORDER BY id LIMIT ?",
+      "SELECT * FROM orders WHERE crm_state IN ('pending', 'failed') AND (crm_next_at IS NULL OR crm_next_at <= ?) ORDER BY id LIMIT ?",
       now, limit,
     );
   }
@@ -202,13 +206,27 @@ export class Store {
     this.run("UPDATE orders SET crm_state = 'skipped' WHERE id = ?", id);
   }
 
-  // Повертає true, якщо спроби вичерпано й замовлення позначено як failed
+  // Повертає true лише в момент, коли спроби вичерпано й замовлення стало failed (менеджера попереджаємо один раз).
+  // Далі спроба повторюється раз на 6 годин.
   markCrmFailed(id, error, now, maxAttempts = 10) {
-    const { crm_attempts: attempts } = this.db.prepare('SELECT crm_attempts FROM orders WHERE id = ?').get(id);
-    const giveUp = attempts + 1 >= maxAttempts;
+    const row = this.db.prepare('SELECT crm_attempts, crm_state FROM orders WHERE id = ?').get(id);
+    const giveUp = row.crm_attempts + 1 >= maxAttempts;
     this.run('UPDATE orders SET crm_attempts = ?, crm_error = ?, crm_next_at = ?, crm_state = ? WHERE id = ?',
-      attempts + 1, String(error).slice(0, 300), backoff(attempts, now), giveUp ? 'failed' : 'pending', id);
-    return giveUp;
+      row.crm_attempts + 1, String(error).slice(0, 300), giveUp ? now + 6 * 3600e3 : backoff(row.crm_attempts, now),
+      giveUp ? 'failed' : 'pending', id);
+    return giveUp && row.crm_state !== 'failed';
+  }
+
+  // Замовлення, статус яких у KeyCRM ще не збігається з нашим (оновлення могло не пройти)
+  statusDrift(limit = 10) {
+    return this.q(
+      "SELECT * FROM orders WHERE crm_order_id IS NOT NULL AND status != COALESCE(crm_status, 'new') ORDER BY id LIMIT ?",
+      limit,
+    );
+  }
+
+  markCrmStatus(id, status) {
+    this.run('UPDATE orders SET crm_status = ? WHERE id = ?', status, id);
   }
 
   /* ---- оплата ---- */
@@ -240,8 +258,9 @@ export class Store {
     ).all(orderId, since);
   }
 
-  setPaymentStatus(id, status, paidAt = null) {
-    this.run('UPDATE payments SET status = ?, paid_at = COALESCE(?, paid_at) WHERE id = ?', status, paidAt, id);
+  setPaymentStatus(id, status, paidAt = null, modifiedAt = null) {
+    this.run('UPDATE payments SET status = ?, paid_at = COALESCE(?, paid_at), modified_at = COALESCE(?, modified_at) WHERE id = ?',
+      status, paidAt, modifiedAt, id);
   }
 
   // Сума отриманих оплат за замовленням, у копійках

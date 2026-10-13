@@ -1,5 +1,7 @@
 // Створення експрес-накладної (ТТН) Нової пошти за даними замовлення.
 // Відправник: наш акаунт (ключ API) і відділення відправника з налаштувань.
+import crypto from 'node:crypto';
+
 const text = (v) => (typeof v === 'string' ? v.trim() : '');
 
 const kyivDate = (date, timezone) => {
@@ -25,7 +27,9 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
 
   // Відправник знаходиться один раз і зберігається в базі
   async function sender() {
-    const key = `np_sender:${config.npSenderCity}:${config.npSenderWarehouse}`;
+    // У ключ входить відбиток API-ключа: після заміни ключа (іншого акаунта) відправник знаходиться заново
+    const fingerprint = crypto.createHash('sha256').update(String(config.novaPoshtaApiKey || '')).digest('hex').slice(0, 10);
+    const key = `np_sender:${fingerprint}:${config.npSenderCity}:${config.npSenderWarehouse}`;
     const cached = store.getMeta(key);
     if (cached) return JSON.parse(cached);
 
@@ -111,7 +115,8 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
       AdditionalInformation: info.slice(0, 100),
       Cost: uah(d.totalCents),
       OptionsSeat: [{
-        volumetricVolume: String((parcel.length * parcel.width * parcel.height) / 4000),
+        // Об'єм місця в м³ (розміри в см): 30×25×5 см = 0,00375 м³
+        volumetricVolume: String(Number(((parcel.length * parcel.width * parcel.height) / 1e6).toFixed(6))),
         volumetricWidth: String(parcel.width),
         volumetricLength: String(parcel.length),
         volumetricHeight: String(parcel.height),
