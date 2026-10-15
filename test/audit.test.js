@@ -624,3 +624,16 @@ test('довідник відділень: якщо Нова пошта відд
   const dup = await np.searchPoints({ settlement: 's', query: 'Відділення №70', kind: 'warehouse' });
   assert.equal(new Set(dup.map((p) => p.ref)).size, dup.length, 'без повторів у відповіді');
 });
+
+test('ТТН у режимі «Грошовий переказ» (NP_COD_MODE=transfer): BackwardDeliveryData за документацією, сума цілим числом', async () => {
+  const { app, fetchFn } = makeApp({ cfg: { monobankToken: 'M', novaPoshtaApiKey: 'npkey', keycrmToken: 'crm', npCodMode: 'transfer' } });
+  const city = { ref: 'e71a0b8e-9b3d-4a39-8a1f-111111111111', name: 'Чернівці', present: 'м. Чернівці', area: 'Чернівецька' };
+  const point = { ref: 'd1a8e3e2-1111-4a39-8a1f-222222222222', number: '3', name: 'Відділення №3' };
+  await submit(app, goodBody({ surname: 'Петренко', delivery: { method: 'warehouse', city, point } }));
+  await press(app, 'pay:link');
+  await hook(app, { invoiceId: 'inv-1', status: 'success', amount: 20000, modifiedDate: '2025-10-05T12:00:05Z' });
+  await press(app, 'ttn:1');
+  const p = fetchFn.calls.find((c) => c.body?.modelName === 'InternetDocument' && c.body.calledMethod === 'save').body.methodProperties;
+  assert.deepEqual(p.BackwardDeliveryData, [{ PayerType: 'Recipient', CargoType: 'Money', RedeliveryString: '1580' }]);
+  assert.equal(p.AfterpaymentOnGoodsCost, undefined);
+});

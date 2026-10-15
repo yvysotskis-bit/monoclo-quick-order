@@ -144,7 +144,8 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
     if (cod > 0 && !noCod) {
       // «Контроль оплати» (оплата товару при отриманні) або класичний «Грошовий переказ»
       if (config.npCodMode === 'transfer') {
-        props.BackwardDeliveryData = [{ PayerType: 'Recipient', CargoType: 'Money', RedeliveryString: uah(cod) }];
+        // Документація: сума зворотної доставки грошей передається цілим числом гривень (приклад «4552»)
+        props.BackwardDeliveryData = [{ PayerType: 'Recipient', CargoType: 'Money', RedeliveryString: String(Math.round(cod / 100)) }];
       } else {
         props.AfterpaymentOnGoodsCost = uah(cod);
       }
