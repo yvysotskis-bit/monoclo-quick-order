@@ -725,16 +725,27 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   }
 
   // Викликається періодично: повторні відправки, нагадування, тижневий звіт
+  // Кожен етап виконується окремо: збій одного (наприклад, KeyCRM) не зупиняє решту
+  // (доставку в Telegram, нагадування, звіт)
   async function tick() {
     const date = now();
-    for (const order of store.telegramDue(date.getTime())) await deliverTelegram(order);
-    for (const order of store.crmDue(date.getTime())) await deliverCrm(order);
-    for (const payment of store.unsyncedPayments()) await syncCrmPayment(payment, store.getOrder(payment.order_id));
-    await syncStatuses();
-    for (const order of store.ttnNotInCrm()) await syncTtnToCrm(order.id);
-    store.pruneOldPrompts(date.getTime() - PROMPT_TTL_MS);
-    await sendReminders(date);
-    await sendWeeklyReport(date);
+    const stages = [
+      ['telegram', async () => { for (const order of store.telegramDue(date.getTime())) await deliverTelegram(order); }],
+      ['crm', async () => { for (const order of store.crmDue(date.getTime())) await deliverCrm(order); }],
+      ['payments', async () => { for (const payment of store.unsyncedPayments()) await syncCrmPayment(payment, store.getOrder(payment.order_id)); }],
+      ['statuses', () => syncStatuses()],
+      ['ttn', async () => { for (const order of store.ttnNotInCrm()) await syncTtnToCrm(order.id); }],
+      ['prompts', async () => store.pruneOldPrompts(date.getTime() - PROMPT_TTL_MS)],
+      ['reminders', () => sendReminders(date)],
+      ['report', () => sendWeeklyReport(date)],
+    ];
+    for (const [name, run] of stages) {
+      try {
+        await run();
+      } catch (err) {
+        log.error(`tick stage ${name} failed`, err.message);
+      }
+    }
   }
 
   /* ---------- HTTP ---------- */

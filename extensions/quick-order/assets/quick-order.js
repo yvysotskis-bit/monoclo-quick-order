@@ -361,7 +361,9 @@
     refs.image.alt = product.title;
     refs.image.removeAttribute('src');
     refs.name.value = saved.name || '';
-    state.body = saved.body && saved.body.height && saved.body.weight ? saved.body : null;
+    // Зріст і вага з минулого разу лише підставляються в поля підбору; у замовлення йдуть, лише якщо їх підтвердили цього разу
+    state.bodyPrefill = saved.body && saved.body.height && saved.body.weight ? saved.body : null;
+    state.body = null;
     if (refs.surname) refs.surname.value = saved.surname || '';
     refs.phone.value = formatNational(nationalDigits(saved.phone || ''));
     state.prevDigits = nationalDigits(refs.phone.value);
@@ -562,7 +564,8 @@
     wrap.appendChild(toggle);
     wrap.appendChild(panel);
 
-    if (state.body) { h.input.value = state.body.height; w.input.value = state.body.weight; }
+    var prefill = state.body || state.bodyPrefill;
+    if (prefill) { h.input.value = prefill.height; w.input.value = prefill.weight; }
 
     toggle.addEventListener('click', function () {
       panel.hidden = !panel.hidden;
@@ -1451,7 +1454,7 @@
   }
 
   function onSuccess(data, variant, payload) {
-    writeStore({ body: payload.body, name: payload.name, surname: payload.surname, phone: digits(), city: payload.city, delivery: payload.delivery });
+    writeStore({ body: payload.body || state.bodyPrefill || undefined, name: payload.name, surname: payload.surname, phone: digits(), city: payload.city, delivery: payload.delivery });
 
     refs.successTitle.textContent = T.thanks(data.order_number);
     refs.successSummary.textContent = '';

@@ -358,3 +358,14 @@ test('оновлення бази: у вже існуючих замовлень
   upgraded.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('фонова черга: збій одного етапу не зупиняє інші (нагадування, звіт, доставка)', async () => {
+  const { app, fetchFn, store, now } = makeApp({ cfg: payCfg });
+  fetchFn.fail.telegram = true;
+  await submit(app);
+  fetchFn.fail.telegram = false;
+  store.crmDue = () => { throw new Error('db glitch'); };
+  now.advance(60_000);
+  await app.tick();
+  assert.equal(store.getOrder(1).tg_state, 'sent', 'доставка в Telegram відбулась, хоча етап KeyCRM зламаний');
+});
