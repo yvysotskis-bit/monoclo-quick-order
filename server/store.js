@@ -89,6 +89,7 @@ function migrate(db) {
   db.exec('CREATE INDEX IF NOT EXISTS orders_invoice ON orders (pay_invoice_id)');
   const paymentColumns = new Set(db.prepare('PRAGMA table_info(payments)').all().map((c) => c.name));
   if (!paymentColumns.has('modified_at')) db.exec('ALTER TABLE payments ADD COLUMN modified_at INTEGER');
+  if (!paymentColumns.has('polled_at')) db.exec('ALTER TABLE payments ADD COLUMN polled_at INTEGER');
   // Рахунки зі старої схеми (один на замовлення) переносимо в таблицю платежів; в CRM вони вже потрапили
   db.exec(`INSERT OR IGNORE INTO payments (order_id, invoice_id, amount, kind, url, status, created_at, paid_at, crm_synced)
     SELECT id, pay_invoice_id, COALESCE(pay_amount, 0), 'prepay', COALESCE(pay_url, ''),
@@ -262,6 +263,22 @@ export class Store {
     return this.db.prepare(
       "SELECT * FROM payments WHERE order_id = ? AND status IN ('created', 'processing') AND created_at >= ? ORDER BY id",
     ).all(orderId, since);
+  }
+
+  // Рахунки, оплату яких варто перевірити в банку (вебхук міг не дійти): ще не завершені, не старші за термін дії + запас.
+  // Перша перевірка через 3 хв після створення, далі кожні 5 хв першу годину і кожні 30 хв після.
+  pollablePayments(now, validityMs, limit = 5) {
+    return this.db.prepare(
+      `SELECT * FROM payments
+       WHERE status IN ('created', 'processing', 'hold')
+         AND created_at >= ? AND created_at <= ?
+         AND (polled_at IS NULL OR polled_at <= ? - CASE WHEN ? - created_at < 3600000 THEN 300000 ELSE 1800000 END)
+       ORDER BY COALESCE(polled_at, 0), id LIMIT ?`,
+    ).all(now - validityMs - 6 * 3600e3, now - 180_000, now, now, limit);
+  }
+
+  markPolled(id, at) {
+    this.run('UPDATE payments SET polled_at = ? WHERE id = ?', at, id);
   }
 
   setPaymentStatus(id, status, paidAt = null, modifiedAt = null) {

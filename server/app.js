@@ -642,6 +642,11 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       throw new HttpError(400, 'bad_request', 'Bad request');
     }
 
+    return applyInvoiceUpdate(body);
+  }
+
+  // Однакова обробка для вебхука й для фонової звірки: статус рахунку → оплата, повідомлення, KeyCRM
+  async function applyInvoiceUpdate(body) {
     // Тіло має бути обʼєктом із рядковим invoiceId, інакше це не повідомлення про наш рахунок
     if (!body || typeof body !== 'object' || typeof body.invoiceId !== 'string') return { ok: true };
     const payment = store.findPaymentByInvoice(body.invoiceId);
@@ -685,6 +690,21 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   }
 
   /* ---------- Фонова робота ---------- */
+
+  // Вебхук банку може не дійти (перезапуск сервера, збій): раз на кілька хвилин перевіряємо ще не завершені рахунки
+  async function reconcilePayments() {
+    if (!monobank) return;
+    const nowMs = now().getTime();
+    for (const payment of store.pollablePayments(nowMs, config.payValiditySeconds * 1000)) {
+      store.markPolled(payment.id, nowMs);
+      try {
+        const status = await monobank.invoiceStatus(payment.invoice_id);
+        await applyInvoiceUpdate({ ...status, invoiceId: payment.invoice_id });
+      } catch (err) {
+        log.error('invoice status poll failed', err.message);
+      }
+    }
+  }
 
   async function sendReminders(date) {
     const nowMs = date.getTime();
@@ -734,6 +754,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const stages = [
       ['telegram', async () => { for (const order of store.telegramDue(date.getTime())) await deliverTelegram(order); }],
       ['crm', async () => { for (const order of store.crmDue(date.getTime())) await deliverCrm(order); }],
+      ['mono', () => reconcilePayments()],
       ['payments', async () => { for (const payment of store.unsyncedPayments()) await syncCrmPayment(payment, store.getOrder(payment.order_id)); }],
       ['statuses', () => syncStatuses()],
       ['ttn', async () => { for (const order of store.ttnNotInCrm()) await syncTtnToCrm(order.id); }],

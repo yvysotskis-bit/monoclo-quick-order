@@ -110,6 +110,13 @@ export function mockFetch({ productResponse } = {}) {
     }
     if (u.startsWith('https://api.monobank.ua/')) {
       if (fn.fail.monobank) return new Response('{"errText":"boom"}', { status: 500 });
+      if (u.includes('/invoice/status')) {
+        fn.monoPolls += 1;
+        if (fn.fail.monoStatus) return new Response('{"errCode":"TMR"}', { status: 429 });
+        const id = new URL(u).searchParams.get('invoiceId');
+        const body = fn.monoStatus[id];
+        return body ? Response.json({ invoiceId: id, ...body }) : Response.json({ invoiceId: id, status: 'created' });
+      }
       if (u.endsWith('/invoice/remove')) return Response.json({});
       if (u.endsWith('/pubkey')) return Response.json({ key: Buffer.from(monoPublicPem).toString('base64') });
       if (u.endsWith('/invoice/create')) {
@@ -198,6 +205,8 @@ export function mockFetch({ productResponse } = {}) {
   fn.calls = calls;
   fn.fail = { telegram: false, keycrm: false, monobank: false, novaposhta: false, keycrmShipping: false };
   fn.invoices = 0;
+  fn.monoPolls = 0;
+  fn.monoStatus = {};
   fn.sentMessages = [];
   fn.crmState = { orders: [], payments: [], puts: [] };
   fn.np = 0;

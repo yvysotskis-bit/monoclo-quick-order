@@ -3,8 +3,10 @@ import crypto from 'node:crypto';
 // Plata by mono: https://api.monobank.ua/docs/acquiring.html
 const BASE_URL = 'https://api.monobank.ua/api/merchant';
 
-export function createMonobank({ token, fetchFn }) {
+export function createMonobank({ token, fetchFn, clock = Date.now }) {
   let publicKeyPem = null;
+  let fetchedAt = 0;
+  const KEY_REFRESH_MIN_MS = 10 * 60_000;
 
   async function call(method, path, body) {
     const res = await fetchFn(`${BASE_URL}${path}`, {
@@ -25,8 +27,11 @@ export function createMonobank({ token, fetchFn }) {
 
   // Відкритий ключ банку для перевірки підпису вебхуків (base64 від PEM)
   async function publicKey(force = false) {
-    if (!publicKeyPem || force) {
+    // Документація: ключ кешується, запитувати його на кожен вебхук не можна. Примусове оновлення (підпис не збігся)
+    // не частіше за раз на 10 хвилин, інакше підроблені запити вичерпали б ліміт банку.
+    if (!publicKeyPem || (force && clock() - fetchedAt >= KEY_REFRESH_MIN_MS)) {
       const { key } = await call('GET', '/pubkey');
+      fetchedAt = clock();
       const decoded = Buffer.from(String(key), 'base64').toString('utf8');
       publicKeyPem = decoded.includes('BEGIN') ? decoded : String(key);
     }
@@ -47,6 +52,12 @@ export function createMonobank({ token, fetchFn }) {
       });
       if (!data.invoiceId || !data.pageUrl) throw new Error('Monobank не повернув посилання на оплату');
       return { invoiceId: data.invoiceId, pageUrl: data.pageUrl };
+    },
+
+    // Поточний стан рахунку (той самий формат, що й у вебхуку): запасний спосіб дізнатися про оплату,
+    // якщо вебхук не дійшов. Документація: GET /api/merchant/invoice/status?invoiceId=
+    async invoiceStatus(invoiceId) {
+      return call('GET', `/invoice/status?${new URLSearchParams({ invoiceId })}`);
     },
 
     // Закриває неоплачений рахунок (щоб клієнт не заплатив за старим посиланням). Найкраща спроба: збій не критичний

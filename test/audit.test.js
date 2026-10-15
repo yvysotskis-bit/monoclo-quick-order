@@ -437,3 +437,82 @@ test('фаззінг підказок Нової пошти: некоректн�
     }
   }
 });
+
+test('пропущений вебхук банку: фонова звірка за invoice/status підхоплює оплату рівно один раз', async () => {
+  const { app, fetchFn, store, now } = makeApp({ cfg: payCfg });
+  await submit(app);
+  await press(app, 'pay:link');
+  // Клієнт заплатив, але вебхуки не дійшли (наприклад, сервер перезапускався)
+  fetchFn.monoStatus['inv-1'] = { status: 'success', amount: 20000, finalAmount: 20000, modifiedDate: '2025-10-05T12:03:00Z' };
+  now.advance(6 * 60_000);
+  await app.tick();
+  assert.equal(store.paymentsForOrder(1)[0].status, 'success');
+  assert.equal(store.paidTotal(1), 20000);
+  assert.equal(fetchFn.sentMessages.filter((m) => /Передоплата 200\s₴ отримана/.test(m.text)).length, 1);
+  assert.equal(fetchFn.crmState.payments.length, 1, 'платіж записано в KeyCRM');
+  // Запізніла копія вебхука й наступні звірки нічого не дублюють
+  await hook(app, { invoiceId: 'inv-1', status: 'success', amount: 20000, modifiedDate: '2025-10-05T12:03:00Z' });
+  now.advance(60 * 60_000);
+  await app.tick();
+  assert.equal(fetchFn.sentMessages.filter((m) => /отримана/.test(m.text)).length, 1);
+  assert.equal(fetchFn.crmState.payments.length, 1);
+});
+
+test('звірка оплат: не частіше за заданий інтервал і лише для рахунків, що ще можуть бути оплачені', async () => {
+  const { app, fetchFn, now, store } = makeApp({ cfg: payCfg });
+  await submit(app);
+  await press(app, 'pay:link');
+  now.advance(6 * 60_000);
+  await app.tick();
+  await app.tick();
+  assert.equal(fetchFn.monoPolls, 1, 'повторний тік одразу не опитує банк знову');
+  fetchFn.monoStatus['inv-1'] = { status: 'expired', amount: 20000, modifiedDate: '2025-10-06T12:00:00Z' };
+  now.advance(10 * 60_000);
+  await app.tick();
+  assert.equal(store.paymentsForOrder(1)[0].status, 'expired');
+  const polls = fetchFn.monoPolls;
+  now.advance(10 * 3600_000);
+  await app.tick();
+  assert.equal(fetchFn.monoPolls, polls, 'завершені рахунки більше не опитуються');
+});
+
+test('звірка оплат: помилка банку (429) не ламає чергу і не втрачає оплату при наступній спробі', async () => {
+  const { app, fetchFn, store, now } = makeApp({ cfg: payCfg });
+  await submit(app);
+  await press(app, 'pay:link');
+  fetchFn.monoStatus['inv-1'] = { status: 'success', amount: 20000, modifiedDate: '2025-10-05T12:03:00Z' };
+  fetchFn.fail.monoStatus = true;
+  now.advance(6 * 60_000);
+  await app.tick();
+  assert.equal(store.paymentsForOrder(1)[0].status, 'created');
+  fetchFn.fail.monoStatus = false;
+  now.advance(6 * 60_000);
+  await app.tick();
+  assert.equal(store.paymentsForOrder(1)[0].status, 'success');
+});
+
+test('відкритий ключ банку: підроблені вебхуки не змушують нас безперервно запитувати ключ', async () => {
+  const { createMonobank } = await import('../server/monobank.js');
+  const calls = [];
+  const { signMono } = await import('./helpers.js');
+  const crypto = await import('node:crypto');
+  const keys = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const pem = keys.publicKey.export({ type: 'spki', format: 'pem' });
+  let t = 1_000_000;
+  const fetchFn = async (url) => {
+    calls.push(String(url));
+    return Response.json({ key: Buffer.from(pem).toString('base64') });
+  };
+  const mono = createMonobank({ token: 't', fetchFn, clock: () => t });
+  for (let i = 0; i < 20; i += 1) assert.equal(await mono.verifyWebhook('{"a":1}', 'AAAA'), false);
+  assert.equal(calls.length, 1, 'ключ запитано один раз, а не 20');
+  t += 11 * 60_000; // минуло 10+ хвилин: оновлення дозволене (раптом ключ змінився)
+  assert.equal(await mono.verifyWebhook('{"a":1}', 'AAAA'), false);
+  assert.equal(calls.length, 2);
+  // Справжній підпис проходить без додаткових запитів
+  const raw = '{"invoiceId":"x"}';
+  const sig = crypto.sign('sha256', Buffer.from(raw), keys.privateKey).toString('base64');
+  assert.equal(await mono.verifyWebhook(raw, sig), true);
+  assert.equal(calls.length, 2);
+  assert.ok(signMono);
+});
