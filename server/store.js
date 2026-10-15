@@ -83,7 +83,8 @@ function migrate(db) {
   }
   // Колонки синхронізації з'явились уже після появи замовлень: для наявних замовлень вважаємо стан у KeyCRM актуальним.
   // Інакше після оновлення старі статуси й ТТН були б повторно відправлені й перезаписали б зміни менеджерів у KeyCRM.
-  if (!existing.has('crm_status')) db.exec('UPDATE orders SET crm_status = status');
+  // (також для баз, де колонка вже є, але замовлення створені попередньою версією без неї)
+  db.exec('UPDATE orders SET crm_status = status WHERE crm_status IS NULL');
   if (!existing.has('ttn_crm_synced')) db.exec('UPDATE orders SET ttn_crm_synced = 1 WHERE ttn_number IS NOT NULL');
   db.exec('CREATE INDEX IF NOT EXISTS orders_invoice ON orders (pay_invoice_id)');
   const paymentColumns = new Set(db.prepare('PRAGMA table_info(payments)').all().map((c) => c.name));
@@ -154,7 +155,7 @@ export class Store {
 
   insertOrder({ orderNumber, clientId, fingerprint, createdAt, data }) {
     const { lastInsertRowid } = this.run(
-      'INSERT INTO orders (order_number, client_id, fingerprint, created_at, data) VALUES (?, ?, ?, ?, ?)',
+      "INSERT INTO orders (order_number, client_id, fingerprint, created_at, data, crm_status) VALUES (?, ?, ?, ?, ?, 'new')",
       this.uniqueOrderNumber(orderNumber), clientId || null, fingerprint, createdAt, JSON.stringify(data),
     );
     return this.getOrder(Number(lastInsertRowid));
