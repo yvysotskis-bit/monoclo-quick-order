@@ -33,3 +33,11 @@
 - Формат суми `AfterpaymentOnGoodsCost` з копійками (розділ «Додаткові послуги» не надано).
 - Одиниці `volumetricVolume` в `OptionsSeat` (прийнято м³ за аналогією з `VolumeGeneral`).
 - Параметр `NewAddress` (на одній сторінці обов'язковий, на іншій відсутній; проєкт його не передає).
+
+## Підтверджено документацією «Створити експрес-накладну» (відділення / поштомат)
+
+- Поштомат: `CargoType` лише `Parcel` або `Documents`; `ServiceType` — `DoorsWarehouse`/`WarehouseWarehouse`; `DateTime` (дд.мм.рррр) і `OptionsSeat` обов'язкові; `RecipientAddress` — REF поштомата.
+- `OptionsSeat.volumetricVolume` — об'єм одного місця **в м³**, `volumetricWidth/Length/Height` — см, `weight` — кг (наш формат вірний).
+- `Weight` ≥ 0,1 кг; `Cost` — ціле число; якщо не вказати, API ставить мінімум 300.
+- Телефони приймаються у форматах `+380…`, `380…`, `0…`.
+- `getDocumentPrice` (розрахунок вартості) і `getDocumentDeliveryDate` (прогноз дати) існують — можна використати для показу ціни/дати клієнту.
