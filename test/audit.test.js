@@ -550,3 +550,42 @@ test('вебхук банку: підпис перевіряється за то
   assert.equal(store.paymentsForOrder(1)[0].status, 'failure');
   assert.ok(crypto);
 });
+
+test('ТТН за документацією: Weight і цілий Cost, вартість доставки й попередження Нової пошти видно менеджеру', async () => {
+  const { app, fetchFn } = makeApp({ cfg: { monobankToken: 'M', novaPoshtaApiKey: 'npkey', keycrmToken: 'crm' } });
+  fetchFn.npWarnings = ['Дату відправки скориговано'];
+  const city = { ref: 'e71a0b8e-9b3d-4a39-8a1f-111111111111', name: 'Чернівці', present: 'м. Чернівці', area: 'Чернівецька' };
+  const point = { ref: 'd1a8e3e2-1111-4a39-8a1f-222222222222', number: '3', name: 'Відділення №3' };
+  await submit(app, goodBody({ surname: 'Петренко', delivery: { method: 'warehouse', city, point } }));
+  await press(app, 'pay:link');
+  await hook(app, { invoiceId: 'inv-1', status: 'success', amount: 20000, modifiedDate: '2025-10-05T12:00:05Z' });
+  await press(app, 'ttn:1');
+  const p = fetchFn.calls.find((c) => c.body?.modelName === 'InternetDocument' && c.body.calledMethod === 'save').body.methodProperties;
+  assert.equal(p.Weight, '1', 'фактична вага обовʼязкова за документацією');
+  assert.match(p.Cost, /^\d+$/, 'Cost: ціле число гривень');
+  const text = fetchFn.sentMessages.at(-1).text;
+  assert.match(text, /Вартість доставки \(оплачує одержувач\): 70/);
+  assert.match(text, /Нова пошта: Дату відправки скориговано/);
+});
+
+test('ТТН: копійки у сумі замовлення не ламають цілий Cost', async () => {
+  const { createTtnService } = await import('../server/ttn.js');
+  const { createNovaPoshta } = await import('../server/novaposhta.js');
+  const { config } = await import('./helpers.js');
+  const { openStore } = await import('../server/store.js');
+  const sent = [];
+  const fetchFn = async (_u, init) => {
+    const b = JSON.parse(init.body);
+    if (b.calledMethod === 'getCounterparties') return Response.json({ success: true, data: [{ Ref: 'cp' }] });
+    if (b.calledMethod === 'getCounterpartyContactPersons') return Response.json({ success: true, data: [{ Ref: 'c', Phones: '380501112233' }] });
+    if (b.calledMethod === 'getWarehouses' && b.methodProperties.CityName) return Response.json({ success: true, data: [{ Ref: 'w', Number: '31', CityRef: 'ca', CategoryOfWarehouse: 'Branch' }] });
+    if (b.calledMethod === 'getWarehouses') return Response.json({ success: true, data: [{ CityRef: 'cb' }] });
+    if (b.modelName === 'Counterparty') return Response.json({ success: true, data: [{ Ref: 'r', ContactPerson: { data: [{ Ref: 'rc' }] } }] });
+    sent.push(b.methodProperties);
+    return Response.json({ success: true, data: [{ Ref: 'd', IntDocNumber: '1' }] });
+  };
+  const svc = createTtnService({ np: createNovaPoshta({ apiKey: 'k', fetchFn }), config: { ...config, novaPoshtaApiKey: 'k' }, store: openStore(':memory:') });
+  const order = { id: 1, order_number: '1', data: { delivery: { method: 'warehouse', city: { ref: 'e71a0b8e-9b3d-4a39-8a1f-111111111111' }, point: { ref: 'd1a8e3e2-1111-4a39-8a1f-222222222222' } }, name: 'Іван', surname: 'П', phone: '+380671234567', totalCents: 199950, options: [], quantity: 1, productTitle: 'T' } };
+  await svc.create({ order, paidCents: 0 });
+  assert.equal(sent[0].Cost, '2000');
+});

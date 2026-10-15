@@ -110,7 +110,7 @@ test('«To many requests» від Нової пошти: ТТН повторює
     return Response.json(n < 3 ? { success: false, errors: ['To many requests'] } : { success: true, data: [{ ok: 1 }] });
   };
   const np = createNovaPoshta({ apiKey: 'k', fetchFn, sleep: async () => {} });
-  assert.deepEqual(await np.call('A', 'b', {}, { retries: 3 }), [{ ok: 1 }]);
+  assert.deepEqual([...await np.call('A', 'b', {}, { retries: 3 })], [{ ok: 1 }]);
   n = 0;
   await assert.rejects(np.call('A', 'b', {}), /many requests/i);
 });

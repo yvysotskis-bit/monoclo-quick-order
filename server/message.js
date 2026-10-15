@@ -225,10 +225,12 @@ export const ttnKeyboard = (orderId) => ({
   inline_keyboard: [[{ text: '📦 Створити ТТН', callback_data: `ttn:${orderId}` }]],
 });
 
-export function buildTtnMessage({ orderNumber, number, codUah, costUah, address, tracked, unpaidUah = 0, statusFailed = false }) {
+export function buildTtnMessage({ orderNumber, number, codUah, costUah, address, tracked, unpaidUah = 0, statusFailed = false, deliveryUah = 0, warnings = [] }) {
   const lines = [`📦 <b>ТТН Нової пошти створено: <code>${escapeHtml(number)}</code></b> · замовлення #${escapeHtml(orderNumber)}`];
   if (address) lines.push(escapeHtml(address));
   lines.push(`Оголошена вартість: ${escapeHtml(formatMoney(Math.round(costUah * 100)))}`);
+  if (deliveryUah > 0) lines.push(`Вартість доставки (оплачує одержувач): ${escapeHtml(formatMoney(Math.round(deliveryUah * 100)))}`);
+  for (const w of warnings) lines.push(`⚠️ Нова пошта: ${escapeHtml(w)}`);
   if (unpaidUah > 0) {
     lines.push(`⚠️ ТТН створено БЕЗ післяплати. Неоплачений залишок ${escapeHtml(formatMoney(Math.round(unpaidUah * 100)))}: надішліть клієнту посилання кнопкою «💳 Залишок» під замовленням.`);
   } else {

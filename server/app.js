@@ -617,6 +617,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
           codUah: ttn.codUah,
           costUah: ttn.costUah,
           unpaidUah: ttn.unpaidUah,
+          deliveryUah: ttn.deliveryUah,
+          warnings: ttn.warnings,
           address: describeDelivery(order.data.delivery).join('\n'),
           tracked,
           statusFailed,

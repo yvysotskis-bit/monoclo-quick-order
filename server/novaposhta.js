@@ -76,7 +76,10 @@ export function createNovaPoshta({ apiKey, fetchFn, sleep = (ms) => new Promise(
       // Ключ у помилку не потрапляє: лише відповідь API
       throw new Error(`Нова пошта: ${(data?.errors || []).join('; ') || 'невідома помилка'}`);
     }
-    return data.data || [];
+    // Попередження Нової пошти (наприклад, скоригована дата) не є помилкою, але їх корисно бачити
+    const rows = data.data || [];
+    rows.warnings = Array.isArray(data.warnings) ? data.warnings : [];
+    return rows;
   }
 
   return {

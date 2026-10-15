@@ -118,7 +118,10 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
       SeatsAmount: '1',
       Description: config.npDescription,
       AdditionalInformation: info.slice(0, 100),
-      Cost: uah(d.totalCents),
+      // За документацією оціночна вартість це ціле число гривень
+      Cost: String(Math.round(d.totalCents / 100)),
+      // Фактична вага обовʼязкова за документацією (OptionsSeat уточнює параметри місця)
+      Weight: String(parcel.weightKg),
       OptionsSeat: [{
         // Об'єм місця в м³ (розміри в см): 30×25×5 см = 0,00375 м³
         volumetricVolume: String(Number(((parcel.length * parcel.width * parcel.height) / 1e6).toFixed(6))),
@@ -147,14 +150,19 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
       }
     }
 
-    const doc = await first('InternetDocument', 'save', props);
+    const rows = await call('InternetDocument', 'save', props);
+    const doc = rows[0];
     if (!doc?.IntDocNumber) throw new Error('Нова пошта не повернула номер ТТН');
+    const deliveryCost = Number(doc.CostOnSite);
     return {
       number: doc.IntDocNumber,
       ref: doc.Ref || '',
       codUah: noCod ? 0 : cod / 100,
       unpaidUah: noCod ? cod / 100 : 0,
-      costUah: d.totalCents / 100,
+      costUah: Math.round(d.totalCents / 100),
+      // Вартість доставки, яку Нова пошта розрахувала для одержувача: допомагає помітити хибний тариф
+      deliveryUah: Number.isFinite(deliveryCost) && deliveryCost > 0 ? deliveryCost : 0,
+      warnings: (rows.warnings || []).map(String).filter(Boolean),
     };
   }
 
