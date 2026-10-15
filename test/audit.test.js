@@ -369,3 +369,71 @@ test('фонова черга: збій одного етапу не зупин�
   await app.tick();
   assert.equal(store.getOrder(1).tg_state, 'sent', 'доставка в Telegram відбулась, хоча етап KeyCRM зламаний');
 });
+
+test('фаззінг: сміттєві й дивні вхідні дані ніколи не дають 500 і не створюють замовлень із порожніми полями', async () => {
+  const { app, store } = makeApp();
+  const weird = [
+    null, undefined, 0, -1, 1e21, NaN, '', ' ', '\u0000', '<script>alert(1)</script>', 'a'.repeat(5000), [], {}, [[]],
+    { a: 1 }, true, '🔥'.repeat(100), '１２３', '+', '++380', '%00', '../../etc/passwd', { toString: 'x' }, ['x'], 9007199254740993,
+  ];
+  const fields = ['product_handle', 'variant_id', 'quantity', 'name', 'surname', 'phone', 'comment', 'city', 'delivery', 'utm', 'referrer', 'click', 'page_url', 'client_id', 'website', 'body'];
+  let seed = 7;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  let accepted = 0;
+  for (let i = 0; i < 300; i += 1) {
+    const body = goodBody({ client_id: `fuzz-client-${i}-xxxx`, phone: `+38067${String(1000000 + i).slice(-7)}` });
+    for (let k = 0; k < 1 + rnd(4); k += 1) body[fields[rnd(fields.length)]] = weird[rnd(weird.length)];
+    const r = await submit(app, body);
+    assert.ok(r.status < 500, `статус ${r.status} для ${JSON.stringify(body).slice(0, 200)}`);
+    if (r.status === 200 && !body.website) accepted += 1;
+  }
+  for (const order of store.ordersSince(0)) {
+    assert.ok(order.data.name.length >= 2 && /^\+\d{8,15}$/.test(order.data.phone), 'у базу потрапили лише валідні імʼя й телефон');
+    assert.ok(order.data.quantity >= 1 && order.data.quantity <= 10);
+  }
+  assert.ok(accepted > 0);
+  // Сирі тіла: не JSON, масив, надто великий
+  for (const raw of ['not json', '[]', 'null', '"str"', '{"product_handle":', 'x'.repeat(20_000)]) {
+    const r = await call(app, { url: signedUrl(), rawBody: raw });
+    assert.ok(r.status >= 400 && r.status < 500, `сире тіло «${raw.slice(0, 20)}» → ${r.status}`);
+  }
+});
+
+test('фаззінг вебхуків: сміттєві апдейти Telegram і підписані кривi повідомлення банку не дають 5xx', async () => {
+  const { app } = makeApp({ cfg: { monobankToken: 'M', novaPoshtaApiKey: 'k', keycrmToken: 'crm' } });
+  await submit(app);
+  const datas = ['', 'st:', 'st:nope', 'pay:', 'pay:link:extra', 'ttn:', 'ttn:abc', 'ttn:999999', 'ttn0:-1', 'ttn:1e3', 'x'.repeat(100), 'st:taken\u0000'];
+  for (const data of datas) {
+    const r = await call(app, { url: '/telegram/webhook', headers, body: { update_id: ++updateId, callback_query: { id: 'x', data, from: {}, message: { message_id: 101, chat: { id: -100500 } } } } });
+    assert.equal(r.status, 200, `callback «${data.slice(0, 12)}»`);
+  }
+  const updates = [{}, { message: null }, { message: { chat: { id: -100500 } } }, { message: { chat: { id: -100500 }, reply_to_message: {}, text: 5 } },
+    { callback_query: {} }, { callback_query: { message: {} } }, { update_id: 'x', callback_query: { data: 'st:taken', message: { message_id: 'z', chat: { id: -100500 } } } }];
+  for (const u of updates) {
+    const r = await call(app, { url: '/telegram/webhook', headers, body: u });
+    assert.equal(r.status, 200, JSON.stringify(u));
+  }
+  for (const payload of [{}, { invoiceId: 5 }, { invoiceId: 'inv-1', status: null }, { invoiceId: 'inv-1', status: 'success', modifiedDate: 'garbage', finalAmount: 'x' }, []]) {
+    const r = await hook(app, payload);
+    assert.ok(r.status < 500, `вебхук банку ${JSON.stringify(payload)} → ${r.status}`);
+  }
+});
+
+test('фаззінг підказок Нової пошти: некоректні параметри дають 4xx, а не 500', async () => {
+  const { app } = makeApp({ cfg: { novaPoshtaApiKey: 'k' } });
+  const qs = ['', 'q=', 'q=%00', `q=${'я'.repeat(500)}`, 'settlement=not-a-uuid', 'settlement=&kind=postomat', 'kind=%27%3B--', 'settlement=e71a0b8e-9b3d-4a39-8a1f-111111111111&q=%25&kind=warehouse'];
+  for (const path of ['cities', 'points', 'streets']) {
+    for (const extra of qs) {
+      const r = await call(app, { method: 'GET', url: signedUrl(`/proxy/np/${path}`).replace('?', `?${extra}&`) });
+      // Додані параметри входять у підпис, тому без перепідпису запит відхиляється: головне, що це не 500
+      assert.ok(r.status < 500, `${path}?${extra} → ${r.status}`);
+    }
+  }
+  for (const path of ['cities', 'points', 'streets']) {
+    for (const extra of qs.slice(1)) {
+      const params = new URLSearchParams(extra);
+      const r = await call(app, { method: 'GET', url: signedUrl(`/proxy/np/${path}`, Object.fromEntries(params)) });
+      assert.ok(r.status < 500, `підписаний ${path}?${extra} → ${r.status}`);
+    }
+  }
+});

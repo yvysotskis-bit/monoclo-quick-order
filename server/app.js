@@ -642,6 +642,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       throw new HttpError(400, 'bad_request', 'Bad request');
     }
 
+    // Тіло має бути обʼєктом із рядковим invoiceId, інакше це не повідомлення про наш рахунок
+    if (!body || typeof body !== 'object' || typeof body.invoiceId !== 'string') return { ok: true };
     const payment = store.findPaymentByInvoice(body.invoiceId);
     if (!payment) return { ok: true };
     const status = String(body.status);
