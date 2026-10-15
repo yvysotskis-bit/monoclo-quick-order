@@ -16,6 +16,9 @@ export function normalizeCity(raw) {
     area: text(raw.Area),
     region: text(raw.Region),
     warehouses: Number(raw.Warehouses) || 0,
+    // DeliveryCity — CityRef для накладної; AddressDeliveryAllowed — чи доступна адресна доставка
+    deliveryCity: text(raw.DeliveryCity),
+    addressDelivery: raw.AddressDeliveryAllowed === undefined ? true : raw.AddressDeliveryAllowed === true || raw.AddressDeliveryAllowed === 1 || raw.AddressDeliveryAllowed === '1',
   };
 }
 

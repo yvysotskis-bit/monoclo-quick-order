@@ -1175,7 +1175,17 @@
 
   var CITY_HINT = 'Оберіть місто зі списку, і ми запропонуємо відділення Нової пошти';
 
+  function syncCourierOption() {
+    if (!refs.deliveryRoot) return;
+    var btn = refs.deliveryRoot.querySelector('[data-qo-method="courier"]');
+    var city = state.delivery.city;
+    var allowed = !city || city.addressDelivery !== false;
+    if (btn) btn.hidden = !allowed;
+    if (!allowed && state.delivery.method === 'courier') setMethod('warehouse');
+  }
+
   function showNp() {
+    syncCourierOption();
     if (refs.npBlock) refs.npBlock.hidden = !deliveryActive();
     if (refs.cityHint) {
       refs.cityHint.hidden = deliveryActive();
@@ -1298,7 +1308,7 @@
     setMethod('warehouse');
     var d = saved.delivery;
     if (d && d.city && d.city.ref) {
-      state.delivery.city = { ref: d.city.ref, name: d.city.name, present: d.city.present, area: d.city.area };
+      state.delivery.city = { ref: d.city.ref, name: d.city.name, present: d.city.present, area: d.city.area, deliveryCity: d.city.deliveryCity, addressDelivery: d.city.addressDelivery };
       refs.city.value = d.city.present || d.city.name;
       if (d.method) setMethod(d.method);
       if (d.method === 'courier') {
@@ -1337,7 +1347,7 @@
     var d = state.delivery;
     var out = {
       city: d.city
-        ? { ref: d.city.ref, name: d.city.name, present: d.city.present, area: d.city.area }
+        ? { ref: d.city.ref, name: d.city.name, present: d.city.present, area: d.city.area, deliveryCity: d.city.deliveryCity, addressDelivery: d.city.addressDelivery }
         : { name: cityText() }
     };
     if (deliveryActive()) {

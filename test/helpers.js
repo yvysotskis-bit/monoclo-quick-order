@@ -130,7 +130,7 @@ export function mockFetch({ productResponse } = {}) {
       const { calledMethod, methodProperties: p } = call.body;
       if (calledMethod === 'searchSettlements') {
         return Response.json({ success: true, data: [{ TotalCount: '2', Addresses: [
-          { Ref: NP.city, MainDescription: 'Чернівці', Present: 'м. Чернівці, Чернівецька обл.', Area: 'Чернівецька', Region: '', Warehouses: '58' },
+          { Ref: NP.city, MainDescription: 'Чернівці', Present: 'м. Чернівці, Чернівецька обл.', Area: 'Чернівецька', Region: '', Warehouses: '58', DeliveryCity: 'delivery-city-ref', AddressDeliveryAllowed: true, StreetsAvailability: true },
           { Ref: 'ffffffff-0000-0000-0000-000000000001', MainDescription: 'Чернівці', Present: 'с. Чернівці, Вінницька обл.', Area: 'Вінницька', Region: 'Могилів-Подільський', Warehouses: '1' },
         ] }] });
       }

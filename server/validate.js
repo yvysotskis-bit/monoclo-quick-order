@@ -53,6 +53,8 @@ export function cleanDelivery(raw) {
     name: cleanText(raw.city?.name, 80),
     present: cleanText(raw.city?.present, 120),
     area: cleanText(raw.city?.area, 80),
+    deliveryCity: ref(raw.city?.deliveryCity),
+    addressDelivery: raw.city?.addressDelivery !== false,
   };
   const point = {
     ref: ref(raw.point?.ref),

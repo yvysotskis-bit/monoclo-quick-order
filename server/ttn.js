@@ -70,11 +70,19 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
   async function recipientAddress({ delivery, recipientRef, cityRef }) {
     if (delivery.method !== 'courier') return delivery.point.ref;
     if (!delivery.street?.name || !delivery.house) throw new Error('для адресної доставки потрібні вулиця й будинок');
-    const street = await first('Address', 'getStreet', { CityRef: cityRef, FindByString: delivery.street.name.replace(/^(вул\.|вулиця|просп\.|проспект|пров\.|провулок)\s*/i, ''), Limit: '1' });
-    if (!street?.Ref) throw new Error(`не знайдено вулицю «${delivery.street.name}»`);
-    const address = await first('Address', 'save', {
-      CounterpartyRef: recipientRef, StreetRef: street.Ref, BuildingNumber: delivery.house, Flat: delivery.apartment || '',
+    const save = (streetRef) => first('Address', 'save', {
+      CounterpartyRef: recipientRef, StreetRef: streetRef, BuildingNumber: delivery.house, Flat: delivery.apartment || '',
     });
+    // Спочатку SettlementStreetRef із пошуку вулиць; якщо Нова пошта його не прийняла — вулиця з довідника міста
+    let address = null;
+    if (delivery.street.ref) {
+      try { address = await save(delivery.street.ref); } catch { address = null; }
+    }
+    if (!address?.Ref) {
+      const street = await first('Address', 'getStreet', { CityRef: cityRef, FindByString: delivery.street.name.replace(/^(вул\.|вулиця|просп\.|проспект|пров\.|провулок)\s*/i, ''), Limit: '1' });
+      if (!street?.Ref) throw new Error(`не знайдено вулицю «${delivery.street.name}»`);
+      address = await save(street.Ref);
+    }
     if (!address?.Ref) throw new Error('не вдалося зберегти адресу одержувача');
     return address.Ref;
   }
@@ -111,7 +119,7 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
     const from = await sender();
     // CityRef (довідник міст) відрізняється від SettlementRef, тому беремо його з будь-якої точки населеного пункту
     const cityKey = `np_city:${delivery.city.ref}`;
-    let cityRef = store.getMeta(cityKey);
+    let cityRef = delivery.city.deliveryCity || store.getMeta(cityKey);
     if (!cityRef) {
       const probe = await first('AddressGeneral', 'getWarehouses', { SettlementRef: delivery.city.ref, Limit: '1', Language: 'UA' });
       if (!probe?.CityRef) throw new Error('Нова пошта не має відділень у цьому населеному пункті');

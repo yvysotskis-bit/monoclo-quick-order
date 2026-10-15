@@ -26,7 +26,7 @@ test('міста: нормалізація, короткий запит поро
   const r = await get(app, '/proxy/np/cities', { q: 'Черн' });
   assert.equal(r.status, 200);
   assert.deepEqual(r.json.items[0], {
-    ref: NP.city, name: 'Чернівці', present: 'м. Чернівці, Чернівецька обл.', area: 'Чернівецька', region: '', warehouses: 58,
+    ref: NP.city, name: 'Чернівці', present: 'м. Чернівці, Чернівецька обл.', area: 'Чернівецька', region: '', warehouses: 58, deliveryCity: 'delivery-city-ref', addressDelivery: true,
   });
   assert.equal(r.json.items.length, 2);
   assert.equal(fetchFn.calls.find((c) => c.url.includes('novaposhta')).body.apiKey, 'NPKEY');
@@ -195,4 +195,12 @@ test('графік відділення: стислий запис, вихідн
     'Пн–Пт 08:00–21:00, Сб 09:00–15:00');
   assert.equal(formatSchedule(null), '');
   assert.equal(day('x'), 'x');
+});
+
+test('normalizeCity: DeliveryCity і AddressDeliveryAllowed', async () => {
+  const { normalizeCity } = await import('../server/novaposhta.js');
+  const c = normalizeCity({ Ref: 'r', MainDescription: 'Х', DeliveryCity: 'dc', AddressDeliveryAllowed: false });
+  assert.equal(c.deliveryCity, 'dc');
+  assert.equal(c.addressDelivery, false);
+  assert.equal(normalizeCity({ Ref: 'r', MainDescription: 'Х' }).addressDelivery, true);
 });

@@ -146,3 +146,16 @@ test('без KEYCRM_TTN_STATUS_ID статус у KeyCRM після ТТН не 
   await press(app, 'ttn:1');
   assert.ok(!fetchFn.crm().some((c) => c.method === 'PUT' && c.body.status_id));
 });
+
+test('адресна доставка: CityRecipient із DeliveryCity, вулиця за SettlementStreetRef без getStreet', async () => {
+  const delivery = { method: 'courier', city: { ...city, deliveryCity: 'cccccccc-0000-0000-0000-000000000009' }, street: { ref: NP.street, name: 'вул. Головна' }, house: '5', apartment: '7' };
+  const { app, fetchFn } = await paidOrder({ surname: 'Петренко', delivery }, 178000, 'pay:full');
+  await press(app, 'ttn:1');
+  const p = docCalls(fetchFn)[0].body.methodProperties;
+  assert.equal(p.CityRecipient, 'cccccccc-0000-0000-0000-000000000009');
+  const npCalls = fetchFn.calls.filter((c) => c.url.includes('novaposhta'));
+  assert.equal(npCalls.some((c) => c.body.calledMethod === 'getStreet'), false);
+  assert.equal(npCalls.some((c) => c.body.calledMethod === 'getWarehouses' && c.body.methodProperties.SettlementRef), false, 'додатковий запит за CityRef не потрібен');
+  const save = npCalls.find((c) => c.body.modelName === 'Address' && c.body.calledMethod === 'save');
+  assert.equal(save.body.methodProperties.StreetRef, NP.street);
+});

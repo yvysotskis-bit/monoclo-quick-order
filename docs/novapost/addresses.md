@@ -20,3 +20,9 @@
 ## Невідоме
 - Ідентифікатор типу «Поштомат» береться з пам'яті (`f9316480-5f2d-425d-bc2c-ac7cd29decf0`); сторінку «Типи відділень» не надано. Страхує запасний шлях пошуку.
 - `CityRef` для накладної беремо з будь-якої точки населеного пункту (`SettlementRef` ≠ `CityRef`).
+
+## Уточнення за документацією (searchSettlements / getStreet / Address.save)
+
+- `searchSettlements` повертає `DeliveryCity` (CityRef для накладної, використовуємо як `CityRecipient`) та `AddressDeliveryAllowed` (якщо `false`, кнопку «Адресна» в попапі ховаємо).
+- Для адресної доставки спершу `Address.save` із `SettlementStreetRef` (з `searchSettlementStreets`); якщо НП відхилила — запасний шлях через `getStreet` (`CityRef` + `FindByString`, обов'язкові).
+- `getStreet`, `getWarehouseTypes`, `getWarehouses` у документації мають `modelName: AddressGeneral`; старе `Address` поки працює.
