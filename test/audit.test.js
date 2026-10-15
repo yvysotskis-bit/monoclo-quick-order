@@ -589,3 +589,38 @@ test('ТТН: копійки у сумі замовлення не ламают�
   await svc.create({ order, paidCents: 0 });
   assert.equal(sent[0].Cost, '2000');
 });
+
+test('довідник відділень: заборонені для вибору (DenyToSelect=1) не пропонуються, поштомат розпізнається за PostMachineType', async () => {
+  const { createNovaPoshta } = await import('../server/novaposhta.js');
+  const rows = [
+    { Ref: 'a', Number: '1', Description: 'Відділення №1', ShortAddress: 'x', CategoryOfWarehouse: 'Branch', DenyToSelect: '0', PostMachineType: '' },
+    { Ref: 'b', Number: '2', Description: 'Відділення №2', ShortAddress: 'x', CategoryOfWarehouse: 'Branch', DenyToSelect: '1', PostMachineType: '' },
+    { Ref: 'c', Number: '77', Description: '№77: вул. Тестова', ShortAddress: 'x', CategoryOfWarehouse: 'Store', DenyToSelect: '0', PostMachineType: 'FullDayService' },
+  ];
+  const fetchFn = async () => Response.json({ success: true, data: rows });
+  const np = createNovaPoshta({ apiKey: 'k', fetchFn });
+  assert.deepEqual((await np.searchPoints({ settlement: 's', query: '', kind: 'warehouse' })).map((p) => p.ref), ['a']);
+  assert.deepEqual((await np.searchPoints({ settlement: 's', query: '', kind: 'postomat' })).map((p) => p.ref), ['c']);
+});
+
+test('довідник відділень: якщо Нова пошта віддає весь довідник одним файлом і ігнорує Page, ми не крутимо цикл і не дублюємо записи', async () => {
+  const { createNovaPoshta } = await import('../server/novaposhta.js');
+  const all = Array.from({ length: 700 }, (_, i) => ({ Ref: `r${i}`, Number: String(i + 1), Description: `Відділення №${i + 1}`, ShortAddress: `адр ${i + 1}`, CategoryOfWarehouse: 'Branch' }));
+  let requests = 0;
+  const fetchFn = async (_u, init) => {
+    requests += 1;
+    const p = JSON.parse(init.body).methodProperties;
+    // FindByString не знаходить нічого, а без нього приходить увесь довідник (700 записів) на будь-якій сторінці
+    return Response.json({ success: true, data: p.FindByString || p.WarehouseId ? [] : all });
+  };
+  const np = createNovaPoshta({ apiKey: 'k', fetchFn });
+  const found = await np.searchPoints({ settlement: 's', query: '650', kind: 'warehouse' });
+  assert.deepEqual(found.map((p) => p.number), ['650']);
+  assert.ok(requests <= 5, `запитів до Нової пошти: ${requests}`);
+  // Повторний пошук тієї ж міської бази не навантажує Нову пошту (кеш довідника)
+  const before = requests;
+  await np.searchPoints({ settlement: 's', query: '651', kind: 'warehouse' });
+  assert.ok(requests - before <= 2, 'другий пошук майже без запитів до API');
+  const dup = await np.searchPoints({ settlement: 's', query: 'Відділення №70', kind: 'warehouse' });
+  assert.equal(new Set(dup.map((p) => p.ref)).size, dup.length, 'без повторів у відповіді');
+});

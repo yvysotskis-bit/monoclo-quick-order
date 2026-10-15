@@ -181,7 +181,9 @@ test('поштомати: якщо фільтр за типом нічого н�
   const found = await np.searchPoints({ settlement: 'ref', query: '65634', kind: 'postomat' });
   assert.equal(found.length, 1);
   assert.equal(found[0].number, '65634');
-  assert.equal(calls.length, 2);
+  // швидкий пошук за типом, пошук за номером (WarehouseId), повний перебір міста
+  assert.equal(calls.length, 3);
+  assert.equal(calls[1].WarehouseId, '65634');
 });
 
 test('графік відділення: стислий запис, вихідні пропускаються', async () => {
