@@ -21,6 +21,14 @@ export function recipientNames({ name, surname }) {
 
 const uah = (cents) => (cents % 100 === 0 ? String(cents / 100) : (cents / 100).toFixed(2));
 
+// Помилка з кодом, за яким бот підбирає кнопки: cod_unavailable, postomat_payer, latin_name
+export class TtnError extends Error {
+  constructor(message, code) {
+    super(message);
+    this.code = code;
+  }
+}
+
 export function createTtnService({ np, config, store, now = () => new Date() }) {
   const call = (model, method, props) => np.call(model, method, props, { retries: 3 });
   const first = async (model, method, props) => (await call(model, method, props))[0];
@@ -72,7 +80,7 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
   }
 
   // order — рядок із бази; paidCents — сума, сплачена наперед
-  async function create({ order, paidCents, noCod = false }) {
+  async function create({ order, paidCents, noCod = false, senderPays = false }) {
     const d = order.data;
     const delivery = d.delivery;
     if (!delivery?.method) throw new Error('клієнт не обрав спосіб доставки Новою поштою');
@@ -80,6 +88,25 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
     if (delivery.method !== 'courier' && !delivery.point?.ref) throw new Error('не обрано відділення чи поштомат');
     const names = recipientNames(d);
     if (!names) throw new Error('немає прізвища одержувача (у замовленні лише імʼя)');
+
+    // Правила Нової пошти (розділ «Коди помилок»), які краще перевірити до запиту, щоб дати менеджеру зрозумілу пораду
+    const cod = Math.max(d.totalCents - paidCents, 0);
+    const wantsCod = cod > 0 && !noCod;
+    if (delivery.method === 'postomat') {
+      if (wantsCod) {
+        throw new TtnError('Контроль оплати недоступний для поштомата «Нова пошта». Попросіть клієнта оплатити повну суму кнопкою «💳 Залишок» під замовленням, потім створіть ТТН ще раз.', 'cod_unavailable');
+      }
+      if (!senderPays) {
+        throw new TtnError('Нова пошта забороняє платника «Одержувач» для відправлень у поштомат: доставку оплачує відправник (ви). Якщо згодні, натисніть кнопку нижче.', 'postomat_payer');
+      }
+    }
+    if (delivery.method === 'courier' && wantsCod) {
+      throw new TtnError('Контроль оплати працює лише для доставки у відділення, на адресну доставку він недоступний. Попросіть клієнта оплатити повну суму кнопкою «💳 Залишок», потім створіть ТТН ще раз.', 'cod_unavailable');
+    }
+    // Платник «Одержувач» вимагає даних одержувача кирилицею
+    if (!senderPays && delivery.method !== 'postomat' && /[A-Za-z]/.test(`${names.first}${names.last}`)) {
+      throw new TtnError('Імʼя або прізвище одержувача вписані латиницею, а Нова пошта для платника «Одержувач» приймає лише кирилицю. Уточніть дані в клієнта й створіть ТТН у кабінеті Нової пошти.', 'latin_name');
+    }
 
     const from = await sender();
     // CityRef (довідник міст) відрізняється від SettlementRef, тому беремо його з будь-якої точки населеного пункту
@@ -105,12 +132,12 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
     if (!recipient?.Ref || !contactRef) throw new Error('не вдалося створити одержувача в Новій пошті');
 
     const addressRef = await recipientAddress({ delivery, recipientRef: recipient.Ref, cityRef });
-    const cod = Math.max(d.totalCents - paidCents, 0);
     const parcel = config.npParcel;
     const info = `${d.productTitle}${(d.options || []).length ? ` (${d.options.map((o) => o.value).join(', ')})` : ''} - ${d.quantity}шт`;
 
     const props = {
-      PayerType: 'Recipient',
+      // Для поштомата платник «Одержувач» заборонений правилами Нової пошти
+      PayerType: senderPays ? 'Sender' : 'Recipient',
       PaymentMethod: 'Cash',
       DateTime: kyivDate(now(), config.timezone),
       CargoType: 'Parcel',
@@ -141,7 +168,7 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
       ContactRecipient: contactRef,
       RecipientsPhone: d.phone.replace(/\D/g, ''),
     };
-    if (cod > 0 && !noCod) {
+    if (wantsCod) {
       // «Контроль оплати» (оплата товару при отриманні) або класичний «Грошовий переказ»
       if (config.npCodMode === 'transfer') {
         // Документація: сума зворотної доставки грошей передається цілим числом гривень (приклад «4552»)
@@ -163,6 +190,7 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
       costUah: Math.round(d.totalCents / 100),
       // Вартість доставки, яку Нова пошта розрахувала для одержувача: допомагає помітити хибний тариф
       deliveryUah: Number.isFinite(deliveryCost) && deliveryCost > 0 ? deliveryCost : 0,
+      senderPays,
       warnings: (rows.warnings || []).map(String).filter(Boolean),
     };
   }

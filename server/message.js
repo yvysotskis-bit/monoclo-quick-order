@@ -184,12 +184,20 @@ export function buildPaymentMessage({ orderNumber, amountCents, kind, url, hours
   return lines.join('\n');
 }
 
-export function buildPaidMessage({ orderNumber, amountCents, kind, totalCents, paidCents }) {
+export function buildPaidMessage({ orderNumber, amountCents, kind, totalCents, paidCents, method = '' }) {
   const lines = [`✅ ${PAYMENT_KIND[kind] ? PAYMENT_KIND[kind][0].toUpperCase() + PAYMENT_KIND[kind].slice(1) : 'Оплата'} ${formatMoney(amountCents)} отримана за замовленням #${orderNumber}.`];
   const rest = totalCents - paidCents;
   lines.push(rest > 0
     ? `Сплачено ${formatMoney(paidCents)} з ${formatMoney(totalCents)}, залишок ${formatMoney(rest)}.`
     : 'Замовлення оплачено повністю.');
+  // Правила Нової пошти заздалегідь: щоб менеджер не дізнавався про обмеження вже під час створення ТТН
+  if (method === 'postomat') {
+    lines.push(rest > 0
+      ? 'ℹ️ Поштомат: післяплата недоступна, а доставку оплачує відправник. Для ТТН клієнт має оплатити повну суму.'
+      : 'ℹ️ Поштомат: доставку оплачує відправник (правила Нової пошти).');
+  } else if (method === 'courier' && rest > 0) {
+    lines.push('ℹ️ Адресна доставка: Контроль оплати недоступний, для ТТН потрібна повна оплата.');
+  }
   if (rest < 0) lines.push(`⚠️ Сплачено більше за суму замовлення на ${formatMoney(-rest)}. Перевірте й за потреби поверніть різницю клієнту.`);
   return lines.join('\n');
 }
@@ -225,11 +233,11 @@ export const ttnKeyboard = (orderId) => ({
   inline_keyboard: [[{ text: '📦 Створити ТТН', callback_data: `ttn:${orderId}` }]],
 });
 
-export function buildTtnMessage({ orderNumber, number, codUah, costUah, address, tracked, unpaidUah = 0, statusFailed = false, deliveryUah = 0, warnings = [] }) {
+export function buildTtnMessage({ orderNumber, number, codUah, costUah, address, tracked, unpaidUah = 0, statusFailed = false, deliveryUah = 0, warnings = [], senderPays = false }) {
   const lines = [`📦 <b>ТТН Нової пошти створено: <code>${escapeHtml(number)}</code></b> · замовлення #${escapeHtml(orderNumber)}`];
   if (address) lines.push(escapeHtml(address));
   lines.push(`Оголошена вартість: ${escapeHtml(formatMoney(Math.round(costUah * 100)))}`);
-  if (deliveryUah > 0) lines.push(`Вартість доставки (оплачує одержувач): ${escapeHtml(formatMoney(Math.round(deliveryUah * 100)))}`);
+  if (deliveryUah > 0) lines.push(`Вартість доставки (оплачує ${senderPays ? 'відправник' : 'одержувач'}): ${escapeHtml(formatMoney(Math.round(deliveryUah * 100)))}`);
   for (const w of warnings) lines.push(`⚠️ Нова пошта: ${escapeHtml(w)}`);
   if (unpaidUah > 0) {
     lines.push(`⚠️ ТТН створено БЕЗ післяплати. Неоплачений залишок ${escapeHtml(formatMoney(Math.round(unpaidUah * 100)))}: надішліть клієнту посилання кнопкою «💳 Залишок» під замовленням.`);
@@ -243,10 +251,19 @@ export function buildTtnMessage({ orderNumber, number, codUah, costUah, address,
   return lines.join('\n');
 }
 
-export const ttnNoCodKeyboard = (orderId) => ({
+// Формат кнопки: ttn:<id> | ttn0:<id> (без післяплати) з необовʼязковим суфіксом :s (доставку оплачує відправник)
+export const ttnCallback = (orderId, { noCod = false, senderPays = false } = {}) => `${noCod ? 'ttn0' : 'ttn'}:${orderId}${senderPays ? ':s' : ''}`;
+
+export const ttnNoCodKeyboard = (orderId, flags = {}) => ({
   inline_keyboard: [
-    [{ text: '📦 Створити ТТН без післяплати', callback_data: `ttn0:${orderId}` }],
-    [{ text: '🔁 Спробувати ще раз', callback_data: `ttn:${orderId}` }],
+    [{ text: '📦 Створити ТТН без післяплати', callback_data: ttnCallback(orderId, { ...flags, noCod: true }) }],
+    [{ text: '🔁 Спробувати ще раз', callback_data: ttnCallback(orderId, flags) }],
+  ],
+});
+
+export const ttnSenderPaysKeyboard = (orderId, flags = {}) => ({
+  inline_keyboard: [
+    [{ text: '📦 Створити ТТН: доставку оплачує відправник', callback_data: ttnCallback(orderId, { ...flags, senderPays: true }) }],
   ],
 });
 

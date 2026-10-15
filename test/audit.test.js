@@ -637,3 +637,75 @@ test('ТТН у режимі «Грошовий переказ» (NP_COD_MODE=tr
   assert.deepEqual(p.BackwardDeliveryData, [{ PayerType: 'Recipient', CargoType: 'Money', RedeliveryString: '1580' }]);
   assert.equal(p.AfterpaymentOnGoodsCost, undefined);
 });
+
+// ---- Правила Нової пошти з розділу «Коди помилок» ----
+const npCity = { ref: 'e71a0b8e-9b3d-4a39-8a1f-111111111111', name: 'Чернівці', present: 'м. Чернівці', area: 'Чернівецька' };
+const npPoint = { ref: 'd1a8e3e2-1111-4a39-8a1f-222222222222', number: '3', name: 'Відділення №3' };
+const npPostomat = { ref: 'd1a8e3e2-1111-4a39-8a1f-444444444444', number: '4101', name: 'Поштомат №4101' };
+const npCfg = { monobankToken: 'M', novaPoshtaApiKey: 'npkey', keycrmToken: 'crm' };
+const ttnSaves = (fetchFn) => fetchFn.calls.filter((c) => c.body?.modelName === 'InternetDocument' && c.body.calledMethod === 'save');
+async function prepaid(delivery, extra = {}, button = 'pay:link', amount = 20000) {
+  const ctx = makeApp({ cfg: npCfg });
+  await submit(ctx.app, goodBody({ surname: 'Петренко', delivery, ...extra }));
+  await press(ctx.app, button);
+  await hook(ctx.app, { invoiceId: 'inv-1', status: 'success', amount, modifiedDate: '2025-10-05T12:00:05Z' });
+  return ctx;
+}
+
+test('поштомат + залишок до сплати: Контроль оплати недоступний (правило НП), ТТН не відправляється в НП, менеджер отримує пораду', async () => {
+  const { app, fetchFn } = await prepaid({ method: 'postomat', city: npCity, point: npPostomat });
+  await press(app, 'ttn:1');
+  assert.equal(ttnSaves(fetchFn).length, 0, 'запит до НП не йде: він завідомо відхилений');
+  const m = fetchFn.sentMessages.at(-1);
+  assert.match(m.text, /Контроль оплати недоступний для поштомата/);
+  assert.match(m.text, /💳 Залишок/);
+});
+
+test('поштомат повністю оплачений: платник «Одержувач» заборонений, пропонується «доставку оплачує відправник», далі ТТН створюється з PayerType Sender', async () => {
+  const { app, fetchFn } = await prepaid({ method: 'postomat', city: npCity, point: npPostomat }, {}, 'pay:full', 178000);
+  await press(app, 'ttn:1');
+  assert.equal(ttnSaves(fetchFn).length, 0);
+  const ask = fetchFn.sentMessages.at(-1);
+  assert.match(ask.text, /забороняє платника «Одержувач»/);
+  assert.equal(ask.reply_markup.inline_keyboard[0][0].callback_data, 'ttn:1:s');
+  await press(app, 'ttn:1:s');
+  const [save] = ttnSaves(fetchFn);
+  assert.equal(save.body.methodProperties.PayerType, 'Sender');
+  assert.equal(save.body.methodProperties.AfterpaymentOnGoodsCost, undefined);
+  assert.match(fetchFn.sentMessages.at(-1).text, /оплачує відправник/);
+});
+
+test('адресна доставка із залишком: Контроль оплати лише для відділень, менеджер отримує пораду і кнопку «без післяплати»', async () => {
+  const delivery = { method: 'courier', city: npCity, street: { ref: 'a1a8e3e2-1111-4a39-8a1f-666666666666', name: 'вул. Головна' }, house: '5' };
+  const { app, fetchFn } = await prepaid(delivery);
+  await press(app, 'ttn:1');
+  assert.equal(ttnSaves(fetchFn).length, 0);
+  const m = fetchFn.sentMessages.at(-1);
+  assert.match(m.text, /лише для доставки у відділення/);
+  assert.equal(m.reply_markup.inline_keyboard[0][0].callback_data, 'ttn0:1');
+});
+
+test('імʼя латиницею: платник «Одержувач» потребує кирилиці, менеджер отримує зрозуміле повідомлення (до звернення до НП)', async () => {
+  const { app, fetchFn } = await prepaid({ method: 'warehouse', city: npCity, point: npPoint }, { name: 'Ivan', surname: 'Petrenko' });
+  await press(app, 'ttn:1');
+  assert.equal(ttnSaves(fetchFn).length, 0);
+  assert.match(fetchFn.sentMessages.at(-1).text, /латиницею/);
+});
+
+test('помилка НП з текстом «Контроль оплати …» теж дає кнопку «без післяплати» (раніше шукали лише слово «післяплата»)', async () => {
+  const { app, fetchFn } = await prepaid({ method: 'warehouse', city: npCity, point: npPoint });
+  fetchFn.fail.npCod = true;
+  fetchFn.npCodMessage = 'Послуга Контроль оплати недоступна';
+  await press(app, 'ttn:1');
+  const m = fetchFn.sentMessages.at(-1);
+  assert.equal(m.reply_markup.inline_keyboard[0][0].callback_data, 'ttn0:1');
+});
+
+test('повідомлення про оплату одразу попереджає про обмеження поштомата й адресної доставки', async () => {
+  const { buildPaidMessage } = await import('../server/message.js');
+  const base = { orderNumber: '1', amountCents: 20000, kind: 'prepay', totalCents: 100000, paidCents: 20000 };
+  assert.match(buildPaidMessage({ ...base, method: 'postomat' }), /Поштомат: післяплата недоступна/);
+  assert.match(buildPaidMessage({ ...base, method: 'courier' }), /Адресна доставка: Контроль оплати недоступний/);
+  assert.doesNotMatch(buildPaidMessage({ ...base, method: 'warehouse' }), /ℹ️/);
+  assert.match(buildPaidMessage({ ...base, paidCents: 100000, method: 'postomat' }), /доставку оплачує відправник/);
+});

@@ -71,7 +71,8 @@ test('повна оплата: післяплати немає', async () => {
 
 test('адресна доставка: створюється адреса одержувача', async () => {
   const delivery = { method: 'courier', city, street: { ref: NP.street, name: 'вул. Головна' }, house: '5', apartment: '7' };
-  const { app, fetchFn } = await paidOrder({ surname: 'Петренко', delivery });
+  // Контроль оплати на адресну доставку недоступний, тому клієнт оплачує повну суму
+  const { app, fetchFn } = await paidOrder({ surname: 'Петренко', delivery }, 178000, 'pay:full');
   await press(app, 'ttn:1');
   const p = docCalls(fetchFn)[0].body.methodProperties;
   assert.equal(p.ServiceType, 'WarehouseDoors');

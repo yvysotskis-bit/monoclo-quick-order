@@ -28,6 +28,7 @@ import {
   buildTtnFailedMessage,
   ttnKeyboard,
   ttnNoCodKeyboard,
+  ttnSenderPaysKeyboard,
   buildPayFailedMessage,
   buildReversedMessage,
   buildPartialRefundMessage,
@@ -377,7 +378,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     if (query.data === 'pay:link') return paymentLink(query, 'prepay');
     if (query.data === 'pay:full') return paymentLink(query, 'full');
     if (query.data === 'pay:custom') return customAmountPrompt(query);
-    if (query.data?.startsWith('ttn:') || query.data?.startsWith('ttn0:')) return createTtn(query);
+    if (/^ttn0?:\d+(:s)?$/.test(query.data || '')) return createTtn(query);
 
     const match = STATUS_ACTION.exec(query.data || '');
     if (!match) return { ok: true };
@@ -578,7 +579,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const message = query.message;
     const answer = (text) => telegram.answerCallback(query.id, text).catch(() => {});
     const noCod = query.data.startsWith('ttn0:');
-    const order = store.getOrder(Number(query.data.slice(query.data.indexOf(':') + 1)));
+    const senderPays = query.data.endsWith(':s');
+    const order = store.getOrder(Number(query.data.slice(query.data.indexOf(':') + 1).replace(/:s$/, '')));
     if (!ttnService) { await answer('Нова пошта не налаштована'); return { ok: true }; }
     if (!order) { await answer('Замовлення не знайдено'); return { ok: true }; }
     if (order.ttn_number) { await answer(`ТТН уже створено: ${order.ttn_number}`); return { ok: true }; }
@@ -589,14 +591,17 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       const replyTo = order.tg_message_id || message.message_id;
       let ttn;
       try {
-        ttn = await ttnService.create({ order, paidCents: store.paidTotal(order.id), noCod });
+        ttn = await ttnService.create({ order, paidCents: store.paidTotal(order.id), noCod, senderPays });
         store.setTtn(order.id, ttn.number, ttn.ref);
       } catch (err) {
         log.error('ttn failed', err.message);
-        await telegram.sendText(buildTtnFailedMessage(order.order_number, err.message), {
-          replyTo,
-          replyMarkup: /післяплат/i.test(err.message) && store.paidTotal(order.id) < order.data.totalCents ? ttnNoCodKeyboard(order.id) : undefined,
-        }).catch(() => {});
+        // Кнопки залежать від причини: післяплата недоступна → «без післяплати»; поштомат → «доставку оплачує відправник»
+        const unpaid = store.paidTotal(order.id) < order.data.totalCents;
+        const flags = { senderPays };
+        let replyMarkup;
+        if (err.code === 'postomat_payer') replyMarkup = ttnSenderPaysKeyboard(order.id, { noCod });
+        else if ((err.code === 'cod_unavailable' || /післяплат|контроль оплати/i.test(err.message)) && unpaid) replyMarkup = ttnNoCodKeyboard(order.id, flags);
+        await telegram.sendText(buildTtnFailedMessage(order.order_number, err.message), { replyTo, replyMarkup }).catch(() => {});
         await answer('Не вдалося створити ТТН');
         return true;
       }
@@ -618,6 +623,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
           costUah: ttn.costUah,
           unpaidUah: ttn.unpaidUah,
           deliveryUah: ttn.deliveryUah,
+          senderPays: ttn.senderPays,
           warnings: ttn.warnings,
           address: describeDelivery(order.data.delivery).join('\n'),
           tracked,
@@ -690,6 +696,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         kind: payment.kind,
         totalCents: order.data.totalCents,
         paidCents: store.paidTotal(order.id),
+        method: order.data.delivery?.method || '',
       }), {
         replyTo,
         replyMarkup: ttnService && order.data.delivery?.method && !order.ttn_number ? ttnKeyboard(order.id) : undefined,
