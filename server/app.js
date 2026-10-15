@@ -56,7 +56,7 @@ class HttpError extends Error {
   }
 }
 
-async function readBody(req) {
+async function readBuffer(req) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
@@ -64,7 +64,11 @@ async function readBody(req) {
     if (size > MAX_BODY_BYTES) throw new HttpError(413, 'too_large', 'Запит завеликий');
     chunks.push(chunk);
   }
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks);
+}
+
+async function readBody(req) {
+  return (await readBuffer(req)).toString('utf8');
 }
 
 async function readJson(req) {
@@ -630,9 +634,11 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   // Вебхук банку: підпис обовʼязково перевіряється, інакше будь-хто міг би «оплатити» замовлення
   async function monoWebhook(req) {
     if (!monobank) throw new HttpError(404, 'not_found', 'Not found');
-    const raw = await readBody(req);
+    // Підпис рахується від точних байтів тіла (як у офіційному прикладі), а не від рядка після декодування
+    const rawBytes = await readBuffer(req);
+    const raw = rawBytes.toString('utf8');
     const signature = req.headers['x-sign'];
-    if (!signature || !(await monobank.verifyWebhook(raw, signature))) {
+    if (!signature || !(await monobank.verifyWebhook(rawBytes, signature))) {
       log.error('bad monobank signature');
       throw new HttpError(401, 'unauthorized', 'Unauthorized');
     }

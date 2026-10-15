@@ -535,3 +535,18 @@ test('часткове повернення коштів у банку: облі
   await hook(app, { invoiceId: 'inv-1', status: 'success', amount: 178000, finalAmount: 178000, modifiedDate: '2025-10-05T12:00:05Z' });
   assert.equal(store.paidTotal(1), 138000);
 });
+
+test('вебхук банку: підпис перевіряється за точними байтами тіла (навіть якщо в тілі є не-UTF-8 байт)', async () => {
+  const crypto = await import('node:crypto');
+  const { app, store } = makeApp({ cfg: payCfg });
+  await submit(app);
+  await press(app, 'pay:link');
+  const bytes = Buffer.concat([Buffer.from('{"invoiceId":"inv-1","status":"failure","failureReason":"'), Buffer.from([0xff, 0xfe]), Buffer.from('","modifiedDate":"2025-10-05T12:05:00Z"}')]);
+  // Той самий ключ, яким «підписує банк» у helpers
+  const { signMono } = await import('./helpers.js');
+  const signature = signMono(bytes);
+  const r = await call(app, { url: '/mono/webhook', rawBody: bytes, headers: { 'x-sign': signature } });
+  assert.equal(r.status, 200, 'байти підписані банком: приймаємо');
+  assert.equal(store.paymentsForOrder(1)[0].status, 'failure');
+  assert.ok(crypto);
+});
