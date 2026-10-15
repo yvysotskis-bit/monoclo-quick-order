@@ -516,3 +516,22 @@ test('відкритий ключ банку: підроблені вебхук�
   assert.equal(calls.length, 2);
   assert.ok(signMono);
 });
+
+test('часткове повернення коштів у банку: облік оплат зменшується, менеджер отримує повідомлення, повтор не дублює', async () => {
+  const { app, fetchFn, store } = makeApp({ cfg: payCfg });
+  await submit(app);
+  await press(app, 'pay:full');
+  await hook(app, { invoiceId: 'inv-1', status: 'success', amount: 178000, finalAmount: 178000, modifiedDate: '2025-10-05T12:00:05Z' });
+  assert.equal(store.paidTotal(1), 178000);
+  await hook(app, { invoiceId: 'inv-1', status: 'success', amount: 178000, finalAmount: 138000, modifiedDate: '2025-10-05T13:00:00Z' });
+  assert.equal(store.paidTotal(1), 138000, 'сплачено рахується за сумою після повернення');
+  assert.equal(store.paymentsForOrder(1)[0].status, 'success');
+  const notices = fetchFn.sentMessages.filter((m) => /частково повернено/.test(m.text));
+  assert.equal(notices.length, 1);
+  assert.match(notices[0].text, /400/);
+  await hook(app, { invoiceId: 'inv-1', status: 'success', amount: 178000, finalAmount: 138000, modifiedDate: '2025-10-05T13:00:00Z' });
+  assert.equal(fetchFn.sentMessages.filter((m) => /частково повернено/.test(m.text)).length, 1);
+  // Старе повідомлення (до повернення) не «повертає» гроші в облік
+  await hook(app, { invoiceId: 'inv-1', status: 'success', amount: 178000, finalAmount: 178000, modifiedDate: '2025-10-05T12:00:05Z' });
+  assert.equal(store.paidTotal(1), 138000);
+});

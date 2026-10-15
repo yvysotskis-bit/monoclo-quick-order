@@ -198,8 +198,12 @@ export function buildReversedMessage(orderNumber, amountCents, inCrm) {
   return `↩️ Оплату ${formatMoney(amountCents)} за замовленням #${orderNumber} повернено клієнту (повернення коштів у Monobank).${inCrm ? ' У KeyCRM цей платіж лишився, виправте його вручну.' : ''}`;
 }
 
+export function buildPartialRefundMessage(orderNumber, amountCents, finalCents, inCrm) {
+  return `↩️ Замовлення #${orderNumber}: частково повернено ${formatMoney(Math.max(amountCents - finalCents, 0))} (було сплачено ${formatMoney(amountCents)}, залишилось ${formatMoney(finalCents)}).${inCrm ? ' У KeyCRM платіж не змінився, виправте його вручну.' : ''}`;
+}
+
 export function buildAmountMismatchMessage(orderNumber, expectedCents, actualCents) {
-  return `⚠️ Замовлення #${orderNumber}: сума відрізняється від рахунку. Очікували ${formatMoney(expectedCents)}, банк повідомив ${formatMoney(actualCents)}. Перевірте оплату в кабінеті Monobank.`;
+  return `⚠️ Замовлення #${orderNumber}: сума відрізняється від рахунку. Очікували ${formatMoney(expectedCents)}, банк повідомив ${formatMoney(actualCents)} (за документацією це сума після повернень). Перевірте оплату в кабінеті Monobank.`;
 }
 
 export function buildPayFailedMessage(orderNumber, reason) {

@@ -30,6 +30,7 @@ import {
   ttnNoCodKeyboard,
   buildPayFailedMessage,
   buildReversedMessage,
+  buildPartialRefundMessage,
   buildAmountMismatchMessage,
   buildPaymentMessage,
   parseAmountKopecks,
@@ -655,6 +656,16 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const modified = Date.parse(body.modifiedDate) || 0;
     // Банк може повторювати й переставляти вебхуки: старіше за вже оброблене повідомлення ігноруємо
     if (modified && payment.modified_at && modified < payment.modified_at) return { ok: true };
+    // Оплата вже була успішною, але банк повідомляє меншу «фінальну» суму: це часткове повернення коштів
+    if (payment.status === 'success' && status === 'success' && Number.isInteger(body.finalAmount)
+      && body.finalAmount !== (payment.final_amount ?? payment.amount)) {
+      const order = store.getOrder(payment.order_id);
+      store.setFinalAmount(payment.id, body.finalAmount);
+      store.setPaymentStatus(payment.id, 'success', null, modified || null);
+      await telegram.sendText(buildPartialRefundMessage(order.order_number, payment.amount, body.finalAmount, !!payment.crm_synced), { replyTo: order.tg_message_id || undefined })
+        .catch((e) => log.error('refund notice failed', e.message));
+      return { ok: true };
+    }
     if (payment.status === status) return { ok: true };
     // Запізніле «processing» не скасовує вже отриману оплату; повернення коштів остаточне
     if (payment.status === 'success' && status !== 'reversed') return { ok: true };
@@ -663,6 +674,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const order = store.getOrder(payment.order_id);
     const replyTo = order.tg_message_id || undefined;
     store.setPaymentStatus(payment.id, status, status === 'success' ? now().getTime() : null, modified || null);
+    if (status === 'success' && Number.isInteger(body.finalAmount)) store.setFinalAmount(payment.id, body.finalAmount);
     if (status === 'success') {
       await telegram.sendText(buildPaidMessage({
         orderNumber: order.order_number,

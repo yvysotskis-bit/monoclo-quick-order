@@ -90,6 +90,7 @@ function migrate(db) {
   const paymentColumns = new Set(db.prepare('PRAGMA table_info(payments)').all().map((c) => c.name));
   if (!paymentColumns.has('modified_at')) db.exec('ALTER TABLE payments ADD COLUMN modified_at INTEGER');
   if (!paymentColumns.has('polled_at')) db.exec('ALTER TABLE payments ADD COLUMN polled_at INTEGER');
+  if (!paymentColumns.has('final_amount')) db.exec('ALTER TABLE payments ADD COLUMN final_amount INTEGER');
   // Рахунки зі старої схеми (один на замовлення) переносимо в таблицю платежів; в CRM вони вже потрапили
   db.exec(`INSERT OR IGNORE INTO payments (order_id, invoice_id, amount, kind, url, status, created_at, paid_at, crm_synced)
     SELECT id, pay_invoice_id, COALESCE(pay_amount, 0), 'prepay', COALESCE(pay_url, ''),
@@ -277,6 +278,10 @@ export class Store {
     ).all(now - validityMs - 6 * 3600e3, now - 180_000, now, now, limit);
   }
 
+  setFinalAmount(id, amount) {
+    this.run('UPDATE payments SET final_amount = ? WHERE id = ?', amount, id);
+  }
+
   markPolled(id, at) {
     this.run('UPDATE payments SET polled_at = ? WHERE id = ?', at, id);
   }
@@ -288,7 +293,8 @@ export class Store {
 
   // Сума отриманих оплат за замовленням, у копійках
   paidTotal(orderId) {
-    return this.db.prepare("SELECT COALESCE(SUM(amount), 0) AS n FROM payments WHERE order_id = ? AND status = 'success'")
+    // finalAmount банку = сума після повернень; якщо його ще не було, беремо суму рахунку
+    return this.db.prepare("SELECT COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS n FROM payments WHERE order_id = ? AND status = 'success'")
       .get(orderId).n;
   }
 
@@ -304,7 +310,9 @@ export class Store {
   }
 
   paidSince(since) {
-    return this.db.prepare("SELECT * FROM payments WHERE status = 'success' AND paid_at >= ? ORDER BY id").all(since);
+    return this.db.prepare(
+      "SELECT id, order_id, invoice_id, kind, status, paid_at, COALESCE(final_amount, amount) AS amount FROM payments WHERE status = 'success' AND paid_at >= ? ORDER BY id",
+    ).all(since);
   }
 
   /* ---- запити суми (відповідь менеджера на повідомлення бота) ---- */
