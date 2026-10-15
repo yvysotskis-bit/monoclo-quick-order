@@ -41,3 +41,10 @@
 - `Weight` ≥ 0,1 кг; `Cost` — ціле число; якщо не вказати, API ставить мінімум 300.
 - Телефони приймаються у форматах `+380…`, `380…`, `0…`.
 - `getDocumentPrice` (розрахунок вартості) і `getDocumentDeliveryDate` (прогноз дати) існують — можна використати для показу ціни/дати клієнту.
+
+## Додаткові послуги та зворотна доставка (за документацією)
+
+- «Контроль оплати»: `"AfterpaymentOnGoodsCost": "1005"` — приклад з цілим числом гривень. Ми шлемо ціле, а з копійками — `toFixed(2)` (формат з копійками в документації не описаний).
+- «Зворотна доставка грошей»: `BackwardDeliveryData: [{PayerType: 'Sender'|'Recipient', CargoType: 'Money', RedeliveryString: '4552'}]` — збігається з режимом `NP_COD_MODE=transfer`.
+- Інші поля: `SaturdayDelivery`, `PreferredDeliveryDate` (лише для адреси), `InfoRegClientBarcodes` (внутрішній номер замовлення), `AdditionalInformation`, `NumberOfFloorsLifting`.
+- Доставка «до адреси» має ще й альтернативний варіант: адреса рядками (`NewAddress: 1`, `RecipientCityName`, `RecipientArea`, `RecipientAreaRegions`, `RecipientAddressName`, `RecipientHouse`, `RecipientFlat`, `RecipientAddressNote`, `SettlementType`). Ми використовуємо інший, також документований шлях: `Address.save` → `RecipientAddress` (REF).
