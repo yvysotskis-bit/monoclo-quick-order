@@ -324,3 +324,37 @@ test('ТТН: двозначний відправник (кілька міст �
   const order = { id: 1, order_number: '1', data: { delivery: { method: 'warehouse', city: { ref: 'e71a0b8e-9b3d-4a39-8a1f-111111111111' }, point: { ref: 'd1a8e3e2-1111-4a39-8a1f-222222222222' } }, name: 'Іван', surname: 'П', phone: '+380671234567', totalCents: 1000, options: [], quantity: 1, productTitle: 'T' } };
   await assert.rejects(svc.create({ order, paidCents: 0 }), /кількох населених пунктах/);
 });
+
+test('оновлення бази: у вже існуючих замовлень статус KeyCRM і ТТН вважаються синхронізованими (нічого не перезаписується)', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { DatabaseSync } = await import('node:sqlite');
+  const { openStore } = await import('../server/store.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qo-migrate-'));
+  const file = path.join(dir, 'old.db');
+
+  // «Стара» база: ті ж таблиці, але без колонок, які з'явились пізніше
+  const first = openStore(file);
+  first.insertOrder({ orderNumber: 'OLD-1', clientId: 'c1', fingerprint: 'f1', createdAt: 1, data: { totalCents: 1000 } });
+  first.insertOrder({ orderNumber: 'OLD-2', clientId: 'c2', fingerprint: 'f2', createdAt: 2, data: { totalCents: 1000 } });
+  first.markCrmSent(1, 501);
+  first.markCrmSent(2, 502);
+  first.setStatus(1, 'taken', 'Оля', 10);
+  first.setTtn(2, '20450000000001', 'ref');
+  first.close();
+  const raw = new DatabaseSync(file);
+  raw.exec('ALTER TABLE orders DROP COLUMN crm_status');
+  raw.exec('ALTER TABLE orders DROP COLUMN ttn_crm_synced');
+  raw.exec('ALTER TABLE payments DROP COLUMN modified_at');
+  raw.close();
+
+  const upgraded = openStore(file);
+  assert.deepEqual(upgraded.statusDrift(), [], 'старі статуси не відправляються в KeyCRM повторно (інакше перезапишуться зміни менеджерів)');
+  assert.deepEqual(upgraded.ttnNotInCrm(), [], 'старі ТТН не дописуються в KeyCRM повторно');
+  // Нові зміни після оновлення синхронізуються як звичайно
+  upgraded.setStatus(1, 'confirmed', 'Оля', 20);
+  assert.equal(upgraded.statusDrift().length, 1);
+  upgraded.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});

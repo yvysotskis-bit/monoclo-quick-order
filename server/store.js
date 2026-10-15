@@ -81,6 +81,10 @@ function migrate(db) {
   for (const [name, type] of Object.entries(ADDED_COLUMNS)) {
     if (!existing.has(name)) db.exec(`ALTER TABLE orders ADD COLUMN ${name} ${type}`);
   }
+  // Колонки синхронізації з'явились уже після появи замовлень: для наявних замовлень вважаємо стан у KeyCRM актуальним.
+  // Інакше після оновлення старі статуси й ТТН були б повторно відправлені й перезаписали б зміни менеджерів у KeyCRM.
+  if (!existing.has('crm_status')) db.exec('UPDATE orders SET crm_status = status');
+  if (!existing.has('ttn_crm_synced')) db.exec('UPDATE orders SET ttn_crm_synced = 1 WHERE ttn_number IS NOT NULL');
   db.exec('CREATE INDEX IF NOT EXISTS orders_invoice ON orders (pay_invoice_id)');
   const paymentColumns = new Set(db.prepare('PRAGMA table_info(payments)').all().map((c) => c.name));
   if (!paymentColumns.has('modified_at')) db.exec('ALTER TABLE payments ADD COLUMN modified_at INTEGER');
