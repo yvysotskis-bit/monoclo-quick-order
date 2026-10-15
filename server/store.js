@@ -385,6 +385,11 @@ export class Store {
     };
   }
 
+  // Узгоджений знімок бази в окремий файл (безпечно при активних записах)
+  snapshot(file) {
+    this.db.exec(`VACUUM INTO '${String(file).replace(/'/g, "''")}'`);
+  }
+
   getMeta(key) {
     return this.db.prepare('SELECT value FROM meta WHERE key = ?').get(key)?.value ?? null;
   }

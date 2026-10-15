@@ -97,7 +97,7 @@ export function mockFetch({ productResponse } = {}) {
   let messageId = 100;
   const fn = async (url, init = {}) => {
     const u = String(url);
-    const call = { url: u, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null, headers: init.headers };
+    const call = { url: u, method: init.method || 'GET', body: typeof init.body === 'string' ? JSON.parse(init.body) : (init.body ?? null), headers: init.headers };
     calls.push(call);
     if (u.startsWith('https://store.test/products/')) {
       if (productResponse === 404) return new Response('{}', { status: 404 });

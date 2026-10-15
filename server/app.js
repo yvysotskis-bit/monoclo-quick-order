@@ -3,6 +3,7 @@ import { verifyProxySignature } from './proxy-signature.js';
 import { validateSubmission } from './validate.js';
 import { fetchProduct, optionPairs } from './shopify-product.js';
 import { createTelegram } from './telegram.js';
+import { createBackup } from './backup.js';
 import { createKeycrm } from './keycrm.js';
 import { createNovaPoshta } from './novaposhta.js';
 import { createTtnService } from './ttn.js';
@@ -100,6 +101,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     chatId: config.telegramChatId,
     fetchFn,
   });
+  const backup = createBackup({ config, store, telegram, fetchFn, now, log });
   const keycrm = config.keycrmToken
     ? createKeycrm({
       token: config.keycrmToken,
@@ -788,6 +790,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       ['prompts', async () => store.pruneOldPrompts(date.getTime() - PROMPT_TTL_MS)],
       ['reminders', () => sendReminders(date)],
       ['report', () => sendWeeklyReport(date)],
+      ['backup', () => backup.run()],
     ];
     for (const [name, run] of stages) {
       try {

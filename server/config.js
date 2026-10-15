@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 
 function parseJson(raw, name) {
   if (!raw) return {};
@@ -35,6 +36,7 @@ export function loadConfig(env = process.env) {
   };
 
   const shop = required('SHOPIFY_SHOP');
+  const dbPath = optional('DB_PATH') || (fs.existsSync('/data') ? '/data/quick-order.db' : './data/quick-order.db');
   return {
     port: number('PORT', 3000),
     shop,
@@ -52,7 +54,7 @@ export function loadConfig(env = process.env) {
     publicUrl: (optional('PUBLIC_URL') || optional('RENDER_EXTERNAL_URL')).replace(/\/+$/, ''),
 
     // База: на Render підключіть Disk з Mount Path /data, інакше дані губляться при перезапуску
-    dbPath: optional('DB_PATH') || (fs.existsSync('/data') ? '/data/quick-order.db' : './data/quick-order.db'),
+    dbPath,
     workerIntervalMs: number('WORKER_INTERVAL_SECONDS', 30) * 1000,
 
     // KeyCRM (необовʼязково: без ключа замовлення йдуть лише в Telegram)
@@ -92,5 +94,12 @@ export function loadConfig(env = process.env) {
     // Тижневий звіт: день тижня (1 = понеділок) і година за київським часом
     reportDay: number('REPORT_DAY', 1),
     reportHour: number('REPORT_HOUR', 9),
+
+    // Щоденна резервна копія бази: на диск (BACKUP_DIR, за замовчуванням поруч із базою) і, за наявності,
+    // у приватний чат Telegram (BACKUP_CHAT_ID). BACKUP_HOUR — година за київським часом.
+    backupHour: number('BACKUP_HOUR', 4),
+    backupKeep: number('BACKUP_KEEP', 7),
+    backupChatId: optional('BACKUP_CHAT_ID'),
+    backupDir: optional('BACKUP_DIR') || (dbPath === ':memory:' ? '' : path.join(path.dirname(dbPath), 'backups')),
   };
 }
