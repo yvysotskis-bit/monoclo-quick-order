@@ -925,7 +925,7 @@ p{margin:8px 0;color:#555}</style></head>
           return res.end();
         }
         res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'cache-control': 'no-store' });
-        return res.end(conversions.googleAdsCsv());
+        return res.end(conversions.googleAdsCsv(url.searchParams.get('format') === 'legacy' ? 'legacy' : 'data_manager'));
       }
       if (req.method === 'POST' && url.pathname === '/proxy/submit') return send(200, await submit(req, url));
       if (req.method === 'POST' && url.pathname === '/telegram/webhook') return send(200, await telegramWebhook(req));

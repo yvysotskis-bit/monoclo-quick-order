@@ -222,9 +222,26 @@ test('CSV для Google Ads: лише з паролем, лише покупки
   const res = await call(app, { method: 'GET', url, headers: { authorization: `Basic ${good}` } });
   assert.equal(res.status, 200);
   const lines = res.text.trim().split('\n');
-  assert.equal(lines[0], 'Parameters:TimeZone=+0000');
-  assert.equal(lines[1], 'Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency');
-  assert.equal(lines[2], 'Cj0KCQjwgclid123,Quick order purchase,2025-10-05 12:00:00,1780.00,UAH');
+  // Менеджер даних: перший рядок — заголовок з назвами колонок, без службового рядка Parameters
+  assert.equal(lines[0], 'gclid,gbraid,wbraid,conversion_time,conversion_value,currency_code,order_id,conversion_name');
+  assert.equal(lines[1], 'Cj0KCQjwgclid123,,,2025-10-05T12:00:00+00:00,1780.00,UAH,quick-20251005-150000,Quick order purchase');
+
+  // Старий формат «Завантаження → Розклади» лишається за ?format=legacy
+  const legacy = await call(app, { method: 'GET', url: `${url}?format=legacy`, headers: { authorization: `Basic ${good}` } });
+  const old = legacy.text.trim().split('\n');
+  assert.equal(old[0], 'Parameters:TimeZone=+0000');
+  assert.equal(old[1], 'Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency');
+  assert.equal(old[2], 'Cj0KCQjwgclid123,Quick order purchase,2025-10-05 12:00:00,1780.00,UAH');
+});
+
+test('CSV: кліки з iOS без gclid ідуть через gbraid/wbraid, без кліку рядка немає', () => {
+  const row = (ads, n) => ({ order_number: n, conv_at: 0, conv_value_cents: 100, data: { ads } });
+  const csv = buildGoogleAdsCsv([row({ gbraid: 'GB123456' }, 'a'), row({ wbraid: 'WB123456' }, 'b'), row({}, 'c'), row({ gclid: 'G1', gbraid: 'GB2' }, 'd')], { conversionName: 'Q' });
+  const lines = csv.trim().split('\n');
+  assert.equal(lines.length, 4);
+  assert.equal(lines[1], ',GB123456,,1970-01-01T00:00:00+00:00,1.00,UAH,quick-a,Q');
+  assert.equal(lines[2], ',,WB123456,1970-01-01T00:00:00+00:00,1.00,UAH,quick-b,Q');
+  assert.equal(lines[3], 'G1,,,1970-01-01T00:00:00+00:00,1.00,UAH,quick-d,Q');
 });
 
 test('CSV вимкнений, якщо не задано пароль', async () => {
@@ -274,8 +291,10 @@ test('правило покупки: потрібні і оплата, і ТТН
 });
 
 test('CSV: значення з комою чи лапками екрануються', () => {
-  const csv = buildGoogleAdsCsv([{ conv_at: 0, conv_value_cents: 100, data: { ads: { gclid: 'abc' } } }], { conversionName: 'Buy, "quick"' });
-  assert.match(csv, /abc,"Buy, ""quick""",1970-01-01 00:00:00,1\.00,UAH/);
+  const csv = buildGoogleAdsCsv([{ order_number: 'x', conv_at: 0, conv_value_cents: 100, data: { ads: { gclid: 'abc' } } }], { conversionName: 'Buy, "quick"' });
+  assert.match(csv, /abc,,,1970-01-01T00:00:00\+00:00,1\.00,UAH,quick-x,"Buy, ""quick"""/);
+  const legacy = buildGoogleAdsCsv([{ conv_at: 0, conv_value_cents: 100, data: { ads: { gclid: 'abc' } } }], { conversionName: 'Buy, "quick"', format: 'legacy' });
+  assert.match(legacy, /abc,"Buy, ""quick""",1970-01-01 00:00:00,1\.00,UAH/);
 });
 
 test('без CONVERSIONS_FROM старі оплачені замовлення не йдуть у рекламу як нові покупки', async () => {
@@ -321,11 +340,11 @@ test('CSV: у тестовому режимі порожній, спам піс�
   await ctx.app.tick();
   const auth = { authorization: `Basic ${Buffer.from('googleads:feed-pass').toString('base64')}` };
   const csv = async () => (await call(ctx.app, { method: 'GET', url: '/conversions/google-ads.csv', headers: auth })).text.trim().split('\n');
-  assert.equal((await csv()).length, 2, 'лише заголовок');
+  assert.equal((await csv()).length, 1, 'лише заголовок');
   ctx.config.conversions.dryRun = false;
-  assert.equal((await csv()).length, 3);
-  ctx.store.setStatus(1, 'spam', 'Оля', ctx.now().getTime());
   assert.equal((await csv()).length, 2);
+  ctx.store.setStatus(1, 'spam', 'Оля', ctx.now().getTime());
+  assert.equal((await csv()).length, 1);
 });
 
 test('тестовий режим не застрягає на перших 10 покупках', async () => {
