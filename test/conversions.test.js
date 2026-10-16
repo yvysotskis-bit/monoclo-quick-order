@@ -244,6 +244,16 @@ test('CSV: кліки з iOS без gclid ідуть через gbraid/wbraid, �
   assert.equal(lines[3], 'G1,,,1970-01-01T00:00:00+00:00,1.00,UAH,quick-d,Q');
 });
 
+test('CSV доступний і за другою адресою (для нового підключення в Google Ads)', async () => {
+  const { app } = await setup();
+  const url = '/conversions/quick-order-purchases.csv';
+  assert.equal((await call(app, { method: 'GET', url })).status, 401);
+  const good = Buffer.from('googleads:feed-pass').toString('base64');
+  const res = await call(app, { method: 'GET', url, headers: { authorization: `Basic ${good}` } });
+  assert.equal(res.status, 200);
+  assert.match(res.text, /^gclid,gbraid,wbraid,conversion_time/);
+});
+
 test('CSV вимкнений, якщо не задано пароль', async () => {
   const { app } = await setup({ cfg: { conversions: conv({ gadsFeedPassword: '' }) } });
   assert.equal((await call(app, { method: 'GET', url: '/conversions/google-ads.csv' })).status, 404);

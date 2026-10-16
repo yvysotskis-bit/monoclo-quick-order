@@ -915,7 +915,9 @@ p{margin:8px 0;color:#555}</style></head>
       }
       const np = req.method === 'GET' && /^\/proxy\/np\/(cities|points|streets)$/.exec(url.pathname);
       if (np) return send(200, await novaPoshtaLookup(req, url, np[1]));
-      if (req.method === 'GET' && url.pathname === '/conversions/google-ads.csv') {
+      // Друга адреса того самого файлу: Менеджер даних Google Ads запам'ятовує заголовок за адресою,
+      // тож нова адреса змушує його прочитати колонки наново
+      if (req.method === 'GET' && (url.pathname === '/conversions/google-ads.csv' || url.pathname === '/conversions/quick-order-purchases.csv')) {
         const c = config.conversions;
         if (!conversions.enabled || !c?.gadsFeedPassword) return send(404, { ok: false, code: 'not_found' });
         const [scheme, encoded] = String(req.headers.authorization || '').split(' ');
