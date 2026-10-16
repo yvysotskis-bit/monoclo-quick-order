@@ -820,7 +820,9 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const stuckSeconds = oldest ? Math.round((nowMs - oldest) / 1000) : 0;
     // 503, якщо замовлення застрягло в черзі: моніторинг одразу сповістить
     const ok = stuckSeconds < STUCK_ALERT_SEC;
-    const purchases = conversions.enabled ? { purchases: store.conversionCounts() } : {};
+    const purchases = conversions.enabled
+      ? { purchases: store.conversionCounts(), conversions: conversions.diagnostics() }
+      : {};
     return { code: ok ? 200 : 503, body: { ok, db: true, ...counts, stuck_seconds: stuckSeconds, ...purchases } };
   }
 

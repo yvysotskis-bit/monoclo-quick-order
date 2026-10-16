@@ -222,6 +222,12 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
   const metaOn = () => Boolean(c.metaDatasetId && c.metaToken);
   const gaOn = () => Boolean(c.gaMeasurementId && c.gaApiSecret);
 
+  // Діагностика для /status: чому покупки не зараховуються (без персональних даних і секретів)
+  const diag = { lastErrors: {}, lastQualify: null, lastCrmPoll: null };
+  const noteError = (key, err) => {
+    diag.lastErrors[key] = { at: new Date(now().getTime()).toISOString(), message: String(err?.message || err).slice(0, 200) };
+  };
+
   async function readCrm(order) {
     if (!keycrm || !order.crm_order_id) return null;
     return keycrm.getOrderState(order.crm_order_id);
@@ -243,18 +249,26 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
   async function qualify() {
     const nowMs = now().getTime();
     const since = Math.max(nowMs - c.lookbackDays * DAY, startFrom(nowMs));
-    for (const order of store.conversionCandidates(nowMs, since, c.checksPerTick)) {
+    const reasons = {};
+    const candidates = store.conversionCandidates(nowMs, since, c.checksPerTick);
+    diag.lastTick = new Date(nowMs).toISOString();
+    diag.since = new Date(since).toISOString();
+    // Останню перевірку, де справді були замовлення, не затираємо порожніми циклами
+    if (candidates.length) diag.lastQualify = { at: new Date(nowMs).toISOString(), checked: candidates.length, reasons };
+    for (const order of candidates) {
       store.markConversionChecked(order.id, nowMs);
       const localPaidCents = store.paidTotal(order.id);
       // KeyCRM питаємо лише тоді, коли там може бути щось, чого не знає сервер, або щоб перевірити статус перед зарахуванням
       let crm = null;
       // Замовлення ще не в KeyCRM: без перевірки статусу не зараховуємо (повторимо в наступній перевірці)
-      if (keycrm && !order.crm_order_id) continue;
+      if (keycrm && !order.crm_order_id) { reasons.no_crm_order = (reasons.no_crm_order || 0) + 1; continue; }
       if (keycrm) {
         try {
           crm = await readCrm(order);
         } catch (err) {
           log.error('conversion: keycrm read failed', err.message);
+          noteError('keycrm_read', err);
+          reasons.keycrm_error = (reasons.keycrm_error || 0) + 1;
           if (err.status === 429) break; // ліміт KeyCRM: решту перевіримо в наступному циклі
           continue; // без перевірки статусу в KeyCRM не зараховуємо (тест або «некоректні дані» не мають піти в рекламу)
         }
@@ -266,7 +280,8 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
         excludeStatusIds: c.excludeStatusIds,
         excludeStatusGroupIds: c.excludeStatusGroupIds,
       });
-      if (!verdict.ok) continue;
+      if (!verdict.ok) { reasons[verdict.reason] = (reasons[verdict.reason] || 0) + 1; continue; }
+      reasons.qualified = (reasons.qualified || 0) + 1;
       if (store.markConversion(order.id, nowMs, verdict.valueCents)) {
         log.log(JSON.stringify({ event: 'purchase_qualified', number: order.order_number, value: verdict.valueCents / 100 }));
       }
@@ -282,6 +297,8 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
     if (nowMs - Number(store.getMeta('crm_sources_polled_at') || 0) < CRM_POLL_MS) return;
     store.setMeta('crm_sources_polled_at', nowMs);
     const since = Math.max(nowMs - c.lookbackDays * DAY, startFrom(nowMs));
+    const reasons = {};
+    diag.lastCrmPoll = { at: new Date(nowMs).toISOString(), since: new Date(since).toISOString(), seen: 0, reasons };
     // Джерело швидких замовлень обробляється окремо (з оплатою й ТТН із бота): тут його пропускаємо, щоб не було дублів
     for (const sourceId of c.crmSourceIds.filter((id) => id !== Number(config.keycrmSourceId))) {
       for (let page = 1; page <= 10; page += 1) {
@@ -291,15 +308,20 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
           result = await keycrm.listOrders({ sourceId, from: utcStamp(since - DAY), to: utcStamp(nowMs + DAY), page });
         } catch (err) {
           log.error('conversion: keycrm list failed', err.message);
+          noteError('keycrm_list', err);
           return;
         }
+        diag.lastCrmPoll.seen += result.orders.length;
+        const count = (k) => { reasons[k] = (reasons[k] || 0) + 1; };
         for (const o of result.orders) {
-          if (!o?.id || store.hasCrmPurchase(o.id)) continue;
-          if (Number(o.source_id) && Number(o.source_id) !== Number(sourceId)) continue;
+          if (!o?.id) continue;
+          if (store.hasCrmPurchase(o.id)) { count('already_counted'); continue; }
+          if (Number(o.source_id) && Number(o.source_id) !== Number(sourceId)) { count('other_source'); continue; }
           const created = Date.parse(String(o.created_at || '').replace(' ', 'T'));
-          if (Number.isFinite(created) && created < since) continue;
+          if (Number.isFinite(created) && created < since) { count('before_start'); continue; }
           const verdict = evaluateCrmOrder(o, c);
-          if (!verdict.ok) continue;
+          if (!verdict.ok) { count(verdict.reason); continue; }
+          count('qualified');
           const event = buildCrmMetaEvent(o, { valueCents: verdict.valueCents, eventTimeMs: nowMs });
           if (store.insertCrmPurchase({ crmOrderId: o.id, sourceId, convAt: nowMs, valueCents: verdict.valueCents, event })) {
             log.log(JSON.stringify({ event: 'purchase_qualified', crm_order: o.id, source: sourceId, value: verdict.valueCents / 100 }));
@@ -335,6 +357,7 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
         log.log(JSON.stringify({ event: 'purchase_sent', channel: 'meta', crm_order: row.crm_order_id }));
       } catch (err) {
         log.error('conversion: meta (crm) failed', err.message);
+        noteError('meta_crm', err);
         const attempt = store.markCrmPurchaseFailed(row.crm_order_id, err.message, nowMs);
         if (attempt === 5 && notify) {
           await notify(`⚠️ Покупку з KeyCRM #${row.crm_order_id} не вдається передати в Meta: ${String(err.message).slice(0, 150)}. Сервер повторює спроби.`).catch(() => {});
@@ -404,6 +427,7 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
           await send(order, nowMs);
         } catch (err) {
           log.error(`conversion: ${channel} failed`, err.message);
+          noteError(channel, err);
           const attempt = store.markConversionFailed(channel, order.id, err.message, nowMs);
           // Один раз на збій попереджаємо менеджерів: найчастіша причина — протермінований токен
           if (attempt === 5 && notify) {
@@ -434,5 +458,21 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
     tick,
     googleAdsCsv,
     get enabled() { return Boolean(c.enabled); },
+    diagnostics() {
+      return {
+        dry_run: Boolean(c.dryRun),
+        from: c.from ? new Date(c.from).toISOString() : null,
+        enabled_at: Number(store.getMeta('conversions_enabled_at')) ? new Date(Number(store.getMeta('conversions_enabled_at'))).toISOString() : null,
+        crm_sources: c.crmSourceIds || [],
+        meta: metaOn(),
+        ga: gaOn(),
+        google_ads_feed: Boolean(c.gadsFeedPassword),
+        since: diag.since || null,
+        last_tick: diag.lastTick || null,
+        last_qualify: diag.lastQualify,
+        last_crm_poll: diag.lastCrmPoll,
+        last_errors: diag.lastErrors,
+      };
+    },
   };
 }

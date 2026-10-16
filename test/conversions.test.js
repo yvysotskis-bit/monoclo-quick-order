@@ -270,6 +270,25 @@ test('у /status видно лічильники покупок', async () => {
   });
 });
 
+test('у /status є діагностика: звідки рахуємо, причини відмов, останні помилки (без секретів)', async () => {
+  const { app, fetchFn, store, now } = await setup();
+  fetchFn.fail.keycrm = true;
+  pay(store, now);
+  store.setTtn(1, '20451234567890', 'ref');
+  await app.tick();
+  let d = (await call(app, { method: 'GET', url: '/status' })).json.conversions;
+  assert.equal(d.dry_run, false);
+  assert.equal(d.meta, true);
+  assert.equal(d.last_qualify.reasons.keycrm_error, 1);
+  assert.match(d.last_errors.keycrm_read.message, /KeyCRM GET/);
+  assert.ok(!JSON.stringify(d).includes('META-TOKEN') && !JSON.stringify(d).includes('feed-pass'));
+  fetchFn.fail.keycrm = false;
+  now.advance(21 * 60_000);
+  await app.tick();
+  d = (await call(app, { method: 'GET', url: '/status' })).json.conversions;
+  assert.equal(d.last_qualify.reasons.qualified, 1);
+});
+
 test('рекламні ідентифікатори з форми чистяться, сміття відкидається', () => {
   assert.deepEqual(cleanAds(null), {});
   assert.deepEqual(cleanAds({
