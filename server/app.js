@@ -117,7 +117,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     : null;
 
   const ttnService = novaPoshta ? createTtnService({ np: novaPoshta, config, store, now }) : null;
-  const conversions = createConversions({ config, store, keycrm, fetchFn, now, log });
+  const conversions = createConversions({ config, store, keycrm, fetchFn, now, log, notify: (text) => telegram.sendText(text) });
 
   // Передоплата працює, лише коли є токен Monobank і публічна адреса сервера (для вебхука)
   const monobank = config.monobankToken && config.publicUrl

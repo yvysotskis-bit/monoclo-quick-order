@@ -144,7 +144,7 @@ export function buildGoogleAdsCsv(orders, { conversionName }) {
   return `${lines.join('\n')}\n`;
 }
 
-export function createConversions({ config, store, keycrm, fetchFn, now, log }) {
+export function createConversions({ config, store, keycrm, fetchFn, now, log, notify }) {
   const c = config.conversions || { enabled: false };
   const metaOn = () => Boolean(c.metaDatasetId && c.metaToken);
   const gaOn = () => Boolean(c.gaMeasurementId && c.gaApiSecret);
@@ -155,15 +155,29 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log }) 
   }
 
   // Етап 1: шукаємо замовлення, у яких уже є і оплата, і ТТН
+  // Без CONVERSIONS_FROM рахуємо лише замовлення, створені після першого ввімкнення: інакше всі оплачені
+  // замовлення за 30 днів одразу пішли б у рекламу як «нові» покупки (частину вже слала стара інтеграція KeyCRM)
+  function startFrom(nowMs) {
+    if (c.from) return c.from;
+    let first = Number(store.getMeta('conversions_enabled_at'));
+    if (!first) {
+      first = nowMs;
+      store.setMeta('conversions_enabled_at', first);
+    }
+    return first;
+  }
+
   async function qualify() {
     const nowMs = now().getTime();
-    const since = Math.max(nowMs - c.lookbackDays * DAY, c.from || 0);
+    const since = Math.max(nowMs - c.lookbackDays * DAY, startFrom(nowMs));
     for (const order of store.conversionCandidates(nowMs, since, c.checksPerTick)) {
       store.markConversionChecked(order.id, nowMs);
       const localPaidCents = store.paidTotal(order.id);
       // KeyCRM питаємо лише тоді, коли там може бути щось, чого не знає сервер, або щоб перевірити статус перед зарахуванням
       let crm = null;
-      if (keycrm && order.crm_order_id) {
+      // Замовлення ще не в KeyCRM: без перевірки статусу не зараховуємо (повторимо в наступній перевірці)
+      if (keycrm && !order.crm_order_id) continue;
+      if (keycrm) {
         try {
           crm = await readCrm(order);
         } catch (err) {
@@ -192,7 +206,9 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log }) 
       ...(c.metaTestEventCode ? { test_event_code: c.metaTestEventCode } : {}),
     };
     if (c.dryRun) {
-      log.log(JSON.stringify({ event: 'purchase_dry_run', channel: 'meta', number: order.order_number, body }));
+      // У лог без даних покупця: хеш українського номера легко підібрати
+      const safe = { ...body, data: body.data.map(({ user_data: userData, ...rest }) => ({ ...rest, user_data_keys: Object.keys(userData) })) };
+      log.log(JSON.stringify({ event: 'purchase_dry_run', channel: 'meta', number: order.order_number, body: safe }));
       store.setConversionState('meta', order.id, 'dry');
       return;
     }
@@ -212,7 +228,7 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log }) 
   async function sendGa(order, nowMs) {
     const body = buildGaPayload(order, { measurementId: c.gaMeasurementId, eventTimeMs: order.conv_at });
     if (c.dryRun) {
-      log.log(JSON.stringify({ event: 'purchase_dry_run', channel: 'ga', number: order.order_number, body }));
+      log.log(JSON.stringify({ event: 'purchase_dry_run', channel: 'ga', number: order.order_number, body: { ...body, client_id: body.client_id ? 'set' : '' } }));
       store.setConversionState('ga', order.id, 'dry');
       return;
     }
@@ -237,7 +253,7 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log }) 
       ['ga', gaOn, GA_MAX_AGE_MS, sendGa],
     ];
     for (const [channel, on, maxAge, send] of channels) {
-      for (const order of store.conversionDue(channel, nowMs).filter((o) => !(c.dryRun && o[`${channel}_state`] === 'dry'))) {
+      for (const order of store.conversionDue(channel, nowMs, { dryRun: Boolean(c.dryRun) })) {
         // Канал не налаштований: покупка чекає (якщо його підключать протягом вікна, вона піде)
         if (!on()) continue;
         if (nowMs - order.conv_at > maxAge) { store.setConversionState(channel, order.id, 'expired'); continue; }
@@ -245,8 +261,12 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log }) 
           await send(order, nowMs);
         } catch (err) {
           log.error(`conversion: ${channel} failed`, err.message);
-          // 400 від Meta = некоректна подія: повтор не допоможе, але кілька спроб лишаємо на випадок тимчасового збою токена
-          store.markConversionFailed(channel, order.id, err.message, nowMs);
+          const attempt = store.markConversionFailed(channel, order.id, err.message, nowMs);
+          // Один раз на збій попереджаємо менеджерів: найчастіша причина — протермінований токен
+          if (attempt === 5 && notify) {
+            await notify(`⚠️ Покупку #${order.order_number} не вдається передати в ${channel === 'meta' ? 'Meta' : 'GA4'}: ${String(err.message).slice(0, 150)}. Сервер повторює спроби.`)
+              .catch(() => {});
+          }
         }
       }
     }
@@ -260,7 +280,9 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log }) 
 
   // CSV для Google Ads (захищений логіном і паролем; Google Ads підтримує HTTPS-джерело з базовою автентифікацією)
   function googleAdsCsv() {
-    return buildGoogleAdsCsv(store.conversionsSince(now().getTime() - GADS_WINDOW_MS), { conversionName: c.gadsConversionName });
+    // У тестовому режимі файл порожній: заплановане завантаження Google Ads не має імпортувати тестові покупки
+    const orders = c.dryRun ? [] : store.conversionsSince(now().getTime() - GADS_WINDOW_MS);
+    return buildGoogleAdsCsv(orders, { conversionName: c.gadsConversionName });
   }
 
   return {

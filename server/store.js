@@ -403,10 +403,11 @@ export class Store {
 
   // Зараховані покупки, які ще треба відправити в канал (meta | ga). У тестовому режимі (dry) нічого не відправляється,
   // а після його вимкнення ці покупки відправляються по-справжньому.
-  conversionDue(channel, now, limit = 10) {
+  conversionDue(channel, now, { dryRun = false, limit = 10 } = {}) {
     if (!CONVERSION_CHANNELS.includes(channel)) throw new Error(`unknown channel ${channel}`);
+    const states = dryRun ? `${channel}_state IS NULL` : `(${channel}_state IS NULL OR ${channel}_state = 'dry')`;
     return this.q(
-      `SELECT * FROM orders WHERE conv_at IS NOT NULL AND (${channel}_state IS NULL OR ${channel}_state = 'dry')
+      `SELECT * FROM orders WHERE conv_at IS NOT NULL AND ${states}
          AND (${channel}_next_at IS NULL OR ${channel}_next_at <= ?) ORDER BY conv_at, id LIMIT ?`,
       now, limit,
     );
@@ -418,26 +419,28 @@ export class Store {
       state, error ? String(error).slice(0, 300) : null, id);
   }
 
-  // Збій каналу: повтор з наростаючою паузою, після maxAttempts — failed
-  markConversionFailed(channel, id, error, now, maxAttempts = 12) {
+  // Збій каналу: повтор з наростаючою паузою (30 с … 1 год), доки покупка не застаріє для каналу (тоді expired).
+  // Тривалий збій (наприклад, протермінований токен Meta) не губить покупки: після заміни токена вони підуть.
+  // Повертає номер спроби.
+  markConversionFailed(channel, id, error, now) {
     if (!CONVERSION_CHANNELS.includes(channel)) throw new Error(`unknown channel ${channel}`);
     const row = this.db.prepare(`SELECT ${channel}_attempts AS n FROM orders WHERE id = ?`).get(id);
-    const giveUp = row.n + 1 >= maxAttempts;
-    this.run(`UPDATE orders SET ${channel}_attempts = ?, ${channel}_error = ?, ${channel}_next_at = ?, ${channel}_state = ? WHERE id = ?`,
-      row.n + 1, String(error).slice(0, 300), giveUp ? null : backoff(row.n, now), giveUp ? 'failed' : null, id);
-    return giveUp;
+    this.run(`UPDATE orders SET ${channel}_attempts = ?, ${channel}_error = ?, ${channel}_next_at = ? WHERE id = ?`,
+      row.n + 1, String(error).slice(0, 300), now + Math.min(30_000 * 2 ** row.n, 3600e3), id);
+    return row.n + 1;
   }
 
   // Зараховані покупки за період (для файлу офлайн-конверсій Google Ads)
+  // Спам і скасовані після зарахування з файлу прибираються (Google Ads їх ще не імпортував або імпортує без них)
   conversionsSince(since) {
-    return this.q('SELECT * FROM orders WHERE conv_at IS NOT NULL AND conv_at >= ? ORDER BY conv_at, id', since);
+    return this.q("SELECT * FROM orders WHERE conv_at IS NOT NULL AND conv_at >= ? AND status NOT IN ('spam', 'cancelled') ORDER BY conv_at, id", since);
   }
 
   conversionCounts() {
     const row = this.db.prepare(
       `SELECT COUNT(*) AS qualified,
-         SUM(meta_state = 'sent') AS meta_sent, SUM(meta_state = 'failed') AS meta_failed,
-         SUM(ga_state = 'sent') AS ga_sent, SUM(ga_state = 'failed') AS ga_failed
+         SUM(meta_state = 'sent') AS meta_sent, SUM(meta_state IS NULL AND meta_error IS NOT NULL) AS meta_retrying,
+         SUM(ga_state = 'sent') AS ga_sent, SUM(ga_state IS NULL AND ga_error IS NOT NULL) AS ga_retrying
        FROM orders WHERE conv_at IS NOT NULL`,
     ).get();
     return Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v || 0]));

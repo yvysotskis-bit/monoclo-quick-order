@@ -10,7 +10,7 @@ const sha = (v) => crypto.createHash('sha256').update(v).digest('hex');
 const conv = (over = {}) => ({
   enabled: true,
   dryRun: false,
-  from: 0,
+  from: 1, // у тестах рахуємо всі замовлення; захист від «старих» перевіряється окремо
   lookbackDays: 30,
   checksPerTick: 3,
   excludeStatusIds: [13],
@@ -238,7 +238,7 @@ test('у /status видно лічильники покупок', async () => {
   store.setTtn(1, '20451234567890', 'ref');
   await app.tick();
   const res = await call(app, { method: 'GET', url: '/status' });
-  assert.deepEqual(res.json.purchases, { qualified: 1, meta_sent: 1, meta_failed: 0, ga_sent: 1, ga_failed: 0 });
+  assert.deepEqual(res.json.purchases, { qualified: 1, meta_sent: 1, meta_retrying: 0, ga_sent: 1, ga_retrying: 0 });
 });
 
 test('рекламні ідентифікатори з форми чистяться, сміття відкидається', () => {
@@ -274,4 +274,83 @@ test('правило покупки: потрібні і оплата, і ТТН
 test('CSV: значення з комою чи лапками екрануються', () => {
   const csv = buildGoogleAdsCsv([{ conv_at: 0, conv_value_cents: 100, data: { ads: { gclid: 'abc' } } }], { conversionName: 'Buy, "quick"' });
   assert.match(csv, /abc,"Buy, ""quick""",1970-01-01 00:00:00,1\.00,UAH/);
+});
+
+test('без CONVERSIONS_FROM старі оплачені замовлення не йдуть у рекламу як нові покупки', async () => {
+  const { app, fetchFn, store, now } = await setup({ cfg: { conversions: conv({ from: 0 }) } });
+  pay(store, now);
+  store.setTtn(1, '20451234567890', 'ref');
+  now.advance(60_000);
+  await app.tick(); // перше ввімкнення: замовлення створене раніше
+  now.advance(25 * 60_000);
+  await app.tick();
+  assert.equal(store.getOrder(1).conv_at, null);
+  assert.equal(fetchFn.meta().length, 0);
+
+  // А нове замовлення після ввімкнення зараховується
+  const res = await submit(app, goodBody({ phone: '+380 (50) 765 43 21', client_id: 'client-id-0002' }));
+  assert.equal(res.status, 200);
+  const id = store.ordersSince(0).at(-1).id;
+  const pid = store.insertPayment({ orderId: id, invoiceId: 'inv-new', amount: 20000, kind: 'prepay', url: 'u', createdAt: now().getTime() });
+  store.setPaymentStatus(pid, 'success', now().getTime());
+  store.setTtn(id, '20450000000002', 'ref2');
+  await app.tick(); // KeyCRM-замовлення для нового створюється в цьому ж циклі
+  now.advance(21 * 60_000);
+  await app.tick();
+  assert.ok(store.getOrder(id).conv_at);
+  assert.equal(fetchFn.meta().length, 1);
+});
+
+test('замовлення ще не потрапило в KeyCRM: статус не перевірено, покупку не зараховуємо', async () => {
+  const { app, fetchFn, store, now } = await setup();
+  store.run('UPDATE orders SET crm_order_id = NULL, crm_state = ? WHERE id = 1', 'failed');
+  store.run('UPDATE orders SET crm_next_at = ? WHERE id = 1', now().getTime() + 3600e3);
+  pay(store, now);
+  store.setTtn(1, '20451234567890', 'ref');
+  await app.tick();
+  assert.equal(store.getOrder(1).conv_at, null);
+  assert.equal(fetchFn.meta().length, 0);
+});
+
+test('CSV: у тестовому режимі порожній, спам після зарахування прибирається', async () => {
+  const ctx = await setup({ cfg: { conversions: conv({ dryRun: true }) } });
+  pay(ctx.store, ctx.now);
+  ctx.store.setTtn(1, '20451234567890', 'ref');
+  await ctx.app.tick();
+  const auth = { authorization: `Basic ${Buffer.from('googleads:feed-pass').toString('base64')}` };
+  const csv = async () => (await call(ctx.app, { method: 'GET', url: '/conversions/google-ads.csv', headers: auth })).text.trim().split('\n');
+  assert.equal((await csv()).length, 2, 'лише заголовок');
+  ctx.config.conversions.dryRun = false;
+  assert.equal((await csv()).length, 3);
+  ctx.store.setStatus(1, 'spam', 'Оля', ctx.now().getTime());
+  assert.equal((await csv()).length, 2);
+});
+
+test('тестовий режим не застрягає на перших 10 покупках', async () => {
+  const ctx = await setup({ cfg: { conversions: conv({ dryRun: true }) } });
+  for (let i = 0; i < 11; i += 1) {
+    const id = ctx.store.insertOrder({ orderNumber: `T-${i}`, fingerprint: `f${i}`, createdAt: ctx.now().getTime(), data: ctx.store.getOrder(1).data }).id;
+    ctx.store.markConversion(id, ctx.now().getTime(), 100);
+  }
+  await ctx.app.tick();
+  await ctx.app.tick();
+  const dry = ctx.store.ordersSince(0).filter((o) => o.meta_state === 'dry').length;
+  assert.equal(dry, 11);
+});
+
+test('тривалий збій Meta не губить покупку: повтори тривають, менеджерів попереджено один раз', async () => {
+  const { app, fetchFn, store, now } = await setup();
+  pay(store, now);
+  store.setTtn(1, '20451234567890', 'ref');
+  fetchFn.fail.meta = true;
+  for (let i = 0; i < 20; i += 1) {
+    await app.tick();
+    now.advance(3600e3);
+  }
+  assert.equal(store.getOrder(1).meta_state, null, 'ще не здалися');
+  const warnings = fetchFn.tg('sendMessage').filter((c) => /не вдається передати в Meta/.test(c.body.text));
+  assert.equal(warnings.length, 1);
+  fetchFn.fail.meta = false;
+  await app.tick();
+  assert.equal(store.getOrder(1).meta_state, 'sent');
 });
