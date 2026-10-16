@@ -119,9 +119,14 @@ export function buildGaPayload(order, { measurementId, eventTimeMs }) {
   };
 }
 
-// Час у форматі Google Ads (UTC, бо у файлі вказано TimeZone=+0000)
+// Час у форматі старого імпорту Google Ads (UTC, бо у файлі вказано TimeZone=+0000)
 function gadsTime(ms) {
   return new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
+}
+
+// ISO 8601 зі зміщенням: Менеджер даних Google Ads розпізнає часовий пояс сам
+function isoTime(ms) {
+  return new Date(ms).toISOString().replace(/\.\d{3}Z$/, '+00:00');
 }
 
 const csvCell = (value) => {
@@ -129,17 +134,34 @@ const csvCell = (value) => {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
-// Файл для «Завантаження → Розклади» в Google Ads. Той самий gclid + назва + час не рахується двічі,
+// Файл офлайн-конверсій для Google Ads. Той самий клік + дія + час не рахується двічі,
 // тому час покупки фіксований (conv_at) і щоденне повторне завантаження не дублює конверсії.
-export function buildGoogleAdsCsv(orders, { conversionName }) {
-  const lines = [
-    'Parameters:TimeZone=+0000',
-    'Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency',
-  ];
+// format 'data_manager' (за замовчуванням): звичайний CSV із заголовком, поля зіставляються в Менеджері даних
+//   (джерело HTTPS); є order_id (ідентифікатор транзакції) і gbraid/wbraid для кліків з iOS.
+// format 'legacy': шаблон старого «Завантаження → Розклади» (Parameters:TimeZone + англійські назви колонок).
+export function buildGoogleAdsCsv(orders, { conversionName, format = 'data_manager' }) {
+  if (format === 'legacy') {
+    const lines = [
+      'Parameters:TimeZone=+0000',
+      'Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency',
+    ];
+    for (const order of orders) {
+      const gclid = order.data.ads?.gclid;
+      if (!gclid) continue;
+      lines.push([gclid, conversionName, gadsTime(order.conv_at), (order.conv_value_cents / 100).toFixed(2), 'UAH'].map(csvCell).join(','));
+    }
+    return `${lines.join('\n')}\n`;
+  }
+  const lines = ['gclid,gbraid,wbraid,conversion_time,conversion_value,currency_code,order_id,conversion_name'];
   for (const order of orders) {
-    const gclid = order.data.ads?.gclid;
-    if (!gclid) continue;
-    lines.push([gclid, conversionName, gadsTime(order.conv_at), (order.conv_value_cents / 100).toFixed(2), 'UAH'].map(csvCell).join(','));
+    const ads = order.data.ads || {};
+    if (!ads.gclid && !ads.gbraid && !ads.wbraid) continue;
+    // Один ідентифікатор кліку на рядок: gclid має пріоритет, gbraid/wbraid — для iOS без gclid
+    const gclid = ads.gclid || '';
+    const gbraid = gclid ? '' : ads.gbraid || '';
+    const wbraid = gclid || gbraid ? '' : ads.wbraid || '';
+    lines.push([gclid, gbraid, wbraid, isoTime(order.conv_at), (order.conv_value_cents / 100).toFixed(2), 'UAH',
+      `quick-${order.order_number}`, conversionName].map(csvCell).join(','));
   }
   return `${lines.join('\n')}\n`;
 }
@@ -395,10 +417,10 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
   }
 
   // CSV для Google Ads (захищений логіном і паролем; Google Ads підтримує HTTPS-джерело з базовою автентифікацією)
-  function googleAdsCsv() {
+  function googleAdsCsv(format) {
     // У тестовому режимі файл порожній: заплановане завантаження Google Ads не має імпортувати тестові покупки
     const orders = c.dryRun ? [] : store.conversionsSince(now().getTime() - GADS_WINDOW_MS);
-    return buildGoogleAdsCsv(orders, { conversionName: c.gadsConversionName });
+    return buildGoogleAdsCsv(orders, { conversionName: c.gadsConversionName, format });
   }
 
   return {

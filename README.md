@@ -152,8 +152,10 @@ Telegram і в KeyCRM (служба доставки, місто, область
   cookie `_fbc`/`_fbp` і user-agent з форми. Подія має бути не старшою за 7 днів.
 - **GA4 Measurement Protocol:** `purchase` з `transaction_id` = `quick-<номер>`, client_id і session_id із cookie,
   щоб покупка прив'язалась до рекламної сесії. Не старша за 72 години.
-- **Google Ads:** `GET /conversions/google-ads.csv` (логін і пароль) — офлайн-конверсії за gclid за 63 дні.
-  Google Ads сам забирає файл щодня («Завантаження → Розклади → HTTPS»); той самий клік повторно не рахується.
+- **Google Ads:** `GET /conversions/google-ads.csv` (логін і пароль) — офлайн-конверсії за gclid/gbraid/wbraid за 63 дні.
+  Google Ads сам забирає файл щодня (Інструменти → Менеджер даних → HTTPS → Конверсії → офлайн). Колонки:
+  `gclid, gbraid, wbraid, conversion_time (ISO з часовим поясом), conversion_value, currency_code, order_id, conversion_name`.
+  Той самий клік повторно не рахується. Старий шаблон «Завантаження → Розклади» — `?format=legacy`.
 
 Форма тепер зберігає значення gclid/gbraid/wbraid і fbclid (60 днів), а при відправці додає cookie `_fbc`, `_fbp`,
 `_ga`, `_ga_<потік>` і user-agent (gbraid/wbraid поки лише зберігаються, у файл Google Ads не потрапляють).
