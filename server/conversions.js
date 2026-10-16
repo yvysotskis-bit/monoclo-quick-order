@@ -144,6 +144,50 @@ export function buildGoogleAdsCsv(orders, { conversionName }) {
   return `${lines.join('\n')}\n`;
 }
 
+// Покупка із замовлення KeyCRM іншого джерела (Instagram Direct): оплата + ТТН, без скасованих і вже відправлених
+// старою інтеграцією (тег CAPI). Повертає { ok, valueCents } або причину відмови.
+export function evaluateCrmOrder(o, { excludeStatusIds = [], excludeStatusGroupIds = [] } = {}) {
+  if (excludeStatusIds.includes(Number(o.status_id))) return { ok: false, reason: 'crm_status' };
+  if (excludeStatusGroupIds.includes(Number(o.status_group_id))) return { ok: false, reason: 'crm_status_group' };
+  const tags = Array.isArray(o.tags) ? o.tags : [];
+  if (tags.some((t) => /^capi$/i.test(String(t.alias || t.name || '')))) return { ok: false, reason: 'already_sent' };
+  const paidUah = (Array.isArray(o.payments) ? o.payments : [])
+    .filter((p) => String(p.status || '').toLowerCase() === 'paid')
+    .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  if (paidUah <= 0) return { ok: false, reason: 'not_paid' };
+  if (!String(o.shipping?.tracking_code || '').trim()) return { ok: false, reason: 'no_ttn' };
+  const totalUah = Number(o.grand_total) || paidUah;
+  return { ok: true, valueCents: Math.round(totalUah * 100) };
+}
+
+export function buildCrmMetaEvent(o, { valueCents, eventTimeMs }) {
+  const phone = phoneDigits(o.buyer?.phone || o.shipping?.recipient_phone);
+  const fullName = String(o.buyer?.full_name || o.shipping?.recipient_full_name || '').trim();
+  // KeyCRM пише «Прізвище Ім'я» або «Ім'я Прізвище» — порядок невідомий, тож хешуємо лише як є перші два слова
+  const [first, second] = fullName.split(/\s+/);
+  const userData = { country: [sha256('ua')] };
+  if (phone) { userData.ph = [sha256(phone)]; userData.external_id = [sha256(phone)]; }
+  if (first) userData.fn = [sha256(norm(first))];
+  if (second) userData.ln = [sha256(norm(second))];
+  const city = norm(String(o.shipping?.shipping_address_city || '').replace(/^(м\.|с\.|смт)\s*/i, '')).replace(/[^\p{L}]/gu, '');
+  if (city) userData.ct = [sha256(city)];
+  const products = Array.isArray(o.products) ? o.products : [];
+  return {
+    event_name: 'Purchase',
+    event_time: Math.floor(eventTimeMs / 1000),
+    event_id: `keycrm-${o.id}`,
+    action_source: 'system_generated',
+    user_data: userData,
+    custom_data: {
+      currency: 'UAH',
+      value: valueCents / 100,
+      order_id: `keycrm-${o.id}`,
+      content_type: 'product',
+      num_items: products.reduce((n, p) => n + (Number(p.quantity) || 0), 0) || 1,
+    },
+  };
+}
+
 export function createConversions({ config, store, keycrm, fetchFn, now, log, notify }) {
   const c = config.conversions || { enabled: false };
   const metaOn = () => Boolean(c.metaDatasetId && c.metaToken);
@@ -196,6 +240,76 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
       if (!verdict.ok) continue;
       if (store.markConversion(order.id, nowMs, verdict.valueCents)) {
         log.log(JSON.stringify({ event: 'purchase_qualified', number: order.order_number, value: verdict.valueCents / 100 }));
+      }
+    }
+  }
+
+  // Інші джерела KeyCRM (Instagram Direct): раз на 15 хв переглядаємо замовлення за вікно й зараховуємо оплачені з ТТН
+  const CRM_POLL_MS = 15 * 60_000;
+  const utcStamp = (ms) => new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
+  async function qualifyCrmSources() {
+    if (!keycrm || !c.crmSourceIds?.length) return;
+    const nowMs = now().getTime();
+    if (nowMs - Number(store.getMeta('crm_sources_polled_at') || 0) < CRM_POLL_MS) return;
+    store.setMeta('crm_sources_polled_at', nowMs);
+    const since = Math.max(nowMs - c.lookbackDays * DAY, startFrom(nowMs));
+    // Джерело швидких замовлень обробляється окремо (з оплатою й ТТН із бота): тут його пропускаємо, щоб не було дублів
+    for (const sourceId of c.crmSourceIds.filter((id) => id !== Number(config.keycrmSourceId))) {
+      for (let page = 1; page <= 10; page += 1) {
+        let result;
+        try {
+          // Запас у добу з обох боків: часовий пояс фільтра KeyCRM не гарантований, точну межу перевіряємо нижче
+          result = await keycrm.listOrders({ sourceId, from: utcStamp(since - DAY), to: utcStamp(nowMs + DAY), page });
+        } catch (err) {
+          log.error('conversion: keycrm list failed', err.message);
+          return;
+        }
+        for (const o of result.orders) {
+          if (!o?.id || store.hasCrmPurchase(o.id)) continue;
+          if (Number(o.source_id) && Number(o.source_id) !== Number(sourceId)) continue;
+          const created = Date.parse(String(o.created_at || '').replace(' ', 'T'));
+          if (Number.isFinite(created) && created < since) continue;
+          const verdict = evaluateCrmOrder(o, c);
+          if (!verdict.ok) continue;
+          const event = buildCrmMetaEvent(o, { valueCents: verdict.valueCents, eventTimeMs: nowMs });
+          if (store.insertCrmPurchase({ crmOrderId: o.id, sourceId, convAt: nowMs, valueCents: verdict.valueCents, event })) {
+            log.log(JSON.stringify({ event: 'purchase_qualified', crm_order: o.id, source: sourceId, value: verdict.valueCents / 100 }));
+          }
+        }
+        if (!result.hasMore) break;
+      }
+    }
+  }
+
+  async function deliverCrmPurchases() {
+    const nowMs = now().getTime();
+    if (!metaOn()) return;
+    for (const row of store.crmPurchasesDue(nowMs, { dryRun: Boolean(c.dryRun) })) {
+      if (nowMs - row.conv_at > META_MAX_AGE_MS) { store.setCrmPurchaseState(row.crm_order_id, 'expired'); continue; }
+      const body = { data: [row.event], ...(c.metaTestEventCode ? { test_event_code: c.metaTestEventCode } : {}) };
+      if (c.dryRun) {
+        log.log(JSON.stringify({ event: 'purchase_dry_run', channel: 'meta', crm_order: row.crm_order_id, value: row.value_cents / 100 }));
+        store.setCrmPurchaseState(row.crm_order_id, 'dry');
+        continue;
+      }
+      try {
+        const url = `https://graph.facebook.com/${c.metaApiVersion}/${encodeURIComponent(c.metaDatasetId)}/events`;
+        const res = await fetchFn(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ...body, access_token: c.metaToken }),
+          signal: AbortSignal.timeout(10000),
+        });
+        const text = await res.text();
+        if (!res.ok) throw new Error(`Meta ${res.status}: ${text.slice(0, 200)}`);
+        store.setCrmPurchaseState(row.crm_order_id, 'sent');
+        log.log(JSON.stringify({ event: 'purchase_sent', channel: 'meta', crm_order: row.crm_order_id }));
+      } catch (err) {
+        log.error('conversion: meta (crm) failed', err.message);
+        const attempt = store.markCrmPurchaseFailed(row.crm_order_id, err.message, nowMs);
+        if (attempt === 5 && notify) {
+          await notify(`⚠️ Покупку з KeyCRM #${row.crm_order_id} не вдається передати в Meta: ${String(err.message).slice(0, 150)}. Сервер повторює спроби.`).catch(() => {});
+        }
       }
     }
   }
@@ -276,6 +390,8 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
     if (!c.enabled) return;
     await qualify();
     await deliver();
+    await qualifyCrmSources();
+    await deliverCrmPurchases();
   }
 
   // CSV для Google Ads (захищений логіном і паролем; Google Ads підтримує HTTPS-джерело з базовою автентифікацією)

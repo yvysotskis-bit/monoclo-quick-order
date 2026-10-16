@@ -181,6 +181,12 @@ export function mockFetch({ productResponse } = {}) {
       const crm = fn.crmState;
       if (fn.fail.keycrm) return new Response('{"message":"boom"}', { status: 500 });
       // Пошук замовлення за source_uuid (захист від дублів) і читання оплат замовлення
+      if (call.method === 'GET' && url.pathname === '/v1/order' && url.searchParams.has('filter[source_id]')) {
+        fn.crmLists.push(Object.fromEntries(url.searchParams));
+        const page = Number(url.searchParams.get('page') || 1);
+        const rows = (crm.list || []).filter((o) => String(o.source_id) === url.searchParams.get('filter[source_id]'));
+        return Response.json({ data: rows.slice((page - 1) * 50, page * 50), current_page: page, last_page: Math.max(1, Math.ceil(rows.length / 50)) });
+      }
       if (call.method === 'GET' && url.pathname === '/v1/order') {
         const uuid = url.searchParams.get('filter[source_uuid]');
         return Response.json({ data: crm.orders.filter((o) => o.source_uuid === uuid) });
@@ -219,6 +225,7 @@ export function mockFetch({ productResponse } = {}) {
   fn.sentMessages = [];
   fn.crmState = { orders: [], payments: [], puts: [] };
   fn.np = 0;
+  fn.crmLists = [];
   fn.mono = () => calls.filter((c) => c.url.includes('api.monobank.ua') && c.url.endsWith('/invoice/create'));
   fn.monoRemoved = () => calls.filter((c) => c.url.endsWith('/invoice/remove'));
   fn.tg = (method) => calls.filter((c) => c.url.includes('api.telegram.org') && c.url.endsWith(`/${method}`));

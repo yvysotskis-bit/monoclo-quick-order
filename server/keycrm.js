@@ -150,6 +150,21 @@ export function createKeycrm({ token, sourceId, statusMap = {}, deliveryServiceI
         trackingCode: String(data?.shipping?.tracking_code || '').trim(),
       };
     },
+    // Сторінка замовлень джерела за період створення (для покупок з Instagram Direct тощо)
+    async listOrders({ sourceId, from, to, page = 1 }) {
+      const query = new URLSearchParams({
+        'filter[source_id]': String(sourceId),
+        'filter[created_between]': `${from}, ${to}`,
+        include: 'payments,shipping,buyer,tags,products',
+        limit: '50',
+        page: String(page),
+      });
+      const data = await call('GET', `/order?${query}`);
+      return {
+        orders: Array.isArray(data?.data) ? data.data : [],
+        hasMore: Boolean(data?.next_page_url) || (Number(data?.current_page) < Number(data?.last_page)),
+      };
+    },
     // Записує номер ТТН у замовлення KeyCRM
     async setTrackingCode(crmOrderId, code) {
       await call('PUT', `/order/${crmOrderId}`, { shipping: { tracking_code: code } });

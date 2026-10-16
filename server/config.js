@@ -119,6 +119,8 @@ export function loadConfig(env = process.env) {
       // Статуси KeyCRM, які ніколи не стають покупкою (id через кому) і групи статусів (6 = «Скасовано»)
       excludeStatusIds: idList(optional('CONVERSIONS_EXCLUDE_STATUS_IDS')),
       excludeStatusGroupIds: idList(optional('CONVERSIONS_EXCLUDE_STATUS_GROUPS') || '6'),
+      // Інші джерела KeyCRM, чиї оплачені замовлення з ТТН теж ідуть у Meta як покупка (198 = «Інстаграм | Monoclo»)
+      crmSourceIds: idList(optional('CONVERSIONS_CRM_SOURCE_IDS')),
       metaDatasetId: optional('META_DATASET_ID'),
       metaToken: optional('META_CAPI_TOKEN'),
       metaTestEventCode: optional('META_TEST_EVENT_CODE'),

@@ -238,7 +238,9 @@ test('у /status видно лічильники покупок', async () => {
   store.setTtn(1, '20451234567890', 'ref');
   await app.tick();
   const res = await call(app, { method: 'GET', url: '/status' });
-  assert.deepEqual(res.json.purchases, { qualified: 1, meta_sent: 1, meta_retrying: 0, ga_sent: 1, ga_retrying: 0 });
+  assert.deepEqual(res.json.purchases, {
+    qualified: 1, meta_sent: 1, meta_retrying: 0, ga_sent: 1, ga_retrying: 0, crm_qualified: 0, crm_meta_sent: 0, crm_meta_retrying: 0,
+  });
 });
 
 test('рекламні ідентифікатори з форми чистяться, сміття відкидається', () => {
@@ -353,4 +355,71 @@ test('тривалий збій Meta не губить покупку: повт�
   fetchFn.fail.meta = false;
   await app.tick();
   assert.equal(store.getOrder(1).meta_state, 'sent');
+});
+
+/* ---------- Instagram Direct та інші джерела KeyCRM ---------- */
+
+const igOrder = (over = {}) => ({
+  id: 5001,
+  source_id: 198,
+  status_id: 44,
+  status_group_id: 3,
+  grand_total: 1899,
+  created_at: '2025-10-05 12:30:00',
+  buyer: { full_name: 'Олена Коваль', phone: '+380501112233' },
+  shipping: { tracking_code: '20450000000999', shipping_address_city: 'м. Львів' },
+  payments: [{ status: 'paid', amount: 1899 }],
+  products: [{ quantity: 1 }],
+  tags: [],
+  ...over,
+});
+
+async function igSetup({ list = [igOrder()], cfg = {} } = {}) {
+  const ctx = makeApp({ cfg: { keycrmToken: 'CRMTOKEN', conversions: conv({ crmSourceIds: [198, 216], ...cfg }) } });
+  ctx.fetchFn.crmState.list = list;
+  return ctx;
+}
+
+test('Instagram Direct: оплачене замовлення з ТТН іде в Meta як покупка в гривнях, один раз', async () => {
+  const { app, fetchFn, store, now } = await igSetup();
+  await app.tick();
+  const [meta] = fetchFn.meta();
+  assert.ok(meta);
+  const event = meta.body.data[0];
+  assert.equal(event.event_id, 'keycrm-5001');
+  assert.equal(event.action_source, 'system_generated');
+  assert.equal(event.custom_data.currency, 'UAH');
+  assert.equal(event.custom_data.value, 1899);
+  assert.deepEqual(event.user_data.ph, [sha('380501112233')]);
+  assert.deepEqual(event.user_data.ct, [sha('львів')]);
+  assert.ok(!JSON.stringify(meta.body).includes('380501112233'));
+  assert.ok(fetchFn.crmLists.every((q) => q['filter[source_id]'] === '198'), 'джерело швидких замовлень не опитується');
+
+  now.advance(20 * 60_000);
+  await app.tick();
+  assert.equal(fetchFn.meta().length, 1);
+  assert.equal(store.conversionCounts().crm_meta_sent, 1);
+});
+
+test('Instagram Direct: без оплати, без ТТН, скасовані й уже відправлені старою інтеграцією (тег CAPI) не йдуть', async () => {
+  const { app, fetchFn } = await igSetup({ list: [
+    igOrder({ id: 1, payments: [] }),
+    igOrder({ id: 2, payments: [{ status: 'not_paid', amount: 1899 }] }),
+    igOrder({ id: 3, shipping: { tracking_code: '' } }),
+    igOrder({ id: 4, status_id: 13, status_group_id: 6 }),
+    igOrder({ id: 5, tags: [{ id: 17, alias: 'capi', name: 'CAPI' }] }),
+    igOrder({ id: 6, created_at: '2025-09-01 10:00:00' }),
+  ] });
+  await app.tick();
+  assert.equal(fetchFn.meta().length, 0);
+});
+
+test('Instagram Direct: KeyCRM опитується не частіше ніж раз на 15 хвилин', async () => {
+  const { app, fetchFn, now } = await igSetup({ list: [] });
+  await app.tick();
+  await app.tick();
+  assert.equal(fetchFn.crmLists.length, 1);
+  now.advance(16 * 60_000);
+  await app.tick();
+  assert.equal(fetchFn.crmLists.length, 2);
 });

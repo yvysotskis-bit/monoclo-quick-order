@@ -48,6 +48,17 @@ CREATE TABLE IF NOT EXISTS payments (
   crm_synced INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS payments_order ON payments (order_id);
+CREATE TABLE IF NOT EXISTS crm_purchases (
+  crm_order_id INTEGER PRIMARY KEY,
+  source_id INTEGER NOT NULL,
+  conv_at INTEGER NOT NULL,
+  value_cents INTEGER NOT NULL,
+  event TEXT NOT NULL,
+  meta_state TEXT,
+  meta_attempts INTEGER NOT NULL DEFAULT 0,
+  meta_next_at INTEGER,
+  meta_error TEXT
+);
 CREATE TABLE IF NOT EXISTS pay_prompts (
   message_id INTEGER PRIMARY KEY,
   order_id INTEGER NOT NULL,
@@ -436,6 +447,36 @@ export class Store {
     return this.q("SELECT * FROM orders WHERE conv_at IS NOT NULL AND conv_at >= ? AND status NOT IN ('spam', 'cancelled') ORDER BY conv_at, id", since);
   }
 
+  /* ---- покупки з інших джерел KeyCRM (Instagram Direct) ---- */
+
+  // true, якщо покупку додано вперше (повторне зарахування того самого замовлення ігнорується)
+  insertCrmPurchase({ crmOrderId, sourceId, convAt, valueCents, event }) {
+    return this.run('INSERT OR IGNORE INTO crm_purchases (crm_order_id, source_id, conv_at, value_cents, event) VALUES (?, ?, ?, ?, ?)',
+      crmOrderId, sourceId, convAt, valueCents, JSON.stringify(event)).changes > 0;
+  }
+
+  hasCrmPurchase(crmOrderId) {
+    return Boolean(this.db.prepare('SELECT 1 FROM crm_purchases WHERE crm_order_id = ?').get(crmOrderId));
+  }
+
+  crmPurchasesDue(now, { dryRun = false, limit = 10 } = {}) {
+    const states = dryRun ? 'meta_state IS NULL' : "(meta_state IS NULL OR meta_state = 'dry')";
+    return this.db.prepare(`SELECT * FROM crm_purchases WHERE ${states} AND (meta_next_at IS NULL OR meta_next_at <= ?) ORDER BY conv_at LIMIT ?`)
+      .all(now, limit).map((r) => ({ ...r, event: JSON.parse(r.event) }));
+  }
+
+  setCrmPurchaseState(crmOrderId, state, error = null) {
+    this.run('UPDATE crm_purchases SET meta_state = ?, meta_error = ?, meta_next_at = NULL WHERE crm_order_id = ?',
+      state, error ? String(error).slice(0, 300) : null, crmOrderId);
+  }
+
+  markCrmPurchaseFailed(crmOrderId, error, now) {
+    const row = this.db.prepare('SELECT meta_attempts AS n FROM crm_purchases WHERE crm_order_id = ?').get(crmOrderId);
+    this.run('UPDATE crm_purchases SET meta_attempts = ?, meta_error = ?, meta_next_at = ? WHERE crm_order_id = ?',
+      row.n + 1, String(error).slice(0, 300), now + Math.min(30_000 * 2 ** row.n, 3600e3), crmOrderId);
+    return row.n + 1;
+  }
+
   conversionCounts() {
     const row = this.db.prepare(
       `SELECT COUNT(*) AS qualified,
@@ -443,7 +484,11 @@ export class Store {
          SUM(ga_state = 'sent') AS ga_sent, SUM(ga_state IS NULL AND ga_error IS NOT NULL) AS ga_retrying
        FROM orders WHERE conv_at IS NOT NULL`,
     ).get();
-    return Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v || 0]));
+    const crm = this.db.prepare(
+      `SELECT COUNT(*) AS crm_qualified, SUM(meta_state = 'sent') AS crm_meta_sent,
+         SUM(meta_state IS NULL AND meta_error IS NOT NULL) AS crm_meta_retrying FROM crm_purchases`,
+    ).get();
+    return Object.fromEntries(Object.entries({ ...row, ...crm }).map(([k, v]) => [k, v || 0]));
   }
 
   /* ---- нагадування ---- */
