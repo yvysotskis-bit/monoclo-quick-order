@@ -29,6 +29,32 @@ function cleanText(raw, max) {
 
 const fail = (code, message, field) => ({ ok: false, code, message, field });
 
+// Рекламні ідентифікатори для передачі покупки (Meta, GA4, Google Ads). Усе необовʼязкове:
+// некоректне значення просто відкидається, замовлення через це не блокується.
+const CLICK_ID = /^[\w.-]{8,200}$/;
+const FB_COOKIE = /^fb\.\d\.\d{10,13}\.[\w.-]{1,200}$/;
+export function cleanAds(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const ads = {};
+  for (const key of ['gclid', 'gbraid', 'wbraid']) {
+    if (typeof raw[key] === 'string' && CLICK_ID.test(raw[key])) ads[key] = raw[key];
+  }
+  for (const key of ['fbc', 'fbp']) {
+    if (typeof raw[key] === 'string' && FB_COOKIE.test(raw[key])) ads[key] = raw[key];
+  }
+  if (typeof raw.ga_client_id === 'string' && /^\d{5,20}\.\d{5,20}$/.test(raw.ga_client_id)) ads.gaClientId = raw.ga_client_id;
+  if (raw.ga_sessions && typeof raw.ga_sessions === 'object' && !Array.isArray(raw.ga_sessions)) {
+    const sessions = {};
+    for (const [stream, id] of Object.entries(raw.ga_sessions).slice(0, 5)) {
+      if (/^[A-Z0-9]{4,16}$/.test(stream) && /^\d{6,12}$/.test(String(id))) sessions[stream] = String(id);
+    }
+    if (Object.keys(sessions).length) ads.gaSessions = sessions;
+  }
+  const ua = cleanText(raw.ua, 400);
+  if (ua) ads.ua = ua;
+  return ads;
+}
+
 // UTM-мітки й джерело: короткі рядки без розмітки
 function cleanUtm(raw) {
   const utm = {};
@@ -119,6 +145,7 @@ export function validateSubmission(body, { maxQty }) {
       utm: cleanUtm(body.utm),
       referrer: cleanText(body.referrer, 100),
       click,
+      ads: cleanAds(body.ads),
       variantId,
       quantity,
       name,

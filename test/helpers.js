@@ -60,6 +60,7 @@ export const NP = {
 };
 
 export const product = {
+  id: 9001,
   handle: 'tee',
   title: 'Футболка <Volvo> FH16',
   featured_image: '//cdn.test/tee.jpg',
@@ -167,6 +168,14 @@ export function mockFetch({ productResponse } = {}) {
         return Response.json({ success: true, data: [{ Addresses: [{ SettlementStreetRef: NP.street, Present: 'вул. Головна', SettlementStreetDescription: 'Головна' }] }] });
       }
     }
+    if (u.startsWith('https://graph.facebook.com/')) {
+      if (fn.fail.meta) return new Response('{"error":{"message":"Invalid OAuth access token"}}', { status: 400 });
+      return Response.json({ events_received: call.body.data.length, fbtrace_id: 'x' });
+    }
+    if (u.startsWith('https://www.google-analytics.com/')) {
+      if (fn.fail.ga) return new Response('', { status: 500 });
+      return new Response(null, { status: 204 });
+    }
     if (u.startsWith('https://openapi.keycrm.app/')) {
       const url = new URL(u);
       const crm = fn.crmState;
@@ -177,7 +186,7 @@ export function mockFetch({ productResponse } = {}) {
         return Response.json({ data: crm.orders.filter((o) => o.source_uuid === uuid) });
       }
       const single = call.method === 'GET' && /^\/v1\/order\/(\d+)$/.exec(url.pathname);
-      if (single) return Response.json({ id: Number(single[1]), payments: crm.payments.filter((p) => p.order_id === Number(single[1])) });
+      if (single) return Response.json({ id: Number(single[1]), ...(crm.order || {}), payments: crm.payments.filter((p) => p.order_id === Number(single[1])) });
       if (fn.fail.keycrmShipping && call.body?.shipping?.shipping_service) {
         return new Response('{"message":"shipping invalid"}', { status: 422 });
       }
@@ -214,6 +223,8 @@ export function mockFetch({ productResponse } = {}) {
   fn.monoRemoved = () => calls.filter((c) => c.url.endsWith('/invoice/remove'));
   fn.tg = (method) => calls.filter((c) => c.url.includes('api.telegram.org') && c.url.endsWith(`/${method}`));
   // Лише запити, що змінюють дані (читання для перевірок не рахуємо)
+  fn.meta = () => calls.filter((c) => c.url.startsWith('https://graph.facebook.com/'));
+  fn.ga = () => calls.filter((c) => c.url.startsWith('https://www.google-analytics.com/'));
   fn.crm = () => calls.filter((c) => c.url.includes('keycrm.app') && c.method !== 'GET');
   fn.crmReads = () => calls.filter((c) => c.url.includes('keycrm.app') && c.method === 'GET');
   return fn;

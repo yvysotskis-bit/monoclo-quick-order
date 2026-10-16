@@ -8,6 +8,7 @@ import { createKeycrm } from './keycrm.js';
 import { createNovaPoshta } from './novaposhta.js';
 import { createTtnService } from './ttn.js';
 import { createMonobank } from './monobank.js';
+import { createConversions } from './conversions.js';
 import {
   dateKey,
   effectiveStart,
@@ -116,6 +117,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     : null;
 
   const ttnService = novaPoshta ? createTtnService({ np: novaPoshta, config, store, now }) : null;
+  const conversions = createConversions({ config, store, keycrm, fetchFn, now, log });
 
   // Передоплата працює, лише коли є токен Monobank і публічна адреса сервера (для вебхука)
   const monobank = config.monobankToken && config.publicUrl
@@ -317,6 +319,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       data: {
         productTitle: product.title,
         productHandle: product.handle,
+        productId: product.id ? String(product.id) : '',
         productUrl: input.pageUrl || `${config.storeOrigin}/products/${product.handle}`,
         variantId: String(variant.id),
         sku: variant.sku || '',
@@ -336,6 +339,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         utm: input.utm,
         referrer: input.referrer,
         click: input.click,
+        ads: input.ads,
         afterHours,
       },
     });
@@ -788,6 +792,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       ['statuses', () => syncStatuses()],
       ['ttn', async () => { for (const order of store.ttnNotInCrm()) await syncTtnToCrm(order.id); }],
       ['prompts', async () => store.pruneOldPrompts(date.getTime() - PROMPT_TTL_MS)],
+      ['conversions', () => conversions.tick()],
       ['reminders', () => sendReminders(date)],
       ['report', () => sendWeeklyReport(date)],
       ['backup', () => backup.run()],
@@ -815,7 +820,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const stuckSeconds = oldest ? Math.round((nowMs - oldest) / 1000) : 0;
     // 503, якщо замовлення застрягло в черзі: моніторинг одразу сповістить
     const ok = stuckSeconds < STUCK_ALERT_SEC;
-    return { code: ok ? 200 : 503, body: { ok, db: true, ...counts, stuck_seconds: stuckSeconds } };
+    const purchases = conversions.enabled ? { purchases: store.conversionCounts() } : {};
+    return { code: ok ? 200 : 503, body: { ok, db: true, ...counts, stuck_seconds: stuckSeconds, ...purchases } };
   }
 
   // Сторінка-перехідник: Telegram дозволяє лише https-посилання, а вона відкриває Viber
@@ -909,6 +915,18 @@ p{margin:8px 0;color:#555}</style></head>
       }
       const np = req.method === 'GET' && /^\/proxy\/np\/(cities|points|streets)$/.exec(url.pathname);
       if (np) return send(200, await novaPoshtaLookup(req, url, np[1]));
+      if (req.method === 'GET' && url.pathname === '/conversions/google-ads.csv') {
+        const c = config.conversions;
+        if (!conversions.enabled || !c?.gadsFeedPassword) return send(404, { ok: false, code: 'not_found' });
+        const [scheme, encoded] = String(req.headers.authorization || '').split(' ');
+        const [user, ...pass] = Buffer.from(encoded || '', 'base64').toString('utf8').split(':');
+        if (scheme !== 'Basic' || !safeEqual(user, c.gadsFeedUser) || !safeEqual(pass.join(':'), c.gadsFeedPassword)) {
+          res.writeHead(401, { 'www-authenticate': 'Basic realm="conversions"', 'cache-control': 'no-store' });
+          return res.end();
+        }
+        res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(conversions.googleAdsCsv());
+      }
       if (req.method === 'POST' && url.pathname === '/proxy/submit') return send(200, await submit(req, url));
       if (req.method === 'POST' && url.pathname === '/telegram/webhook') return send(200, await telegramWebhook(req));
       if (req.method === 'POST' && url.pathname === '/mono/webhook') return send(200, await monoWebhook(req));

@@ -18,6 +18,11 @@ function parseDate(raw, name) {
   return ms;
 }
 
+// «13, 19» → [13, 19]; сміття відкидається
+function idList(raw) {
+  return String(raw || '').split(/[,\s]+/).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+}
+
 export function loadConfig(env = process.env) {
   const required = (key) => {
     // Зайві пробіли й переноси рядків при копіюванні в Render ламають секрети
@@ -101,5 +106,30 @@ export function loadConfig(env = process.env) {
     backupKeep: number('BACKUP_KEEP', 7),
     backupChatId: optional('BACKUP_CHAT_ID'),
     backupDir: optional('BACKUP_DIR') || (dbPath === ':memory:' ? '' : path.join(path.dirname(dbPath), 'backups')),
+
+    // Покупка для реклами: оплата + ТТН → Purchase у Meta, purchase у GA4, офлайн-конверсія Google Ads
+    conversions: {
+      enabled: optional('CONVERSIONS_ENABLED') === '1',
+      // Тестовий режим: покупки зараховуються й пишуться в лог, але нікуди не відправляються
+      dryRun: optional('CONVERSIONS_DRY_RUN') === '1',
+      // Не зараховувати замовлення, створені раніше цієї дати (ISO, UTC)
+      from: parseDate(optional('CONVERSIONS_FROM'), 'CONVERSIONS_FROM'),
+      lookbackDays: number('CONVERSIONS_LOOKBACK_DAYS', 30),
+      checksPerTick: number('CONVERSIONS_CHECKS_PER_TICK', 3),
+      // Статуси KeyCRM, які ніколи не стають покупкою (id через кому) і групи статусів (6 = «Скасовано»)
+      excludeStatusIds: idList(optional('CONVERSIONS_EXCLUDE_STATUS_IDS')),
+      excludeStatusGroupIds: idList(optional('CONVERSIONS_EXCLUDE_STATUS_GROUPS') || '6'),
+      metaDatasetId: optional('META_DATASET_ID'),
+      metaToken: optional('META_CAPI_TOKEN'),
+      metaTestEventCode: optional('META_TEST_EVENT_CODE'),
+      metaApiVersion: optional('META_API_VERSION') || 'v24.0',
+      // Як товар записаний у каталозі Meta. Основний каталог Shopify (510365305413392): ID контенту = ID варіанта Shopify
+      metaContentId: optional('META_CONTENT_ID') || '{variant_id}',
+      gaMeasurementId: optional('GA4_MEASUREMENT_ID'),
+      gaApiSecret: optional('GA4_API_SECRET'),
+      gadsConversionName: optional('GADS_CONVERSION_NAME') || 'Quick order purchase',
+      gadsFeedUser: optional('GADS_FEED_USER') || 'googleads',
+      gadsFeedPassword: optional('GADS_FEED_PASSWORD'),
+    },
   };
 }

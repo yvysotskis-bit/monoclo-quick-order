@@ -148,6 +148,76 @@
     } else if (!stored && referrer) {
       writeAttribution({ utm: {}, click: '', referrer: referrer, at: Date.now() });
     }
+    try { captureClicks(q); } catch (e) { /* аналітика ніколи не ламає сторінку */ }
+  }
+
+  /* ---------- Рекламні ідентифікатори (для передачі покупки в Meta, GA4 і Google Ads) ---------- */
+
+  var CLICKS_KEY = 'qo:clicks';
+  var CLICKS_TTL = 90 * 24 * 3600 * 1000;
+  var CLICK_ID = /^[\w.-]{8,200}$/;
+
+  function readClicks() {
+    try {
+      var c = JSON.parse(localStorage.getItem(CLICKS_KEY)) || {};
+      var fresh = {};
+      Object.keys(c).forEach(function (k) {
+        if (c[k] && c[k].v && Date.now() - c[k].at < CLICKS_TTL) fresh[k] = c[k];
+      });
+      return fresh;
+    } catch (e) { return {}; }
+  }
+
+  // Значення кліку (а не лише його тип): без gclid/fbclid рекламна система не знає, з якого оголошення покупка
+  function captureClicks(q) {
+    var clicks = readClicks();
+    var changed = false;
+    ['gclid', 'gbraid', 'wbraid', 'fbclid'].forEach(function (k) {
+      var v = q.get(k);
+      if (v && CLICK_ID.test(v)) { clicks[k] = { v: v, at: Date.now() }; changed = true; }
+    });
+    if (changed) {
+      try { localStorage.setItem(CLICKS_KEY, JSON.stringify(clicks)); } catch (e) { /* приватний режим */ }
+    }
+  }
+
+  function cookie(name) {
+    var parts = ('; ' + document.cookie).split('; ' + name + '=');
+    if (parts.length < 2) return '';
+    try { return decodeURIComponent(parts.pop().split(';')[0]); } catch (e) { return ''; }
+  }
+
+  // Ідентифікатори для покупки: сервер передасть їх, коли замовлення буде оплачене й відправлене
+  function adIds() {
+    var clicks = readClicks();
+    var ids = {};
+    var pick = function (k, v) { if (v && CLICK_ID.test(v)) ids[k] = v; };
+
+    // Google Ads: з адреси або з cookie Conversion Linker (_gcl_aw = GCL.<час>.<gclid>)
+    pick('gclid', (clicks.gclid && clicks.gclid.v) || cookie('_gcl_aw').split('.').slice(2).join('.'));
+    pick('gbraid', (clicks.gbraid && clicks.gbraid.v) || cookie('_gcl_gb').split('.').slice(2).join('.'));
+    pick('wbraid', clicks.wbraid && clicks.wbraid.v);
+
+    // Meta: cookie пікселя, а якщо _fbc ще немає, складаємо його з fbclid за правилами Meta
+    var fbc = cookie('_fbc');
+    if (!fbc && clicks.fbclid) fbc = 'fb.1.' + clicks.fbclid.at + '.' + clicks.fbclid.v;
+    pick('fbc', fbc);
+    pick('fbp', cookie('_fbp'));
+
+    // GA4: client_id із _ga (GA1.1.<число>.<число>) і session_id з кожного _ga_<потік>
+    var ga = cookie('_ga').split('.');
+    if (ga.length >= 4) pick('ga_client_id', ga.slice(-2).join('.'));
+    var sessions = {};
+    document.cookie.split('; ').forEach(function (pair) {
+      var m = /^_ga_([A-Z0-9]{4,16})=(.*)$/.exec(pair);
+      if (!m) return;
+      // GS1.1.<session_id>.… (старий формат) або GS2.1.s<session_id>$o… (новий)
+      var s = /^GS\d\.\d\.s?(\d{6,12})/.exec(m[2]);
+      if (s && Object.keys(sessions).length < 5) sessions[m[1]] = s[1];
+    });
+    if (Object.keys(sessions).length) ids.ga_sessions = sessions;
+    if (navigator.userAgent) ids.ua = navigator.userAgent.slice(0, 400);
+    return ids;
   }
 
   // Темна тема: за часом доби, як у пристрої або завжди світла/темна
@@ -1410,6 +1480,7 @@
       utm: (readAttribution() || {}).utm || {},
       referrer: (readAttribution() || {}).referrer || '',
       click: (readAttribution() || {}).click || '',
+      ads: (function () { try { return adIds(); } catch (e) { return {}; } })(),
       page_url: window.location.origin + state.product.url,
       client_id: state.clientId,
       website: refs.honeypot.value

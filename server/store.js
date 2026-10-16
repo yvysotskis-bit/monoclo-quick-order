@@ -74,7 +74,22 @@ const ADDED_COLUMNS = {
   ttn_ref: 'TEXT',
   crm_status: 'TEXT',
   ttn_crm_synced: 'INTEGER NOT NULL DEFAULT 0',
+  // Покупка для реклами: момент, коли замовлення вперше мало і оплату, і ТТН, та сума покупки
+  conv_at: 'INTEGER',
+  conv_value_cents: 'INTEGER',
+  conv_checked_at: 'INTEGER',
+  // Відправка покупки окремо в кожен канал: null = чекає, sent, failed (спроби вичерпано), skipped, expired, dry
+  meta_state: 'TEXT',
+  meta_attempts: 'INTEGER NOT NULL DEFAULT 0',
+  meta_next_at: 'INTEGER',
+  meta_error: 'TEXT',
+  ga_state: 'TEXT',
+  ga_attempts: 'INTEGER NOT NULL DEFAULT 0',
+  ga_next_at: 'INTEGER',
+  ga_error: 'TEXT',
 };
+
+export const CONVERSION_CHANNELS = ['meta', 'ga'];
 
 function migrate(db) {
   const existing = new Set(db.prepare('PRAGMA table_info(orders)').all().map((c) => c.name));
@@ -356,6 +371,76 @@ export class Store {
        WHERE id = ?`,
       status, by, at, status, at, id,
     );
+  }
+
+  /* ---- покупка для реклами ---- */
+
+  // Замовлення, які ще можуть стати покупкою: не спам і не скасовані, ще не зараховані, свіжі.
+  // Свіжі перевіряються частіше: до 2 діб раз на 20 хв, до 7 діб раз на 2 год, далі раз на 6 год
+  // (так KeyCRM отримує кілька запитів на хвилину навіть за сотень замовлень).
+  conversionCandidates(now, since, limit = 3) {
+    return this.q(
+      `SELECT * FROM orders
+       WHERE conv_at IS NULL AND created_at >= ? AND status NOT IN ('spam', 'cancelled')
+         AND (conv_checked_at IS NULL OR conv_checked_at <= ? - CASE
+               WHEN ? - created_at < 172800000 THEN 1200000
+               WHEN ? - created_at < 604800000 THEN 7200000
+               ELSE 21600000 END)
+       ORDER BY COALESCE(conv_checked_at, 0), id LIMIT ?`,
+      since, now, now, now, limit,
+    );
+  }
+
+  markConversionChecked(id, at) {
+    this.run('UPDATE orders SET conv_checked_at = ? WHERE id = ?', at, id);
+  }
+
+  // Повертає false, якщо замовлення вже зараховане (повторний виклик нічого не змінює)
+  markConversion(id, at, valueCents) {
+    return this.run('UPDATE orders SET conv_at = ?, conv_value_cents = ?, conv_checked_at = ? WHERE id = ? AND conv_at IS NULL',
+      at, valueCents, at, id).changes > 0;
+  }
+
+  // Зараховані покупки, які ще треба відправити в канал (meta | ga). У тестовому режимі (dry) нічого не відправляється,
+  // а після його вимкнення ці покупки відправляються по-справжньому.
+  conversionDue(channel, now, limit = 10) {
+    if (!CONVERSION_CHANNELS.includes(channel)) throw new Error(`unknown channel ${channel}`);
+    return this.q(
+      `SELECT * FROM orders WHERE conv_at IS NOT NULL AND (${channel}_state IS NULL OR ${channel}_state = 'dry')
+         AND (${channel}_next_at IS NULL OR ${channel}_next_at <= ?) ORDER BY conv_at, id LIMIT ?`,
+      now, limit,
+    );
+  }
+
+  setConversionState(channel, id, state, error = null) {
+    if (!CONVERSION_CHANNELS.includes(channel)) throw new Error(`unknown channel ${channel}`);
+    this.run(`UPDATE orders SET ${channel}_state = ?, ${channel}_error = ?, ${channel}_next_at = NULL WHERE id = ?`,
+      state, error ? String(error).slice(0, 300) : null, id);
+  }
+
+  // Збій каналу: повтор з наростаючою паузою, після maxAttempts — failed
+  markConversionFailed(channel, id, error, now, maxAttempts = 12) {
+    if (!CONVERSION_CHANNELS.includes(channel)) throw new Error(`unknown channel ${channel}`);
+    const row = this.db.prepare(`SELECT ${channel}_attempts AS n FROM orders WHERE id = ?`).get(id);
+    const giveUp = row.n + 1 >= maxAttempts;
+    this.run(`UPDATE orders SET ${channel}_attempts = ?, ${channel}_error = ?, ${channel}_next_at = ?, ${channel}_state = ? WHERE id = ?`,
+      row.n + 1, String(error).slice(0, 300), giveUp ? null : backoff(row.n, now), giveUp ? 'failed' : null, id);
+    return giveUp;
+  }
+
+  // Зараховані покупки за період (для файлу офлайн-конверсій Google Ads)
+  conversionsSince(since) {
+    return this.q('SELECT * FROM orders WHERE conv_at IS NOT NULL AND conv_at >= ? ORDER BY conv_at, id', since);
+  }
+
+  conversionCounts() {
+    const row = this.db.prepare(
+      `SELECT COUNT(*) AS qualified,
+         SUM(meta_state = 'sent') AS meta_sent, SUM(meta_state = 'failed') AS meta_failed,
+         SUM(ga_state = 'sent') AS ga_sent, SUM(ga_state = 'failed') AS ga_failed
+       FROM orders WHERE conv_at IS NOT NULL`,
+    ).get();
+    return Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v || 0]));
   }
 
   /* ---- нагадування ---- */
