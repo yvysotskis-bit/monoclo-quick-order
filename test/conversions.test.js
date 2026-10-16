@@ -350,11 +350,16 @@ test('CSV: у тестовому режимі порожній, спам піс�
   await ctx.app.tick();
   const auth = { authorization: `Basic ${Buffer.from('googleads:feed-pass').toString('base64')}` };
   const csv = async () => (await call(ctx.app, { method: 'GET', url: '/conversions/google-ads.csv', headers: auth })).text.trim().split('\n');
-  assert.equal((await csv()).length, 1, 'лише заголовок');
+  // Без справжніх покупок — заголовок і рядок-заглушка, який Google відхилить (Менеджер даних не приймає порожній файл)
+  const empty = await csv();
+  assert.equal(empty.length, 2);
+  assert.match(empty[1], /^PLACEHOLDER-NO-PURCHASES-YET,,,2020-01-01T00:00:00\+00:00,0\.00,UAH,placeholder,/);
   ctx.config.conversions.dryRun = false;
-  assert.equal((await csv()).length, 2);
+  const real = await csv();
+  assert.equal(real.length, 2);
+  assert.match(real[1], /^Cj0KCQjwgclid123,/, 'зі справжньою покупкою заглушки немає');
   ctx.store.setStatus(1, 'spam', 'Оля', ctx.now().getTime());
-  assert.equal((await csv()).length, 1);
+  assert.match((await csv())[1], /^PLACEHOLDER/);
 });
 
 test('тестовий режим не застрягає на перших 10 покупках', async () => {

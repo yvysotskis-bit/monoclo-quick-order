@@ -163,6 +163,13 @@ export function buildGoogleAdsCsv(orders, { conversionName, format = 'data_manag
     lines.push([gclid, gbraid, wbraid, isoTime(order.conv_at), (order.conv_value_cents / 100).toFixed(2), 'UAH',
       `quick-${order.order_number}`, conversionName].map(csvCell).join(','));
   }
+  // Менеджер даних не приймає файл без жодного рядка даних («не вдалося визначити схему»).
+  // Поки справжніх покупок немає, віддаємо один рядок-заглушку, який Google гарантовано відхилить при імпорті:
+  // вигаданий gclid і дата понад 90 днів тому. Конверсією він не стане; щойно з'явиться справжня покупка, заглушка зникає.
+  if (lines.length === 1) {
+    lines.push(['PLACEHOLDER-NO-PURCHASES-YET', '', '', '2020-01-01T00:00:00+00:00', '0.00', 'UAH', 'placeholder', conversionName]
+      .map(csvCell).join(','));
+  }
   return `${lines.join('\n')}\n`;
 }
 
