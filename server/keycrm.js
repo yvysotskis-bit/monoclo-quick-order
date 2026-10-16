@@ -133,6 +133,38 @@ export function createKeycrm({ token, sourceId, statusMap = {}, deliveryServiceI
         description,
       });
     },
+    // Стан замовлення для зарахування покупки: статус, сума, отримані оплати, ТТН.
+    // Менеджер міг додати оплату чи ТТН вручну в KeyCRM, тому сервер дивиться й туди.
+    async getOrderState(crmOrderId) {
+      const data = await call('GET', `/order/${crmOrderId}?include=payments,shipping`);
+      const payments = Array.isArray(data?.payments) ? data.payments : [];
+      const paidUah = payments
+        .filter((p) => String(p.status || '').toLowerCase() === 'paid')
+        .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+      return {
+        statusId: Number(data?.status_id) || 0,
+        statusGroupId: Number(data?.status_group_id) || 0,
+        grandTotalUah: Number(data?.grand_total) || 0,
+        // Якщо список оплат не прийшов, спираємось на загальну суму оплат замовлення
+        paidUah: paidUah || (payments.length ? 0 : Number(data?.payments_total) || 0),
+        trackingCode: String(data?.shipping?.tracking_code || '').trim(),
+      };
+    },
+    // Сторінка замовлень джерела за період створення (для покупок з Instagram Direct тощо)
+    async listOrders({ sourceId, from, to, page = 1 }) {
+      const query = new URLSearchParams({
+        'filter[source_id]': String(sourceId),
+        'filter[created_between]': `${from}, ${to}`,
+        include: 'payments,shipping,buyer,tags,products',
+        limit: '50',
+        page: String(page),
+      });
+      const data = await call('GET', `/order?${query}`);
+      return {
+        orders: Array.isArray(data?.data) ? data.data : [],
+        hasMore: Boolean(data?.next_page_url) || (Number(data?.current_page) < Number(data?.last_page)),
+      };
+    },
     // Записує номер ТТН у замовлення KeyCRM
     async setTrackingCode(crmOrderId, code) {
       await call('PUT', `/order/${crmOrderId}`, { shipping: { tracking_code: code } });

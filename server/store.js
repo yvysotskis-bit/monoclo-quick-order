@@ -48,6 +48,17 @@ CREATE TABLE IF NOT EXISTS payments (
   crm_synced INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS payments_order ON payments (order_id);
+CREATE TABLE IF NOT EXISTS crm_purchases (
+  crm_order_id INTEGER PRIMARY KEY,
+  source_id INTEGER NOT NULL,
+  conv_at INTEGER NOT NULL,
+  value_cents INTEGER NOT NULL,
+  event TEXT NOT NULL,
+  meta_state TEXT,
+  meta_attempts INTEGER NOT NULL DEFAULT 0,
+  meta_next_at INTEGER,
+  meta_error TEXT
+);
 CREATE TABLE IF NOT EXISTS pay_prompts (
   message_id INTEGER PRIMARY KEY,
   order_id INTEGER NOT NULL,
@@ -74,7 +85,22 @@ const ADDED_COLUMNS = {
   ttn_ref: 'TEXT',
   crm_status: 'TEXT',
   ttn_crm_synced: 'INTEGER NOT NULL DEFAULT 0',
+  // Покупка для реклами: момент, коли замовлення вперше мало і оплату, і ТТН, та сума покупки
+  conv_at: 'INTEGER',
+  conv_value_cents: 'INTEGER',
+  conv_checked_at: 'INTEGER',
+  // Відправка покупки окремо в кожен канал: null = чекає, sent, failed (спроби вичерпано), skipped, expired, dry
+  meta_state: 'TEXT',
+  meta_attempts: 'INTEGER NOT NULL DEFAULT 0',
+  meta_next_at: 'INTEGER',
+  meta_error: 'TEXT',
+  ga_state: 'TEXT',
+  ga_attempts: 'INTEGER NOT NULL DEFAULT 0',
+  ga_next_at: 'INTEGER',
+  ga_error: 'TEXT',
 };
+
+export const CONVERSION_CHANNELS = ['meta', 'ga'];
 
 function migrate(db) {
   const existing = new Set(db.prepare('PRAGMA table_info(orders)').all().map((c) => c.name));
@@ -356,6 +382,113 @@ export class Store {
        WHERE id = ?`,
       status, by, at, status, at, id,
     );
+  }
+
+  /* ---- покупка для реклами ---- */
+
+  // Замовлення, які ще можуть стати покупкою: не спам і не скасовані, ще не зараховані, свіжі.
+  // Свіжі перевіряються частіше: до 2 діб раз на 20 хв, до 7 діб раз на 2 год, далі раз на 6 год
+  // (так KeyCRM отримує кілька запитів на хвилину навіть за сотень замовлень).
+  conversionCandidates(now, since, limit = 3) {
+    return this.q(
+      `SELECT * FROM orders
+       WHERE conv_at IS NULL AND created_at >= ? AND status NOT IN ('spam', 'cancelled')
+         AND (conv_checked_at IS NULL OR conv_checked_at <= ? - CASE
+               WHEN ? - created_at < 172800000 THEN 1200000
+               WHEN ? - created_at < 604800000 THEN 7200000
+               ELSE 21600000 END)
+       ORDER BY COALESCE(conv_checked_at, 0), id LIMIT ?`,
+      since, now, now, now, limit,
+    );
+  }
+
+  markConversionChecked(id, at) {
+    this.run('UPDATE orders SET conv_checked_at = ? WHERE id = ?', at, id);
+  }
+
+  // Повертає false, якщо замовлення вже зараховане (повторний виклик нічого не змінює)
+  markConversion(id, at, valueCents) {
+    return this.run('UPDATE orders SET conv_at = ?, conv_value_cents = ?, conv_checked_at = ? WHERE id = ? AND conv_at IS NULL',
+      at, valueCents, at, id).changes > 0;
+  }
+
+  // Зараховані покупки, які ще треба відправити в канал (meta | ga). У тестовому режимі (dry) нічого не відправляється,
+  // а після його вимкнення ці покупки відправляються по-справжньому.
+  conversionDue(channel, now, { dryRun = false, limit = 10 } = {}) {
+    if (!CONVERSION_CHANNELS.includes(channel)) throw new Error(`unknown channel ${channel}`);
+    const states = dryRun ? `${channel}_state IS NULL` : `(${channel}_state IS NULL OR ${channel}_state = 'dry')`;
+    return this.q(
+      `SELECT * FROM orders WHERE conv_at IS NOT NULL AND ${states}
+         AND (${channel}_next_at IS NULL OR ${channel}_next_at <= ?) ORDER BY conv_at, id LIMIT ?`,
+      now, limit,
+    );
+  }
+
+  setConversionState(channel, id, state, error = null) {
+    if (!CONVERSION_CHANNELS.includes(channel)) throw new Error(`unknown channel ${channel}`);
+    this.run(`UPDATE orders SET ${channel}_state = ?, ${channel}_error = ?, ${channel}_next_at = NULL WHERE id = ?`,
+      state, error ? String(error).slice(0, 300) : null, id);
+  }
+
+  // Збій каналу: повтор з наростаючою паузою (30 с … 1 год), доки покупка не застаріє для каналу (тоді expired).
+  // Тривалий збій (наприклад, протермінований токен Meta) не губить покупки: після заміни токена вони підуть.
+  // Повертає номер спроби.
+  markConversionFailed(channel, id, error, now) {
+    if (!CONVERSION_CHANNELS.includes(channel)) throw new Error(`unknown channel ${channel}`);
+    const row = this.db.prepare(`SELECT ${channel}_attempts AS n FROM orders WHERE id = ?`).get(id);
+    this.run(`UPDATE orders SET ${channel}_attempts = ?, ${channel}_error = ?, ${channel}_next_at = ? WHERE id = ?`,
+      row.n + 1, String(error).slice(0, 300), now + Math.min(30_000 * 2 ** row.n, 3600e3), id);
+    return row.n + 1;
+  }
+
+  // Зараховані покупки за період (для файлу офлайн-конверсій Google Ads)
+  // Спам і скасовані після зарахування з файлу прибираються (Google Ads їх ще не імпортував або імпортує без них)
+  conversionsSince(since) {
+    return this.q("SELECT * FROM orders WHERE conv_at IS NOT NULL AND conv_at >= ? AND status NOT IN ('spam', 'cancelled') ORDER BY conv_at, id", since);
+  }
+
+  /* ---- покупки з інших джерел KeyCRM (Instagram Direct) ---- */
+
+  // true, якщо покупку додано вперше (повторне зарахування того самого замовлення ігнорується)
+  insertCrmPurchase({ crmOrderId, sourceId, convAt, valueCents, event }) {
+    return this.run('INSERT OR IGNORE INTO crm_purchases (crm_order_id, source_id, conv_at, value_cents, event) VALUES (?, ?, ?, ?, ?)',
+      crmOrderId, sourceId, convAt, valueCents, JSON.stringify(event)).changes > 0;
+  }
+
+  hasCrmPurchase(crmOrderId) {
+    return Boolean(this.db.prepare('SELECT 1 FROM crm_purchases WHERE crm_order_id = ?').get(crmOrderId));
+  }
+
+  crmPurchasesDue(now, { dryRun = false, limit = 10 } = {}) {
+    const states = dryRun ? 'meta_state IS NULL' : "(meta_state IS NULL OR meta_state = 'dry')";
+    return this.db.prepare(`SELECT * FROM crm_purchases WHERE ${states} AND (meta_next_at IS NULL OR meta_next_at <= ?) ORDER BY conv_at LIMIT ?`)
+      .all(now, limit).map((r) => ({ ...r, event: JSON.parse(r.event) }));
+  }
+
+  setCrmPurchaseState(crmOrderId, state, error = null) {
+    this.run('UPDATE crm_purchases SET meta_state = ?, meta_error = ?, meta_next_at = NULL WHERE crm_order_id = ?',
+      state, error ? String(error).slice(0, 300) : null, crmOrderId);
+  }
+
+  markCrmPurchaseFailed(crmOrderId, error, now) {
+    const row = this.db.prepare('SELECT meta_attempts AS n FROM crm_purchases WHERE crm_order_id = ?').get(crmOrderId);
+    this.run('UPDATE crm_purchases SET meta_attempts = ?, meta_error = ?, meta_next_at = ? WHERE crm_order_id = ?',
+      row.n + 1, String(error).slice(0, 300), now + Math.min(30_000 * 2 ** row.n, 3600e3), crmOrderId);
+    return row.n + 1;
+  }
+
+  conversionCounts() {
+    const row = this.db.prepare(
+      `SELECT COUNT(*) AS qualified,
+         SUM(meta_state = 'sent') AS meta_sent, SUM(meta_state IS NULL AND meta_error IS NOT NULL) AS meta_retrying,
+         SUM(ga_state = 'sent') AS ga_sent, SUM(ga_state IS NULL AND ga_error IS NOT NULL) AS ga_retrying
+       FROM orders WHERE conv_at IS NOT NULL`,
+    ).get();
+    const crm = this.db.prepare(
+      `SELECT COUNT(*) AS crm_qualified, SUM(meta_state = 'sent') AS crm_meta_sent,
+         SUM(meta_state IS NULL AND meta_error IS NOT NULL) AS crm_meta_retrying FROM crm_purchases`,
+    ).get();
+    return Object.fromEntries(Object.entries({ ...row, ...crm }).map(([k, v]) => [k, v || 0]));
   }
 
   /* ---- нагадування ---- */
