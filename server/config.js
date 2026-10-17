@@ -124,6 +124,9 @@ export function loadConfig(env = process.env) {
       metaDatasetId: optional('META_DATASET_ID'),
       metaToken: optional('META_CAPI_TOKEN'),
       metaTestEventCode: optional('META_TEST_EVENT_CODE'),
+      // Разово переслати в Meta вже відправлені покупки, зараховані до цієї дати (ISO, UTC): наприклад, ті, що пішли
+      // з тестовим кодом. Ті самі event_id, тож Meta прибере дублі. Спрацьовує один раз на кожне значення.
+      metaResendBefore: parseDate(optional('CONVERSIONS_RESEND_META_BEFORE'), 'CONVERSIONS_RESEND_META_BEFORE'),
       metaApiVersion: optional('META_API_VERSION') || 'v24.0',
       // Як товар записаний у каталозі Meta. Основний каталог Shopify (510365305413392): ID контенту = ID варіанта Shopify
       metaContentId: optional('META_CONTENT_ID') || '{variant_id}',

@@ -439,8 +439,24 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
     }
   }
 
+  // Разова повторна відправка в Meta (CONVERSIONS_RESEND_META_BEFORE). Лише в бойовому режимі без тестового коду,
+  // інакше покупки знову пішли б у тест. Позначка в базі не дає повторити її після перезапуску.
+  async function resendMeta() {
+    const before = c.metaResendBefore;
+    if (!before || c.dryRun || c.metaTestEventCode || !metaOn()) return;
+    if (store.getMeta('meta_resend_before') === String(before)) return;
+    const counts = store.resetMetaSent(before);
+    store.setMeta('meta_resend_before', before);
+    store.setMeta('meta_resend_result', JSON.stringify({ at: now().getTime(), ...counts }));
+    log.log(JSON.stringify({ event: 'meta_resend', before: new Date(before).toISOString(), ...counts }));
+    if (notify && counts.orders + counts.crm > 0) {
+      await notify(`🔁 Повторно передаю в Meta ${counts.orders + counts.crm} покупок (швидкі: ${counts.orders}, KeyCRM: ${counts.crm}).`).catch(() => {});
+    }
+  }
+
   async function tick() {
     if (!c.enabled) return;
+    await resendMeta();
     await qualify();
     await deliver();
     await qualifyCrmSources();
@@ -465,6 +481,8 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
         enabled_at: Number(store.getMeta('conversions_enabled_at')) ? new Date(Number(store.getMeta('conversions_enabled_at'))).toISOString() : null,
         crm_sources: c.crmSourceIds || [],
         meta: metaOn(),
+        meta_test_mode: Boolean(c.metaTestEventCode),
+        meta_resend: store.getMeta('meta_resend_result') ? JSON.parse(store.getMeta('meta_resend_result')) : null,
         ga: gaOn(),
         google_ads_feed: Boolean(c.gadsFeedPassword),
         since: diag.since || null,
