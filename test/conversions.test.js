@@ -512,3 +512,13 @@ test('разова повторна відправка в Meta: ті самі ev
   await app.tick();
   assert.equal(fetchFn.meta().length, 4, 'повтор разовий');
 });
+
+test('GA4: ID товару — ID варіанта Shopify, як у Merchant Center', async () => {
+  const { app, fetchFn, store, now } = await setup();
+  pay(store, now);
+  store.setTtn(1, '20451234567890', 'ref');
+  await app.tick();
+  const [ga] = fetchFn.ga();
+  const item = ga.body.events[0].params.items[0];
+  assert.equal(item.item_id, String(goodBody().variant_id));
+});

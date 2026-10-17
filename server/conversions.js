@@ -108,7 +108,8 @@ export function buildGaPayload(order, { measurementId, eventTimeMs }) {
         affiliation: 'quick_order',
         ...(sessionId ? { session_id: sessionId, engagement_time_msec: 1 } : {}),
         items: [{
-          item_id: d.sku || d.variantId,
+          // Як у Merchant Center (ID варіанта Shopify): інакше Google Ads не зіставляє покупку з товаром
+          item_id: String(d.variantId || d.sku),
           item_name: d.productTitle,
           ...(variant ? { item_variant: variant } : {}),
           price: d.unitCents / 100,
