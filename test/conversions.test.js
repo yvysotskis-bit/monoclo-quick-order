@@ -476,3 +476,39 @@ test('Instagram Direct: KeyCRM опитується не частіше ніж �
   await app.tick();
   assert.equal(fetchFn.crmLists.length, 2);
 });
+
+test('разова повторна відправка в Meta: ті самі event_id, лише без тест-коду, не повторюється після перезапуску', async () => {
+  const { app, fetchFn, store, now, config } = await igSetup();
+  const quick = await submit(app, goodBody({ ads, phone: '+380 (67) 555 44 33', client_id: 'client-id-0009' }));
+  assert.equal(quick.status, 200);
+  config.conversions.metaTestEventCode = 'TEST20833';
+  const quickId = 1;
+  store.markConversion(quickId, now().getTime(), 99900);
+  await app.tick();
+  const firstRound = fetchFn.meta();
+  assert.equal(firstRound.length, 2);
+  assert.ok(firstRound.every((m) => m.body.test_event_code === 'TEST20833'));
+
+  // Поки тест-код стоїть, повтор не запускається
+  config.conversions.metaResendBefore = now().getTime() + 1000;
+  now.advance(60_000);
+  await app.tick();
+  assert.equal(fetchFn.meta().length, 2);
+
+  config.conversions.metaTestEventCode = '';
+  await app.tick();
+  const resent = fetchFn.meta().slice(2);
+  assert.equal(resent.length, 2);
+  assert.ok(resent.every((m) => !('test_event_code' in m.body)));
+  assert.deepEqual(resent.map((m) => m.body.data[0].event_id).sort(), firstRound.map((m) => m.body.data[0].event_id).sort());
+  const result = JSON.parse(store.getMeta('meta_resend_result'));
+  assert.deepEqual([result.orders, result.crm], [1, 1]);
+  const status = JSON.parse((await call(app, { method: 'GET', url: '/status' })).text);
+  assert.equal(status.conversions.meta_test_mode, false);
+  assert.equal(status.conversions.meta_resend.crm, 1);
+
+  now.advance(20 * 60_000);
+  await app.tick();
+  await app.tick();
+  assert.equal(fetchFn.meta().length, 4, 'повтор разовий');
+});

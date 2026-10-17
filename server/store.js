@@ -447,6 +447,14 @@ export class Store {
     return this.q("SELECT * FROM orders WHERE conv_at IS NOT NULL AND conv_at >= ? AND status NOT IN ('spam', 'cancelled') ORDER BY conv_at, id", since);
   }
 
+  // Повторна відправка в Meta: відправлені покупки, зараховані до before, знову стають у чергу. Повертає кількість.
+  resetMetaSent(before) {
+    const reset = 'meta_state = NULL, meta_attempts = 0, meta_error = NULL, meta_next_at = NULL';
+    const orders = this.run(`UPDATE orders SET ${reset} WHERE meta_state = 'sent' AND conv_at < ?`, before).changes;
+    const crm = this.run(`UPDATE crm_purchases SET ${reset} WHERE meta_state = 'sent' AND conv_at < ?`, before).changes;
+    return { orders: Number(orders), crm: Number(crm) };
+  }
+
   /* ---- покупки з інших джерел KeyCRM (Instagram Direct) ---- */
 
   // true, якщо покупку додано вперше (повторне зарахування того самого замовлення ігнорується)
