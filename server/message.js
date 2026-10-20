@@ -37,7 +37,7 @@ export function describeDelivery(delivery) {
 
 export function buildOrderMessage(o) {
   const lines = [
-    `<b>🛍 Швидке замовлення #${escapeHtml(o.orderNumber)}</b>`,
+    `<b>🛍 Швидке замовлення #${escapeHtml(o.orderNumber)}</b>${o.brandName ? ` · <b>${escapeHtml(o.brandName)}</b>` : ''}`,
     `🕒 ${escapeHtml(o.when)}${o.afterHours ? ' · ⏳ <b>поза робочим часом</b>' : ''}`,
   ];
   if (o.delayed) lines.push('⚠️ Повідомлення надійшло із затримкою через збій звʼязку');
@@ -57,7 +57,7 @@ export function buildOrderMessage(o) {
   if (o.body) lines.push(`📏 Зріст ${o.body.height} см, вага ${o.body.weight} кг`);
   if (o.comment) lines.push(`💬 ${escapeHtml(o.comment)}`);
   const source = describeSource(o);
-  lines.push('', `📈 ${source ? escapeHtml(source) : 'прямий візит'}`, '#Monoclo');
+  lines.push('', `📈 ${source ? escapeHtml(source) : 'прямий візит'}`, o.brandTag || '#Monoclo');
   return lines.join('\n');
 }
 

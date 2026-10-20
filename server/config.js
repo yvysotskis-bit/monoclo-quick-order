@@ -41,12 +41,35 @@ export function loadConfig(env = process.env) {
   };
 
   const shop = required('SHOPIFY_SHOP');
+  const apiSecret = required('SHOPIFY_API_SECRET');
+  const storeOrigin = (optional('STORE_ORIGIN') || `https://${shop}`).replace(/\/+$/, '');
+  const keycrmSourceId = number('KEYCRM_SOURCE_ID', 216);
+  // Магазини, з яких приймаємо замовлення. Основний (Monoclo) має всі функції; другий (Morning Star, MS_*) — лише
+  // Telegram, статуси, нагадування і KeyCRM зі своїм джерелом, без оплат Monobank, ТТН і передачі покупок у рекламу.
+  const shops = [{
+    key: 'main', shop, apiSecret, storeOrigin, keycrmSourceId, tag: optional('BRAND_TAG') || '#Monoclo', name: '', full: true,
+  }];
+  const msShop = optional('MS_SHOP');
+  if (msShop) {
+    if (msShop === shop) throw new Error('MS_SHOP має відрізнятися від SHOPIFY_SHOP');
+    shops.push({
+      key: 'ms',
+      shop: msShop,
+      apiSecret: required('MS_API_SECRET'),
+      storeOrigin: (optional('MS_STORE_ORIGIN') || `https://${msShop}`).replace(/\/+$/, ''),
+      keycrmSourceId: number('MS_KEYCRM_SOURCE_ID', 215),
+      tag: optional('MS_TAG') || '#MorningStar',
+      name: optional('MS_NAME') || 'Morning Star',
+      full: false,
+    });
+  }
   const dbPath = optional('DB_PATH') || (fs.existsSync('/data') ? '/data/quick-order.db' : './data/quick-order.db');
   return {
     port: number('PORT', 3000),
     shop,
-    apiSecret: required('SHOPIFY_API_SECRET'),
-    storeOrigin: (optional('STORE_ORIGIN') || `https://${shop}`).replace(/\/+$/, ''),
+    apiSecret,
+    storeOrigin,
+    shops,
     telegramToken: required('TELEGRAM_BOT_TOKEN'),
     telegramChatId: required('TELEGRAM_CHAT_ID'),
     telegramWebhookSecret: required('TELEGRAM_WEBHOOK_SECRET'),
@@ -64,7 +87,7 @@ export function loadConfig(env = process.env) {
 
     // KeyCRM (необовʼязково: без ключа замовлення йдуть лише в Telegram)
     keycrmToken: optional('KEYCRM_API_KEY'),
-    keycrmSourceId: number('KEYCRM_SOURCE_ID', 216),
+    keycrmSourceId,
     keycrmStatusMap: parseJson(optional('KEYCRM_STATUS_MAP'), 'KEYCRM_STATUS_MAP'),
     // Служба доставки «Нова пошта» у KeyCRM (Налаштування → Служби доставки); 0 = не вказувати
     // Статус у KeyCRM, у який переводити замовлення після створення ТТН (id зі списку статусів); 0 = не змінювати
