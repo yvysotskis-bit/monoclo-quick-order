@@ -447,6 +447,14 @@ export class Store {
     return this.q("SELECT * FROM orders WHERE conv_at IS NOT NULL AND conv_at >= ? AND status NOT IN ('spam', 'cancelled') ORDER BY conv_at, id", since);
   }
 
+  // Усі зараховані покупки (і швидкі замовлення, і KeyCRM-джерела) для звірки з Meta — разом зі станом відправки
+  metaPurchasesSince(since) {
+    const orders = this.q('SELECT * FROM orders WHERE conv_at IS NOT NULL AND conv_at >= ? ORDER BY conv_at, id', since);
+    const crm = this.db.prepare('SELECT * FROM crm_purchases WHERE conv_at >= ? ORDER BY conv_at, crm_order_id')
+      .all(since).map((r) => ({ ...r, event: JSON.parse(r.event) }));
+    return { orders, crm };
+  }
+
   // Повторна відправка в Meta: відправлені покупки, зараховані до before, знову стають у чергу. Повертає кількість.
   resetMetaSent(before) {
     const reset = 'meta_state = NULL, meta_attempts = 0, meta_error = NULL, meta_next_at = NULL';

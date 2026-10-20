@@ -174,6 +174,60 @@ export function buildGoogleAdsCsv(orders, { conversionName, format = 'data_manag
   return `${lines.join('\n')}\n`;
 }
 
+const META_STATE_LABEL = { sent: 'відправлено', dry: 'тестовий режим (не відправлено)', expired: 'прострочено (не відправлено)' };
+
+function metaStateLabel(state, error) {
+  if (META_STATE_LABEL[state]) return META_STATE_LABEL[state];
+  return error ? 'помилка, повтор' : 'у черзі';
+}
+
+// Час у часовому поясі магазину: «2026-10-16 17:42:05»
+function localTime(ms, timeZone) {
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(new Date(ms));
+}
+
+const CRM_SOURCE_LABEL = { 198: 'Instagram Direct', 216: 'Швидке замовлення' };
+
+// Таблиця всіх покупок, які сервер передає в Meta (для звірки таргетологом з KeyCRM і Events Manager).
+// Без персональних даних: лише номери замовлень, суми й товари. Подія швидкого замовлення будується тим самим
+// buildMetaEvent, що й під час відправки, тож content_ids і сума збігаються з тим, що отримала Meta.
+export function buildMetaPurchasesCsv({ orders = [], crm = [] }, { contentIdTemplate, timeZone = 'Europe/Kyiv' }) {
+  const rows = [];
+  for (const order of orders) {
+    const event = buildMetaEvent(order, { contentIdTemplate, eventTimeMs: order.conv_at });
+    const d = order.data;
+    rows.push({
+      at: order.conv_at,
+      cells: [
+        'Швидке замовлення', order.order_number, order.crm_order_id || '', event.event_id,
+        localTime(order.conv_at, timeZone), (order.conv_value_cents / 100).toFixed(2), 'UAH',
+        (event.custom_data.content_ids || []).join(' '), d.productTitle || '',
+        (d.options || []).map((o) => o.value).join(' / '), d.sku || '', d.quantity ?? '',
+        metaStateLabel(order.meta_state, order.meta_error),
+      ],
+    });
+  }
+  for (const p of crm) {
+    const cd = p.event?.custom_data || {};
+    rows.push({
+      at: p.conv_at,
+      cells: [
+        CRM_SOURCE_LABEL[p.source_id] || `KeyCRM, джерело ${p.source_id}`, '', p.crm_order_id, p.event?.event_id || `keycrm-${p.crm_order_id}`,
+        localTime(p.conv_at, timeZone), (p.value_cents / 100).toFixed(2), 'UAH',
+        (cd.content_ids || []).join(' '), '', '', '', cd.num_items ?? '',
+        metaStateLabel(p.meta_state, p.meta_error),
+      ],
+    });
+  }
+  rows.sort((a, b) => a.at - b.at);
+  const header = ['джерело', 'номер_швидкого_замовлення', 'id_замовлення_keycrm', 'event_id', 'час_події_київ',
+    'сума', 'валюта', 'content_ids', 'товар', 'варіант', 'sku', 'кількість', 'стан_відправки_в_meta'];
+  // BOM: Excel інакше відкриває кирилицю кракозябрами
+  return `﻿${[header, ...rows.map((r) => r.cells)].map((cells) => cells.map(csvCell).join(',')).join('\n')}\n`;
+}
+
 // Покупка із замовлення KeyCRM іншого джерела (Instagram Direct): оплата + ТТН, без скасованих і вже відправлених
 // старою інтеграцією (тег CAPI). Повертає { ok, valueCents } або причину відмови.
 export function evaluateCrmOrder(o, { excludeStatusIds = [], excludeStatusGroupIds = [] } = {}) {
@@ -471,9 +525,18 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
     return buildGoogleAdsCsv(orders, { conversionName: c.gadsConversionName, format });
   }
 
+  // Таблиця для звірки покупок з Meta (за замовчуванням — усе з моменту ввімкнення)
+  function metaPurchasesCsv(sinceMs = 0) {
+    return buildMetaPurchasesCsv(store.metaPurchasesSince(sinceMs), {
+      contentIdTemplate: c.metaContentId,
+      timeZone: config.timezone || 'Europe/Kyiv',
+    });
+  }
+
   return {
     tick,
     googleAdsCsv,
+    metaPurchasesCsv,
     get enabled() { return Boolean(c.enabled); },
     diagnostics() {
       return {
