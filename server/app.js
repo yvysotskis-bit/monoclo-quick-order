@@ -931,6 +931,25 @@ p{margin:8px 0;color:#555}</style></head>
         res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'cache-control': 'no-store' });
         return res.end(conversions.googleAdsCsv(url.searchParams.get('format') === 'legacy' ? 'legacy' : 'data_manager'));
       }
+      // Звірка для таргетолога: усі покупки, передані в Meta (той самий логін і пароль, що й у файлу Google Ads).
+      // ?from=YYYY-MM-DD — з якої дати за Києвом (початок дня з запасом до години взимку), без параметра — усе
+      if (req.method === 'GET' && url.pathname === '/conversions/meta-purchases.csv') {
+        const c = config.conversions;
+        if (!conversions.enabled || !c?.gadsFeedPassword) return send(404, { ok: false, code: 'not_found' });
+        const [scheme, encoded] = String(req.headers.authorization || '').split(' ');
+        const [user, ...pass] = Buffer.from(encoded || '', 'base64').toString('utf8').split(':');
+        if (scheme !== 'Basic' || !safeEqual(user, c.gadsFeedUser) || !safeEqual(pass.join(':'), c.gadsFeedPassword)) {
+          res.writeHead(401, { 'www-authenticate': 'Basic realm="conversions"', 'cache-control': 'no-store' });
+          return res.end();
+        }
+        const from = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('from') || '') ? Date.parse(`${url.searchParams.get('from')}T00:00:00Z`) - 3 * 3600e3 : 0;
+        res.writeHead(200, {
+          'content-type': 'text/csv; charset=utf-8',
+          'content-disposition': 'attachment; filename="monoclo-meta-purchases.csv"',
+          'cache-control': 'no-store',
+        });
+        return res.end(conversions.metaPurchasesCsv(Number.isFinite(from) ? from : 0));
+      }
       if (req.method === 'POST' && url.pathname === '/proxy/submit') return send(200, await submit(req, url));
       if (req.method === 'POST' && url.pathname === '/telegram/webhook') return send(200, await telegramWebhook(req));
       if (req.method === 'POST' && url.pathname === '/mono/webhook') return send(200, await monoWebhook(req));

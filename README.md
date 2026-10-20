@@ -157,6 +157,9 @@ Telegram і в KeyCRM (служба доставки, місто, область
   `gclid, gbraid, wbraid, conversion_time (ISO з часовим поясом), conversion_value, currency_code, order_id, conversion_name`.
   Той самий клік повторно не рахується. Старий шаблон «Завантаження → Розклади» — `?format=legacy`.
   Той самий файл також за адресою `/conversions/quick-order-purchases.csv` (її використовує підключення в Менеджері даних).
+- **Звірка з Meta:** `GET /conversions/meta-purchases.csv` (той самий логін і пароль; `?from=YYYY-MM-DD` — з дати) —
+  усі покупки, передані в Meta: швидкі замовлення й Instagram Direct, з номером замовлення, ID у KeyCRM, `event_id`,
+  часом події за Києвом, сумою, `content_ids`, товаром і станом відправки. Без телефонів та імен.
 
 Форма тепер зберігає значення gclid/gbraid/wbraid і fbclid (60 днів), а при відправці додає cookie `_fbc`, `_fbp`,
 `_ga`, `_ga_<потік>` і user-agent (gbraid/wbraid поки лише зберігаються, у файл Google Ads не потрапляють).

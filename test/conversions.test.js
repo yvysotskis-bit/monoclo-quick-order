@@ -522,3 +522,48 @@ test('GA4: ID товару — ID варіанта Shopify, як у Merchant Cen
   const item = ga.body.events[0].params.items[0];
   assert.equal(item.item_id, String(goodBody().variant_id));
 });
+
+/* ---------- Таблиця покупок для звірки з Meta ---------- */
+
+test('CSV покупок для Meta: лише з паролем; швидкі замовлення й Direct, як їх отримала Meta, без персональних даних', async () => {
+  const ctx = makeApp({ cfg: { keycrmToken: 'CRMTOKEN', conversions: conv({ crmSourceIds: [198, 216] }) } });
+  ctx.fetchFn.crmState.order = { status_id: 1, status_group_id: 1, grand_total: 1780, shipping: { tracking_code: '' } };
+  ctx.fetchFn.crmState.list = [igOrder()];
+  assert.equal((await submit(ctx.app, goodBody({ ads, surname: 'Петренко' }))).status, 200);
+  pay(ctx.store, ctx.now);
+  ctx.store.setTtn(1, '20451234567890', 'ref');
+  await ctx.app.tick();
+  const sent = ctx.fetchFn.meta().flatMap((m) => m.body.data);
+  assert.equal(sent.length, 2);
+
+  const url = '/conversions/meta-purchases.csv';
+  assert.equal((await call(ctx.app, { method: 'GET', url })).status, 401);
+  const good = Buffer.from('googleads:feed-pass').toString('base64');
+  const res = await call(ctx.app, { method: 'GET', url, headers: { authorization: `Basic ${good}` } });
+  assert.equal(res.status, 200);
+  assert.match(res.headers['content-type'], /text\/csv/);
+  const lines = res.text.replace(/^﻿/, '').trim().split('\n');
+  assert.equal(lines[0], 'джерело,номер_швидкого_замовлення,id_замовлення_keycrm,event_id,час_події_київ,сума,валюта,content_ids,товар,варіант,sku,кількість,стан_відправки_в_meta');
+  assert.equal(lines.length, 3);
+
+  const quick = lines.find((l) => l.startsWith('Швидке замовлення'));
+  const quickEvent = sent.find((e) => e.event_id.startsWith('quick-'));
+  assert.ok(quick.includes(`,${quickEvent.event_id},`));
+  assert.ok(quick.includes(',1780.00,UAH,shopify_UA_9001,'), 'сума й content_ids як у відправленій події');
+  assert.ok(quick.endsWith(',2,відправлено'));
+
+  const direct = lines.find((l) => l.startsWith('Instagram Direct'));
+  assert.ok(direct.includes(',5001,keycrm-5001,'));
+  assert.ok(direct.includes(',1899.00,UAH,'));
+  assert.ok(direct.endsWith(',відправлено'));
+
+  assert.ok(!/380671234567|380501112233|Петренко|Коваль/.test(res.text), 'ні телефонів, ні імен');
+
+  const later = await call(ctx.app, { method: 'GET', url: `${url}?from=2099-01-01`, headers: { authorization: `Basic ${good}` } });
+  assert.equal(later.text.replace(/^﻿/, '').trim().split('\n').length, 1, 'фільтр за датою');
+});
+
+test('CSV покупок для Meta вимкнений без пароля', async () => {
+  const { app } = await setup({ cfg: { conversions: conv({ gadsFeedPassword: '' }) } });
+  assert.equal((await call(app, { method: 'GET', url: '/conversions/meta-purchases.csv' })).status, 404);
+});
