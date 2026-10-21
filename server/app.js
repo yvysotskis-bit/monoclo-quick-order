@@ -253,14 +253,20 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   async function submit(req, url) {
     // 1. Запит має прийти через App Proxy одного з наших магазинів
     const shop = proxyShop(url);
-    const knownShop = shops.some((s) => s.shop === url.searchParams.get('shop'));
+    const shopParam = url.searchParams.get('shop');
+    const matched = shops.find((s) => s.shop === shopParam);
+    const knownShop = Boolean(matched);
     if (!shop && (knownShop || !verifyProxySignature(url.searchParams, config.apiSecret))) {
       // Без самого секрету: лише те, що допомагає знайти причину
+      const checked = matched || shops[0];
       log.error('bad proxy signature', JSON.stringify({
         hasSignature: url.searchParams.has('signature'),
         params: [...new Set(url.searchParams.keys())],
-        secretLength: config.apiSecret.length,
-        secretPrefix: config.apiSecret.slice(0, 3),
+        shopParam,
+        matchedShop: matched ? matched.key : null,
+        configuredShops: shops.map((s) => `${s.key}:${s.shop}`),
+        secretLength: checked.apiSecret.length,
+        secretPrefix: checked.apiSecret.slice(0, 3),
       }));
       throw new HttpError(401, 'unauthorized', 'Недійсний підпис');
     }
