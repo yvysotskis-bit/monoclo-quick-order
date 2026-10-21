@@ -356,8 +356,12 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
     const since = Math.max(nowMs - c.lookbackDays * DAY, startFrom(nowMs));
     const reasons = {};
     diag.lastCrmPoll = { at: new Date(nowMs).toISOString(), since: new Date(since).toISOString(), seen: 0, reasons };
-    // Джерело швидких замовлень обробляється окремо (з оплатою й ТТН із бота): тут його пропускаємо, щоб не було дублів
-    for (const sourceId of c.crmSourceIds.filter((id) => id !== Number(config.keycrmSourceId))) {
+    // Замовлення бота з джерела швидких замовлень обробляє qualify() (оплата й ТТН із бота). Але менеджери
+    // заводять у це ж джерело замовлення вручну (без номера quick-…, часто замість видаленого замовлення бота) -
+    // їх бот не знає, тож беремо їх тут, а замовлення бота пропускаємо, щоб не було дублів
+    const quickSourceId = Number(config.keycrmSourceId);
+    const sourceIds = [...new Set([...c.crmSourceIds, ...(c.crmManualQuick !== false && quickSourceId ? [quickSourceId] : [])])];
+    for (const sourceId of sourceIds) {
       for (let page = 1; page <= 10; page += 1) {
         let result;
         try {
@@ -374,6 +378,7 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
           if (!o?.id) continue;
           if (store.hasCrmPurchase(o.id)) { count('already_counted'); continue; }
           if (Number(o.source_id) && Number(o.source_id) !== Number(sourceId)) { count('other_source'); continue; }
+          if (sourceId === quickSourceId && (/^quick-/i.test(String(o.source_uuid || '')) || store.hasLocalCrmOrder(o.id))) { count('bot_order'); continue; }
           const created = Date.parse(String(o.created_at || '').replace(' ', 'T'));
           if (Number.isFinite(created) && created < since) { count('before_start'); continue; }
           const verdict = evaluateCrmOrder(o, c);

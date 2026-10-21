@@ -446,7 +446,7 @@ test('Instagram Direct: оплачене замовлення з ТТН іде �
   assert.deepEqual(event.user_data.ph, [sha('380501112233')]);
   assert.deepEqual(event.user_data.ct, [sha('львів')]);
   assert.ok(!JSON.stringify(meta.body).includes('380501112233'));
-  assert.ok(fetchFn.crmLists.every((q) => q['filter[source_id]'] === '198'), 'джерело швидких замовлень не опитується');
+  assert.deepEqual([...new Set(fetchFn.crmLists.map((q) => q['filter[source_id]']))].sort(), ['198', '216']);
 
   now.advance(20 * 60_000);
   await app.tick();
@@ -471,10 +471,39 @@ test('Instagram Direct: KeyCRM опитується не частіше ніж �
   const { app, fetchFn, now } = await igSetup({ list: [] });
   await app.tick();
   await app.tick();
-  assert.equal(fetchFn.crmLists.length, 1);
+  assert.equal(fetchFn.crmLists.length, 2, 'Direct + ручні швидкі замовлення, по одному запиту');
   now.advance(16 * 60_000);
   await app.tick();
-  assert.equal(fetchFn.crmLists.length, 2);
+  assert.equal(fetchFn.crmLists.length, 4);
+});
+
+test('ручні швидкі замовлення: менеджер завів у джерело швидких замовлень без номера бота - іде в Meta', async () => {
+  const { app, fetchFn, store } = await igSetup({ list: [igOrder({ id: 6001, source_id: 216 })] });
+  await app.tick();
+  const [meta] = fetchFn.meta();
+  assert.ok(meta);
+  assert.equal(meta.body.data[0].event_id, 'keycrm-6001');
+  assert.equal(store.conversionCounts().crm_meta_sent, 1);
+});
+
+test('ручні швидкі замовлення: замовлення бота (quick-… або пов\'язане з базою бота) і тег CAPI не дублюються', async () => {
+  const { app, fetchFn, store } = await igSetup({ list: [
+    igOrder({ id: 6002, source_id: 216, source_uuid: 'quick-20251005-123000' }),
+    igOrder({ id: 6003, source_id: 216 }),
+    igOrder({ id: 6004, source_id: 216, tags: [{ id: 17, alias: 'capi', name: 'CAPI' }] }),
+  ] });
+  const res = await submit(app, goodBody({ ads, phone: '+380 (67) 555 44 33', client_id: 'client-id-0010' }));
+  assert.equal(res.status, 200);
+  store.run('UPDATE orders SET crm_order_id = 6003 WHERE id = 1');
+  await app.tick();
+  assert.equal(fetchFn.meta().filter((m) => /^keycrm-/.test(m.body.data[0].event_id)).length, 0);
+});
+
+test('ручні швидкі замовлення можна вимкнути (CONVERSIONS_CRM_MANUAL_QUICK=false)', async () => {
+  const { app, fetchFn } = await igSetup({ list: [igOrder({ id: 6005, source_id: 216 })], cfg: { crmSourceIds: [198], crmManualQuick: false } });
+  await app.tick();
+  assert.equal(fetchFn.meta().length, 0);
+  assert.ok(fetchFn.crmLists.every((q) => q['filter[source_id]'] === '198'));
 });
 
 test('разова повторна відправка в Meta: ті самі event_id, лише без тест-коду, не повторюється після перезапуску', async () => {

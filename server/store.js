@@ -472,6 +472,10 @@ export class Store {
       crmOrderId, sourceId, convAt, valueCents, JSON.stringify(event)).changes > 0;
   }
 
+  hasLocalCrmOrder(crmOrderId) {
+    return Boolean(this.db.prepare('SELECT 1 FROM orders WHERE crm_order_id = ?').get(crmOrderId));
+  }
+
   hasCrmPurchase(crmOrderId) {
     return Boolean(this.db.prepare('SELECT 1 FROM crm_purchases WHERE crm_order_id = ?').get(crmOrderId));
   }

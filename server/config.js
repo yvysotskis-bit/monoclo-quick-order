@@ -144,6 +144,8 @@ export function loadConfig(env = process.env) {
       excludeStatusGroupIds: idList(optional('CONVERSIONS_EXCLUDE_STATUS_GROUPS') || '6'),
       // Інші джерела KeyCRM, чиї оплачені замовлення з ТТН теж ідуть у Meta як покупка (198 = «Інстаграм | Monoclo»)
       crmSourceIds: idList(optional('CONVERSIONS_CRM_SOURCE_IDS')),
+      // Замовлення, які менеджери завели вручну в джерело швидких замовлень (без номера quick-…), теж зараховувати
+      crmManualQuick: optional('CONVERSIONS_CRM_MANUAL_QUICK') !== 'false',
       metaDatasetId: optional('META_DATASET_ID'),
       metaToken: optional('META_CAPI_TOKEN'),
       metaTestEventCode: optional('META_TEST_EVENT_CODE'),
