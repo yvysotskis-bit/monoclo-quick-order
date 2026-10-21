@@ -926,12 +926,18 @@ p{margin:8px 0;color:#555}</style></head>
 
   // Службові параметри App Proxy, які не треба передавати далі
   const PROXY_PARAMS = new Set(['shop', 'logged_in_customer_id', 'path_prefix', 'timestamp', 'signature']);
-  function checkoutRedirect(url) {
+  // /proxy/go — адреса GetCheckout за доменом myshopify; /proxy/go/<домен> — за доменом магазину
+  // (у Monoclo оформлення живе на get-checkout.com/monoclo.com.ua/). Дозволені лише ці два варіанти.
+  function checkoutRedirect(url, segment) {
     const shopParam = url.searchParams.get('shop');
     const s = shops.find((x) => x.shop === shopParam);
     const cart = url.searchParams.get('cart') || '';
     if (!s || !/^[A-Za-z0-9]{8,64}(\?key=[A-Za-z0-9]{8,64})?$/.test(cart)) return null;
-    const target = new URL(`https://get-checkout.com/${s.shop}/`);
+    let storeHost = '';
+    try { storeHost = new URL(s.storeOrigin).host; } catch {}
+    const path = segment || s.shop;
+    if (path !== s.shop && path !== storeHost) return null;
+    const target = new URL(`https://get-checkout.com/${path}/`);
     for (const [k, v] of url.searchParams) {
       if (!PROXY_PARAMS.has(k) && k.length <= 40 && v.length <= 300) target.searchParams.append(k, v);
     }
@@ -958,8 +964,9 @@ p{margin:8px 0;color:#555}</style></head>
       // Перехід в оформлення GetCheckout через адресу самого магазину (/apps/quick-order/go):
       // Shopify не показує вікно «Are you sure you want to leave…» для переходів у межах магазину,
       // а редирект сервера вже не є «посиланням на інший сайт». Хост призначення фіксований — відкритого редиректу немає.
-      if (req.method === 'GET' && url.pathname === '/proxy/go') {
-        const target = checkoutRedirect(url);
+      const go = req.method === 'GET' && /^\/proxy\/go(?:\/([a-z0-9.-]{3,100}))?\/?$/i.exec(url.pathname);
+      if (go) {
+        const target = checkoutRedirect(url, go[1] && go[1].toLowerCase());
         if (!target) {
           res.writeHead(302, { location: '/cart', 'cache-control': 'no-store' });
           return res.end();

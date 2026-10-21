@@ -119,3 +119,20 @@ test('перехід в оформлення через /proxy/go: редире�
   const unknownShop = await call(app, { method: 'GET', url: msUrl('/proxy/go', { shop: 'evil.myshopify.com', extra: { cart: 'abcdefgh12' } }) });
   assert.equal(unknownShop.status, 302);
 });
+
+test('/proxy/go/<домен>: лише домен магазину або myshopify, інакше назад у кошик', async () => {
+  const { app } = makeApp({ cfg });
+  const host = new URL(config.storeOrigin).host;
+  const mainUrl = (path, extra) => {
+    const params = new URLSearchParams({ shop: config.shop, path_prefix: '/apps/quick-order', timestamp: String(Math.floor(Date.now() / 1000)), ...extra });
+    params.set('signature', signParams(params, config.apiSecret));
+    return `${path}?${params}`;
+  };
+  const ok = await call(app, { method: 'GET', url: mainUrl(`/proxy/go/${host}`, { cart: 'abcdefgh12?key=abcdefgh12' }) });
+  assert.equal(ok.status, 200);
+  const loc = new URL(JSON.parse(/location\.replace\((".*?")\)/.exec(ok.text)[1]));
+  assert.equal(loc.href.startsWith(`https://get-checkout.com/${host}/?`), true);
+  const evil = await call(app, { method: 'GET', url: mainUrl('/proxy/go/evil.example', { cart: 'abcdefgh12' }) });
+  assert.equal(evil.status, 302);
+  assert.equal(evil.headers.location, '/cart');
+});
