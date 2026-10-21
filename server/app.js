@@ -960,8 +960,16 @@ p{margin:8px 0;color:#555}</style></head>
       // а редирект сервера вже не є «посиланням на інший сайт». Хост призначення фіксований — відкритого редиректу немає.
       if (req.method === 'GET' && url.pathname === '/proxy/go') {
         const target = checkoutRedirect(url);
-        res.writeHead(target ? 302 : 400, { location: target || '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer-when-downgrade' });
-        return res.end();
+        if (!target) {
+          res.writeHead(302, { location: '/cart', 'cache-control': 'no-store' });
+          return res.end();
+        }
+        // Не 302: App Proxy Shopify розкодовує Location, і GetCheckout тоді не читає токен кошика.
+        // Сторінка без скриптів Shopify сама переходить на точну адресу.
+        const js = JSON.stringify(target).replace(/</g, '\\u003c');
+        const attr = target.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex' });
+        return res.end(`<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>Оформлення замовлення…</title><script>location.replace(${js})</script><noscript><meta http-equiv="refresh" content="0;url=${attr}"></noscript><a href="${attr}" style="font:16px sans-serif">Перейти до оформлення</a>`);
       }
       const np = req.method === 'GET' && /^\/proxy\/np\/(cities|points|streets)$/.exec(url.pathname);
       if (np) return send(200, await novaPoshtaLookup(req, url, np[1]));
