@@ -3,7 +3,7 @@
 # Shopify підписує запит секретом ЦЬОГО додатка (змінна MS_API_SECRET на сервері).
 # Деплой: npx @shopify/cli@latest app deploy --config morning-star
 name = "Morning Star Quick Order"
-client_id = "ВСТАВТЕ_CLIENT_ID_З_DEV_DASHBOARD"
+client_id = "9e11d81c6ccd154ff1d553b4ce7f45fb"
 application_url = "https://monoclo-quick-order.onrender.com"
 embedded = false
 
