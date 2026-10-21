@@ -924,6 +924,20 @@ p{margin:8px 0;color:#555}</style></head>
     }
   }
 
+  // Службові параметри App Proxy, які не треба передавати далі
+  const PROXY_PARAMS = new Set(['shop', 'logged_in_customer_id', 'path_prefix', 'timestamp', 'signature']);
+  function checkoutRedirect(url) {
+    const shopParam = url.searchParams.get('shop');
+    const s = shops.find((x) => x.shop === shopParam);
+    const cart = url.searchParams.get('cart') || '';
+    if (!s || !/^[A-Za-z0-9]{8,64}(\?key=[A-Za-z0-9]{8,64})?$/.test(cart)) return null;
+    const target = new URL(`https://get-checkout.com/${s.shop}/`);
+    for (const [k, v] of url.searchParams) {
+      if (!PROXY_PARAMS.has(k) && k.length <= 40 && v.length <= 300) target.searchParams.append(k, v);
+    }
+    return target.toString();
+  }
+
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const send = (code, body) => {
@@ -940,6 +954,14 @@ p{margin:8px 0;color:#555}</style></head>
       if (req.method === 'GET' && url.pathname === '/status') {
         const { code, body } = status();
         return send(code, body);
+      }
+      // Перехід в оформлення GetCheckout через адресу самого магазину (/apps/quick-order/go):
+      // Shopify не показує вікно «Are you sure you want to leave…» для переходів у межах магазину,
+      // а редирект сервера вже не є «посиланням на інший сайт». Хост призначення фіксований — відкритого редиректу немає.
+      if (req.method === 'GET' && url.pathname === '/proxy/go') {
+        const target = checkoutRedirect(url);
+        res.writeHead(target ? 302 : 400, { location: target || '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer-when-downgrade' });
+        return res.end();
       }
       const np = req.method === 'GET' && /^\/proxy\/np\/(cities|points|streets)$/.exec(url.pathname);
       if (np) return send(200, await novaPoshtaLookup(req, url, np[1]));
