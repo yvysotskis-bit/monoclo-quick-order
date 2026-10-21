@@ -29,7 +29,8 @@ export function contentId(template, d) {
 
 // Чи вважається замовлення покупкою, і з якою сумою
 export function evaluatePurchase({ order, localPaidCents, crm, excludeStatusIds = [], excludeStatusGroupIds = [] }) {
-  if (['spam', 'cancelled'].includes(order.status)) return { ok: false, reason: 'status' };
+  // Кнопки статусу в чаті менеджерів («Спам», «Скасовано») не вирішують: їх інколи тиснуть помилково або пропускають.
+  // Джерело правди - KeyCRM: оплата + ТТН і статус не з групи «Скасовано» (перевіряється нижче)
   if (crm) {
     if (excludeStatusIds.includes(crm.statusId)) return { ok: false, reason: 'crm_status' };
     if (excludeStatusGroupIds.includes(crm.statusGroupId)) return { ok: false, reason: 'crm_status_group' };
