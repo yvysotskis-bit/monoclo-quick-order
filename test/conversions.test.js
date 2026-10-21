@@ -130,12 +130,16 @@ test('спам, скасовані й статуси-виключення (те�
     assert.equal(fetchFn.meta().length, 0);
     assert.equal(store.getOrder(1).conv_at, null);
   }
+});
+
+test('кнопка «Спам» у чаті не блокує покупку: вирішує KeyCRM (оплата + ТТН, не «Скасовано»)', async () => {
   const { app, fetchFn, store, now } = await setup();
   store.setStatus(1, 'spam', 'Оля', now().getTime());
   pay(store, now);
   store.setTtn(1, '20451234567890', 'ref');
   await app.tick();
-  assert.equal(fetchFn.meta().length, 0);
+  assert.equal(fetchFn.meta().length, 1);
+  assert.ok(store.getOrder(1).conv_at);
 });
 
 test('KeyCRM недоступний: без перевірки статусу покупку не зараховуємо, пізніше зараховуємо', async () => {
@@ -378,7 +382,7 @@ test('CSV: у тестовому режимі порожній, спам піс�
   assert.equal(real.length, 2);
   assert.match(real[1], /^Cj0KCQjwgclid123,/, 'зі справжньою покупкою заглушки немає');
   ctx.store.setStatus(1, 'spam', 'Оля', ctx.now().getTime());
-  assert.match((await csv())[1], /^PLACEHOLDER/);
+  assert.match((await csv())[1], /^Cj0KCQjwgclid123,/, 'статус кнопок у чаті не прибирає зараховану покупку');
 });
 
 test('тестовий режим не застрягає на перших 10 покупках', async () => {

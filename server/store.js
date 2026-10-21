@@ -392,7 +392,7 @@ export class Store {
   conversionCandidates(now, since, limit = 3) {
     return this.q(
       `SELECT * FROM orders
-       WHERE conv_at IS NULL AND created_at >= ? AND status NOT IN ('spam', 'cancelled')
+       WHERE conv_at IS NULL AND created_at >= ?
          AND COALESCE(json_extract(data, '$.shop'), 'main') = 'main'
          AND (conv_checked_at IS NULL OR conv_checked_at <= ? - CASE
                WHEN ? - created_at < 172800000 THEN 1200000
@@ -443,9 +443,9 @@ export class Store {
   }
 
   // Зараховані покупки за період (для файлу офлайн-конверсій Google Ads)
-  // Спам і скасовані після зарахування з файлу прибираються (Google Ads їх ще не імпортував або імпортує без них)
+  // Статус кнопок у чаті не враховується: покупку визначає KeyCRM (оплата + ТТН, не «Скасовано»)
   conversionsSince(since) {
-    return this.q("SELECT * FROM orders WHERE conv_at IS NOT NULL AND conv_at >= ? AND status NOT IN ('spam', 'cancelled') ORDER BY conv_at, id", since);
+    return this.q('SELECT * FROM orders WHERE conv_at IS NOT NULL AND conv_at >= ? ORDER BY conv_at, id', since);
   }
 
   // Усі зараховані покупки (і швидкі замовлення, і KeyCRM-джерела) для звірки з Meta — разом зі станом відправки
