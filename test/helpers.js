@@ -100,7 +100,7 @@ export function mockFetch({ productResponse } = {}) {
     const u = String(url);
     const call = { url: u, method: init.method || 'GET', body: typeof init.body === 'string' ? JSON.parse(init.body) : (init.body ?? null), headers: init.headers };
     calls.push(call);
-    if (u.startsWith('https://store.test/products/')) {
+    if (/^https:\/\/(store|ms)\.test\/products\//.test(u)) {
       if (productResponse === 404) return new Response('{}', { status: 404 });
       return Response.json(productResponse || product);
     }

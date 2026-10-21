@@ -393,6 +393,7 @@ export class Store {
     return this.q(
       `SELECT * FROM orders
        WHERE conv_at IS NULL AND created_at >= ? AND status NOT IN ('spam', 'cancelled')
+         AND COALESCE(json_extract(data, '$.shop'), 'main') = 'main'
          AND (conv_checked_at IS NULL OR conv_checked_at <= ? - CASE
                WHEN ? - created_at < 172800000 THEN 1200000
                WHEN ? - created_at < 604800000 THEN 7200000

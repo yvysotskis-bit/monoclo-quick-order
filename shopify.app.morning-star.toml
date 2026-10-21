@@ -1,0 +1,25 @@
+# Morning Star Quick Order: окремий кастомний додаток для магазину Morning Star.
+# Лише App Proxy на той самий сервер, що й Monoclo: форма сайту шле /apps/quick-order/*,
+# Shopify підписує запит секретом ЦЬОГО додатка (змінна MS_API_SECRET на сервері).
+# Деплой: npx @shopify/cli@latest app deploy --config morning-star
+name = "Morning Star Quick Order"
+client_id = "ВСТАВТЕ_CLIENT_ID_З_DEV_DASHBOARD"
+application_url = "https://monoclo-quick-order.onrender.com"
+embedded = false
+
+[access_scopes]
+scopes = ""
+
+[auth]
+redirect_urls = ["https://monoclo-quick-order.onrender.com/auth/callback"]
+
+[app_proxy]
+url = "https://monoclo-quick-order.onrender.com/proxy"
+subpath = "quick-order"
+prefix = "apps"
+
+[build]
+include_config_on_deploy = true
+
+[webhooks]
+api_version = "2025-10"

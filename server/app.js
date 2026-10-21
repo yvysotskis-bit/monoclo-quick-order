@@ -97,6 +97,19 @@ const safeEqual = (a, b) => {
 const fingerprintOf = ({ phone, variantId, quantity }) => `${phone}|${variantId}|${quantity}`;
 
 export function createApp({ config, store, fetchFn = fetch, now = () => new Date(), log = console }) {
+  // Магазини (див. config.shops); без списку — лише основний, як раніше
+  const shops = config.shops?.length ? config.shops : [{
+    key: 'main', shop: config.shop, apiSecret: config.apiSecret, storeOrigin: config.storeOrigin,
+    keycrmSourceId: config.keycrmSourceId, tag: '#Monoclo', name: '', full: true,
+  }];
+  const shopByKey = (key) => shops.find((s) => s.key === (key || 'main')) || shops[0];
+  // Повні функції (оплата, ТТН, покупки в рекламу) — лише для основного магазину
+  const isFull = (order) => shopByKey(order?.data?.shop).full !== false;
+  // Магазин запиту App Proxy: знайдений за параметром shop і з дійсним підписом його секретом
+  const proxyShop = (url) => {
+    const s = shops.find((x) => x.shop === url.searchParams.get('shop'));
+    return s && verifyProxySignature(url.searchParams, s.apiSecret) ? s : null;
+  };
   const telegram = createTelegram({
     token: config.telegramToken,
     chatId: config.telegramChatId,
@@ -125,7 +138,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     : null;
   // Що показувати на кнопках оплати для конкретного замовлення
   const payInfo = (order) => {
-    if (!monobank) return null;
+    if (!monobank || !isFull(order)) return null;
     const paidCents = store.paidTotal(order.id);
     return {
       prepayUah: config.prepayAmountUah,
@@ -174,7 +187,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         return false;
       }
       try {
-        const crmId = await keycrm.createOrder(order);
+        const crmId = await keycrm.createOrder(order, { sourceId: shopByKey(order.data.shop).keycrmSourceId });
         store.markCrmSent(order.id, crmId);
         // Якщо менеджер уже встиг змінити статус у Telegram, підтягуємо його в CRM
         // (якщо оновлення не вдасться, його підхопить syncStatuses у фоновій черзі)
@@ -238,8 +251,10 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   /* ---------- Приймання замовлення ---------- */
 
   async function submit(req, url) {
-    // 1. Запит має прийти через App Proxy свого магазину
-    if (!verifyProxySignature(url.searchParams, config.apiSecret)) {
+    // 1. Запит має прийти через App Proxy одного з наших магазинів
+    const shop = proxyShop(url);
+    const knownShop = shops.some((s) => s.shop === url.searchParams.get('shop'));
+    if (!shop && (knownShop || !verifyProxySignature(url.searchParams, config.apiSecret))) {
       // Без самого секрету: лише те, що допомагає знайти причину
       log.error('bad proxy signature', JSON.stringify({
         hasSignature: url.searchParams.has('signature'),
@@ -251,7 +266,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     }
     const age = Math.abs(Date.now() / 1000 - Number(url.searchParams.get('timestamp')));
     if (!(age <= PROXY_MAX_AGE_SEC)) throw new HttpError(401, 'unauthorized', 'Запит застарів');
-    if (url.searchParams.get('shop') !== config.shop) {
+    if (!shop) {
       throw new HttpError(403, 'forbidden', 'Магазин не підтримується');
     }
 
@@ -288,7 +303,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     // 5. Ціна й наявність беремо з магазину, а не з форми
     let product;
     try {
-      product = await fetchProduct({ fetchFn, origin: config.storeOrigin, handle: input.handle });
+      product = await fetchProduct({ fetchFn, origin: shop.storeOrigin, handle: input.handle });
     } catch (err) {
       log.error('product fetch failed', err.message);
       throw new HttpError(502, 'upstream', 'Не вдалося перевірити товар. Спробуйте ще раз');
@@ -320,7 +335,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         productTitle: product.title,
         productHandle: product.handle,
         productId: product.id ? String(product.id) : '',
-        productUrl: input.pageUrl || `${config.storeOrigin}/products/${product.handle}`,
+        productUrl: input.pageUrl || `${shop.storeOrigin}/products/${product.handle}`,
         variantId: String(variant.id),
         sku: variant.sku || '',
         picture: variant.featured_image?.src || product.featured_image || '',
@@ -341,6 +356,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         click: input.click,
         ads: input.ads,
         afterHours,
+        // Магазин замовлення: основний не позначаємо, щоб старі й нові замовлення Monoclo виглядали однаково
+        ...(shop.key !== 'main' ? { shop: shop.key, brandTag: shop.tag, brandName: shop.name } : {}),
       },
     });
 
@@ -477,6 +494,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const order = store.findByMessageId(message.message_id);
     if (!monobank) { await answer('Оплата не налаштована'); return { ok: true }; }
     if (!order) { await answer('Замовлення не знайдено'); return { ok: true }; }
+    if (!isFull(order)) { await answer('Оплата для цього магазину не підключена'); return { ok: true }; }
 
     const total = order.data.totalCents;
     const paid = store.paidTotal(order.id);
@@ -509,6 +527,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const order = store.findByMessageId(message.message_id);
     if (!monobank) { await answer('Оплата не налаштована'); return { ok: true }; }
     if (!order) { await answer('Замовлення не знайдено'); return { ok: true }; }
+    if (!isFull(order)) { await answer('Оплата для цього магазину не підключена'); return { ok: true }; }
     try {
       const sent = await telegram.sendPrompt(buildAmountPrompt({
         orderNumber: order.order_number,
@@ -589,6 +608,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const order = store.getOrder(Number(query.data.slice(query.data.indexOf(':') + 1).replace(/:s$/, '')));
     if (!ttnService) { await answer('Нова пошта не налаштована'); return { ok: true }; }
     if (!order) { await answer('Замовлення не знайдено'); return { ok: true }; }
+    if (!isFull(order)) { await answer('ТТН для цього магазину створюйте в KeyCRM'); return { ok: true }; }
     if (order.ttn_number) { await answer(`ТТН уже створено: ${order.ttn_number}`); return { ok: true }; }
 
     const ran = await once('ttn', order.id, async () => {
@@ -861,7 +881,7 @@ p{margin:8px 0;color:#555}</style></head>
 
   async function novaPoshtaLookup(req, url, kind) {
     // Запит має прийти через App Proxy свого магазину
-    if (!verifyProxySignature(url.searchParams, config.apiSecret) || url.searchParams.get('shop') !== config.shop) {
+    if (!proxyShop(url)) {
       throw new HttpError(401, 'unauthorized', 'Недійсний підпис');
     }
     if (!novaPoshta) throw new HttpError(503, 'np_disabled', 'Нова пошта не підключена');

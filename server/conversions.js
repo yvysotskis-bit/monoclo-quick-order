@@ -312,6 +312,8 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
     if (candidates.length) diag.lastQualify = { at: new Date(nowMs).toISOString(), checked: candidates.length, reasons };
     for (const order of candidates) {
       store.markConversionChecked(order.id, nowMs);
+      // Замовлення іншого магазину (Morning Star) у рекламу Monoclo не передаємо
+      if (order.data?.shop && order.data.shop !== 'main') { reasons.other_shop = (reasons.other_shop || 0) + 1; continue; }
       const localPaidCents = store.paidTotal(order.id);
       // KeyCRM питаємо лише тоді, коли там може бути щось, чого не знає сервер, або щоб перевірити статус перед зарахуванням
       let crm = null;

@@ -104,10 +104,11 @@ export function createKeycrm({ token, sourceId, statusMap = {}, deliveryServiceI
       const data = await call('GET', `/order/${crmOrderId}?include=payments`);
       return (data?.payments || []).some((p) => String(p.description || '').includes(marker));
     },
-    async createOrder(order) {
+    // sourceId: джерело магазину, з якого прийшло замовлення (за замовчуванням — основне)
+    async createOrder(order, { sourceId: orderSourceId } = {}) {
       const existing = await this.findOrderId(`quick-${order.order_number}`);
       if (existing) return existing;
-      const payload = buildCrmOrder(order, { sourceId, deliveryServiceId });
+      const payload = buildCrmOrder(order, { sourceId: orderSourceId || sourceId, deliveryServiceId });
       let data;
       try {
         data = await call('POST', '/order', payload);

@@ -112,6 +112,18 @@ Telegram і в KeyCRM (служба доставки, місто, область
 За замовчуванням світла з 06:00 до 17:00 за київським часом і темна ввечері та вночі. Режим і години
 змінюються в налаштуваннях app embed (також «як у пристрої», «завжди світла», «завжди темна»).
 
+## Другий магазин: Morning Star
+Сервер приймає замовлення і з Morning Star: вони приходять у той самий бот і групу з позначкою **Morning Star** у
+заголовку і тегом `#MorningStar`, у KeyCRM — у джерело «MorningStar QuickOrders» (215). Кнопки статусів і нагадування
+працюють як для Monoclo. Оплати Monobank, ТТН з бота і передача покупок у Meta/GA4/Google Ads — лише для Monoclo.
+
+1. Dev Dashboard → новий додаток **Morning Star Quick Order** (custom, магазин morning-star-1883). Скопіюйте client_id
+   у `shopify.app.morning-star.toml`.
+2. `npx @shopify/cli@latest app deploy --config morning-star`, потім встановіть додаток на магазин Morning Star.
+3. На Render додайте змінні `MS_SHOP=morning-star-1883.myshopify.com`, `MS_API_SECRET` (client secret нового додатка),
+   `MS_STORE_ORIGIN=https://morningstar.com.ua`, `MS_KEYCRM_SOURCE_ID=215`.
+4. Форма на сайті Morning Star (тема Dawn, секція «MS · Швидке замовлення») шле на `/apps/quick-order/submit`.
+
 ## Відомі обмеження
 - Ukrainian-маска телефону (+380); міжнародні номери попап не приймає.
 - Кнопка «Подзвонити» в Telegram неможлива (Telegram не дозволяє `tel:` у кнопках), але номер у тексті клікабельний.
