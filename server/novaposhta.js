@@ -138,6 +138,13 @@ export function createNovaPoshta({ apiKey, fetchFn, sleep = (ms) => new Promise(
       });
     },
 
+    // Координати населеного пункту за першою точкою Нової пошти в ньому (для мапи спільноти); null, якщо немає
+    async cityGeo(settlement) {
+      const rows = await call('AddressGeneral', 'getWarehouses', { SettlementRef: settlement, Limit: '1', Language: 'UA' });
+      const p = rows[0] ? normalizePoint(rows[0], 'branch') : null;
+      return p && p.lat !== null && p.lon !== null ? { lat: p.lat, lon: p.lon } : null;
+    },
+
     async searchCities(query) {
       const rows = await call('Address', 'searchSettlements', { CityName: query, Limit: '10', Page: '1' });
       return (rows[0]?.Addresses || []).map(normalizeCity).filter((c) => c.ref && c.name);
