@@ -305,7 +305,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         matchedShop: matched ? matched.key : null,
         configuredShops: shops.map((s) => `${s.key}:${s.shop}`),
         secretLength: checked.apiSecret.length,
-        secretPrefix: checked.apiSecret.slice(0, 3),
+        // Відбиток замість початку секрету: видно, чи змінився секрет, але жодного його символу в логах
+        secretFingerprint: crypto.createHash('sha256').update(checked.apiSecret).digest('hex').slice(0, 6),
       }));
       throw new HttpError(401, 'unauthorized', 'Недійсний підпис');
     }

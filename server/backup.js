@@ -56,6 +56,11 @@ export function createBackup({ config, store, telegram, fetchFn, now, log }) {
         await sendToTelegram(file, `Резервна копія бази Quick Order ${today}`);
       } catch (err) {
         store.setMeta('backup_retry_at', date.getTime() + RETRY_MS);
+        // Збій копії не має лишатися непоміченим (наприклад, ви не натиснули Start у чаті з ботом): раз на добу пишемо менеджерам
+        if (store.getMeta('backup_alert_date') !== today) {
+          store.setMeta('backup_alert_date', today);
+          await telegram.sendText(`⚠️ Не вдалося надіслати резервну копію бази в BACKUP_CHAT_ID: ${String(err.message).slice(0, 150)}. Перевірте, що ви натиснули Start у чаті з ботом і Id вказано правильно.`).catch(() => {});
+        }
         throw err;
       }
     }

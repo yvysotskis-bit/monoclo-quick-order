@@ -107,7 +107,7 @@ export function mockFetch({ productResponse } = {}) {
       return Response.json(productResponse || product);
     }
     if (u.startsWith('https://api.telegram.org/')) {
-      if (fn.fail.telegram) return Response.json({ ok: false, description: 'Bad Gateway' }, { status: 502 });
+      if (fn.fail.telegram || (fn.fail.telegramDocument && u.endsWith('/sendDocument'))) return Response.json({ ok: false, description: 'Bad Gateway' }, { status: 502 });
       if (u.endsWith('/sendMessage')) fn.sentMessages.push(call.body);
       return Response.json({ ok: true, result: { message_id: ++messageId } });
     }

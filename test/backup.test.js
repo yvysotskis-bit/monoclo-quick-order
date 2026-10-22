@@ -78,3 +78,17 @@ test('збій надсилання копії: tick не падає, повто
   assert.equal(attempts(), 2);
   assert.equal(ctx.store.getMeta('backup_date'), '2025-10-05');
 });
+
+test('збій копії не лишається непоміченим: раз на добу попередження в чат менеджерів', async () => {
+  const ctx = makeApp({ cfg: { backupDir: tmp(), backupHour: 4, backupKeep: 7, backupChatId: '777' }, at: AFTER });
+  // Збій лише для sendDocument: звичайні повідомлення проходять
+  const real = ctx.fetchFn;
+  ctx.fetchFn.fail.telegramDocument = true;
+  await ctx.app.tick();
+  await ctx.app.tick();
+  const warnings = () => real.sentMessages.filter((m) => /резервну копію/.test(m.text));
+  assert.equal(warnings().length, 1);
+  ctx.now.advance(16 * 60_000);
+  await ctx.app.tick();
+  assert.equal(warnings().length, 1, 'того ж дня друге попередження не надсилається');
+});
