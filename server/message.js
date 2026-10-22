@@ -54,7 +54,6 @@ export function buildOrderMessage(o) {
   const delivery = describeDelivery(o.delivery);
   if (delivery.length) lines.push(...delivery.map(escapeHtml));
   else if (o.city) lines.push(`📍 ${escapeHtml(o.city)}`);
-  if (o.loyalty?.count >= 2) lines.push(`🏁 Постійний клієнт: це ${o.loyalty.count}-те замовлення${o.loyalty.level ? ` · рівень «${escapeHtml(o.loyalty.level)}»` : ''}`);
   if (o.body) lines.push(`📏 Зріст ${o.body.height} см, вага ${o.body.weight} кг`);
   if (o.comment) lines.push(`💬 ${escapeHtml(o.comment)}`);
   if (o.kind === 'custom') {
@@ -255,7 +254,7 @@ export const ttnKeyboard = (orderId) => ({
   inline_keyboard: [[{ text: '📦 Створити ТТН', callback_data: `ttn:${orderId}` }]],
 });
 
-export function buildTtnMessage({ orderNumber, number, codUah, costUah, address, tracked, unpaidUah = 0, statusFailed = false, deliveryUah = 0, warnings = [], senderPays = false, patch = null }) {
+export function buildTtnMessage({ orderNumber, number, codUah, costUah, address, tracked, unpaidUah = 0, statusFailed = false, deliveryUah = 0, warnings = [], senderPays = false }) {
   const lines = [`📦 <b>ТТН Нової пошти створено: <code>${escapeHtml(number)}</code></b> · замовлення #${escapeHtml(orderNumber)}`];
   if (address) lines.push(escapeHtml(address));
   lines.push(`Оголошена вартість: ${escapeHtml(formatMoney(Math.round(costUah * 100)))}`);
@@ -268,7 +267,6 @@ export function buildTtnMessage({ orderNumber, number, codUah, costUah, address,
       ? `Післяплата при отриманні: ${escapeHtml(formatMoney(Math.round(codUah * 100)))}`
       : 'Замовлення оплачено повністю, післяплати немає.');
   }
-  if (patch) lines.push(`🎖 У посилку покладіть нашивку «${escapeHtml(patch.name)}»: це ${patch.count}-те замовлення клієнта.`);
   lines.push(tracked ? '✅ Номер записано в KeyCRM.' : '⚠️ Номер не вдалося записати в KeyCRM, додайте його вручну.');
   if (statusFailed) lines.push('⚠️ Не вдалося змінити статус у KeyCRM, змініть його вручну.');
   return lines.join('\n');

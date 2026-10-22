@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseLevels } from './loyalty.js';
 
 function parseJson(raw, name) {
   if (!raw) return {};
@@ -143,10 +142,6 @@ export function loadConfig(env = process.env) {
     abMinViews: number('AB_MIN_VIEWS', 300),
     abMaxViews: number('AB_MAX_VIEWS', 3000),
     abMinConversions: number('AB_MIN_CONVERSIONS', 20),
-    // Рівні постійних клієнтів: «кількість замовлень:назва»; на замовленні, що підняло рівень, менеджер кладе нашивку в посилку
-    loyaltyLevels: parseLevels(optional('LOYALTY_LEVELS') || '2:Пілот,4:Чемпіон'),
-    // Мапа «Де носять»: місто показується, коли в ньому не менше стількох покупців
-    communityMinCity: number('COMMUNITY_MIN_CITY', 3),
     backupHour: number('BACKUP_HOUR', 4),
     backupKeep: number('BACKUP_KEEP', 7),
     backupChatId: optional('BACKUP_CHAT_ID'),

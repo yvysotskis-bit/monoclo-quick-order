@@ -8,8 +8,6 @@ import { createTelegram } from './telegram.js';
 import { createBackup } from './backup.js';
 import { createSizeAdvisor } from './sizes.js';
 import { createExperiments } from './experiments.js';
-import { createLoyalty } from './loyalty.js';
-import { createCommunity } from './community.js';
 import { createKeycrm } from './keycrm.js';
 import { createNovaPoshta, npDateKey } from './novaposhta.js';
 import { createTtnService } from './ttn.js';
@@ -122,7 +120,6 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     chatId: config.telegramChatId,
     fetchFn,
   });
-  const loyalty = createLoyalty({ store, levels: config.loyaltyLevels ?? [] });
   const experiments = createExperiments({ store, config, telegram, now, log });
   const sizeAdvisor = createSizeAdvisor({ store, minSamples: config.sizeAdvisorMin ?? 5 });
   const backup = createBackup({ config, store, telegram, fetchFn, now, log });
@@ -139,7 +136,6 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     ? createNovaPoshta({ apiKey: config.novaPoshtaApiKey, fetchFn })
     : null;
 
-  const community = createCommunity({ store, np: novaPoshta, now, log, minCity: config.communityMinCity ?? 3 });
   const ttnService = novaPoshta ? createTtnService({ np: novaPoshta, config, store, now }) : null;
   const certificates = createCertificates({ config, store, keycrm, telegram, now, log });
   const conversions = createConversions({ config, store, keycrm, fetchFn, now, log, notify: (text) => telegram.sendText(text) });
@@ -179,7 +175,6 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         orderNumber: order.order_number,
         when: formatDateTime(new Date(order.created_at), config.timezone),
         delayed,
-        loyalty: loyalty.status(order),
       });
       try {
         const message = await telegram.sendOrder(text, newOrderKeyboard(d.productUrl, d.phone, config.publicUrl, payInfo(order)));
@@ -796,7 +791,6 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
           deliveryUah: ttn.deliveryUah,
           senderPays: ttn.senderPays,
           warnings: ttn.warnings,
-          patch: loyalty.patchFor(store.getOrder(order.id)),
           address: describeDelivery(order.data.delivery).join('\n'),
           tracked,
           statusFailed,
@@ -999,7 +993,6 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       ['parcels', () => trackParcels(date)],
       ['report', () => sendWeeklyReport(date)],
       ['experiments', () => experiments.tick()],
-      ['community', () => (novaPoshta ? community.refresh() : null)],
       ['backup', () => backup.run()],
     ];
     for (const [name, run] of stages) {
@@ -1234,12 +1227,6 @@ p{margin:8px 0;color:#555}</style></head>
         });
         return res.end(conversions.metaPurchasesCsv(Number.isFinite(from) ? from : 0));
       }
-      if (req.method === 'GET' && url.pathname === '/proxy/map') {
-        authorizeProxy(url);
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300', 'x-robots-tag': 'noindex' });
-        return res.end(community.html());
-      }
-      if (req.method === 'GET' && url.pathname === '/proxy/owners') { authorizeProxy(url); return send(200, { ok: true, ...community.snapshot() }); }
       if (req.method === 'GET' && url.pathname === '/proxy/ab') return send(200, abAssign(req, url));
       if (req.method === 'GET' && url.pathname === '/proxy/size') return send(200, sizeSuggestion(req, url));
       if (req.method === 'POST' && url.pathname === '/proxy/lastsize') return send(200, await lastSizes(req, url));
