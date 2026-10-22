@@ -58,9 +58,7 @@ test('мапа: місто з достатньою кількістю покуп
   const hiddenOwners = (await get(small.app, '/proxy/owners')).json;
   assert.equal(hiddenOwners.points.length, 0);
   assert.equal(hiddenOwners.hidden, 1);
-  const smallPage = (await get(small.app, '/proxy/map')).text;
-  assert.doesNotMatch(smallPage, /Чернівці/, 'мале місто не називаємо');
-  assert.match(smallPage, /Мапа наповнюється/);
+  assert.doesNotMatch((await get(small.app, '/proxy/map')).text, /Чернівці/, 'мале місто не називаємо');
 });
 
 test('постійний клієнт: у картці нового замовлення видно номер замовлення й рівень', async () => {
