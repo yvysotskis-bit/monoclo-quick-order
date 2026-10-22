@@ -88,3 +88,36 @@ test('ціни з оточення перекривають таблицю', () 
   assert.equal(r.ok, true);
   assert.equal(r.value.item.priceUah, 1500);
 });
+
+const jpeg = (size = 2000) => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(size, 7)]).toString('base64');
+const sendPhoto = (app, body) => call(app, { url: signedUrl('/proxy/custom/photo'), body });
+
+test('фото до заявки «Свій принт»: відповіддю на картку, лише свій браузер і лише фото', async () => {
+  const { app, fetchFn } = makeApp();
+  const r = await send(app, brief({ photos: 2 }));
+  const number = r.json.order_number;
+  assert.match(fetchFn.tg('sendMessage')[0].body.text, /Фото від клієнта: 2 шт/);
+
+  const ok = await sendPhoto(app, { order_number: number, client_id: 'client-id-custom-1', image: `data:image/jpeg;base64,${jpeg()}`, index: 1, total: 2 });
+  assert.equal(ok.status, 200);
+  const photo = fetchFn.calls.find((c) => c.url.endsWith('/sendPhoto'));
+  assert.ok(photo, 'фото пішло в Telegram');
+  assert.equal(photo.body.get('caption'), `📎 Фото до заявки #${number} (1/2)`);
+  assert.equal(JSON.parse(photo.body.get('reply_parameters')).message_id, 101);
+  assert.equal(photo.body.get('photo').type, 'image/jpeg');
+
+  assert.equal((await sendPhoto(app, { order_number: number, client_id: 'someone-else-01', image: jpeg() })).status, 404);
+  assert.equal((await sendPhoto(app, { order_number: number, client_id: 'client-id-custom-1', image: Buffer.from('<svg>').toString('base64') })).status, 415);
+  assert.equal((await call(app, { url: '/proxy/custom/photo', body: { order_number: number } })).status, 401);
+});
+
+test('фото до звичайного швидкого замовлення не приймаються, і не більше 5 на заявку', async () => {
+  const { app } = makeApp();
+  const quick = await call(app, { url: signedUrl(), body: { product_handle: 'tee', variant_id: 111, quantity: 1, name: 'Іван', phone: '0671234567', client_id: 'client-id-quick-1' } });
+  assert.equal((await sendPhoto(app, { order_number: quick.json.order_number, client_id: 'client-id-quick-1', image: jpeg() })).status, 404);
+
+  const r = await send(app, brief({ client_id: 'client-id-custom-9', phone: '0501112233' }));
+  const body = { order_number: r.json.order_number, client_id: 'client-id-custom-9', image: jpeg() };
+  for (let i = 0; i < 5; i += 1) assert.equal((await sendPhoto(app, body)).status, 200);
+  assert.equal((await sendPhoto(app, body)).status, 429);
+});

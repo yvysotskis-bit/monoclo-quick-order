@@ -102,6 +102,10 @@ honeypot, захист від дублів. Далі все як у швидко
 - Поля: `item` (`tee`, `hoodie`, `kids`, `a3`, `a2`), `quantity` (1…`MAX_QTY`; `MAX_QTY` = «10+», гурт), `color`, `size`,
   `placement` (`back`, `front`, `both`), `idea` (до 280 символів, у коментар), `name`, `phone`, `utm`, `ads`, `client_id`, `website` (honeypot).
 - Ціна - з таблиці `server/custom-print.js` (форма не може її змінити). Змінити без деплою: `CUSTOM_PRINT_PRICES={"tee":1450,"hoodie":2450}`.
+- Фото: після заявки браузер стискає кожне фото (до ~2000 px, JPG) і надсилає окремо на `POST /apps/quick-order/custom/photo`
+  (`order_number`, `client_id`, `image` base64, `index`, `total`). Сервер приймає лише JPG/PNG/WEBP (перевірка за вмістом),
+  до 3 МБ, до 5 фото на заявку, лише з того самого браузера і протягом години; фото не зберігаються - одразу йдуть у
+  Telegram відповіддю на картку заявки (якщо не приймається як фото - документом).
 - Товару в магазині немає: `variantId` - варіант чернетки «Власний принт MONOCLO» (`vlasnyi-print-zamovlennia`), щоб покупка мала стабільний ідентифікатор.
 
 ## Що вміє сервер

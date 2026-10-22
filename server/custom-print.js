@@ -15,6 +15,17 @@ export const CUSTOM_ITEMS = {
   a2: { label: 'Постер A2 (42×59,5 см)', priceUah: 1550, variantId: '68257292681437', sized: false },
 };
 
+export const MAX_PHOTOS = 5;
+export const MAX_PHOTO_BYTES = 3 * 1024 * 1024;
+
+// Тип файлу за першими байтами (не довіряємо назві чи MIME з браузера)
+export function sniffImage(buf) {
+  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { mime: 'image/jpeg', ext: 'jpg' };
+  if (buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return { mime: 'image/png', ext: 'png' };
+  if (buf.length > 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return { mime: 'image/webp', ext: 'webp' };
+  return null;
+}
+
 const PLACEMENTS = { back: 'Спина', front: 'Груди', both: 'Спина і груди' };
 const CONTROL_CHARS = /[\u0000-\u001f\u007f<>]/g;
 
@@ -92,6 +103,7 @@ export function validateCustomBrief(body, { maxQty, items = CUSTOM_ITEMS }) {
       referrer: cleanText(body.referrer, 100),
       click,
       ads: cleanAds(body.ads),
+      photos: Math.min(Math.max(Number.isInteger(body.photos) ? body.photos : 0, 0), MAX_PHOTOS),
       pageUrl,
       clientId,
       honeypot: typeof body.website === 'string' && body.website.trim() !== '',

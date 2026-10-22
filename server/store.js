@@ -193,6 +193,10 @@ export class Store {
     return this.one('SELECT * FROM orders WHERE id = ?', id);
   }
 
+  findByNumber(orderNumber) {
+    return this.one('SELECT * FROM orders WHERE order_number = ? ORDER BY id DESC LIMIT 1', orderNumber);
+  }
+
   findByMessageId(messageId) {
     return this.one('SELECT * FROM orders WHERE tg_message_id = ? ORDER BY id DESC LIMIT 1', messageId);
   }

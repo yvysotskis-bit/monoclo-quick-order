@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { verifyProxySignature } from './proxy-signature.js';
 import { validateSubmission } from './validate.js';
-import { CUSTOM_PRODUCT_ID, customItems, customOptions, validateCustomBrief } from './custom-print.js';
+import { CUSTOM_PRODUCT_ID, MAX_PHOTOS, MAX_PHOTO_BYTES, customItems, customOptions, sniffImage, validateCustomBrief } from './custom-print.js';
 import { fetchProduct, optionPairs } from './shopify-product.js';
 import { createTelegram } from './telegram.js';
 import { createBackup } from './backup.js';
@@ -60,24 +60,24 @@ class HttpError extends Error {
   }
 }
 
-async function readBuffer(req) {
+async function readBuffer(req, maxBytes = MAX_BODY_BYTES) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw new HttpError(413, 'too_large', 'Запит завеликий');
+    if (size > maxBytes) throw new HttpError(413, 'too_large', 'Запит завеликий');
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
 }
 
-async function readBody(req) {
-  return (await readBuffer(req)).toString('utf8');
+async function readBody(req, maxBytes) {
+  return (await readBuffer(req, maxBytes)).toString('utf8');
 }
 
-async function readJson(req) {
+async function readJson(req, maxBytes) {
   try {
-    return JSON.parse((await readBody(req)) || '{}');
+    return JSON.parse((await readBody(req, maxBytes)) || '{}');
   } catch (err) {
     if (err instanceof HttpError) throw err;
     throw new HttpError(400, 'bad_request', 'Некоректний запит');
@@ -435,6 +435,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         city: input.city,
         delivery: null,
         comment: input.idea,
+        photos: input.photos,
         utm: input.utm,
         referrer: input.referrer,
         click: input.click,
@@ -447,6 +448,47 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     await Promise.allSettled([deliverTelegram(order), deliverCrm(order)]);
     log.log(JSON.stringify({ event: 'custom', number: order.order_number, item: input.itemKey, qty: input.quantity }));
     return { ok: true, order_number: order.order_number, after_hours: afterHours, value: (unitCents * input.quantity) / 100 };
+  }
+
+  // Фото до заявки «Свій принт»: браузер стискає кожне фото (до ~2000 px) і надсилає окремим запитом після заявки.
+  // Приймаємо лише від того самого браузера (client_id), протягом години після заявки, до MAX_PHOTOS фото на заявку.
+  // Фото не зберігаються на сервері: одразу йдуть у Telegram відповіддю на картку заявки.
+  const PHOTO_BODY_BYTES = Math.ceil(MAX_PHOTO_BYTES * 1.4) + 4096;
+  async function submitCustomPhoto(req, url) {
+    authorizeProxy(url);
+    const nowMs = now().getTime();
+    limitIp(req, nowMs);
+    const body = await readJson(req, PHOTO_BODY_BYTES);
+    const number = typeof body.order_number === 'string' ? body.order_number : '';
+    const order = /^[\d-]{8,40}$/.test(number) ? store.findByNumber(number) : null;
+    if (!order || order.data.kind !== 'custom' || !order.client_id || order.client_id !== body.client_id) {
+      throw new HttpError(404, 'not_found', 'Заявку не знайдено');
+    }
+    if (nowMs - order.created_at > 60 * 60_000) throw new HttpError(410, 'expired', 'Час для фото минув - надішліть їх у Telegram');
+    const raw = typeof body.image === 'string' ? body.image.replace(/^data:[^,]*,/, '') : '';
+    const buffer = Buffer.from(raw, 'base64');
+    if (!buffer.length || buffer.length > MAX_PHOTO_BYTES) throw new HttpError(413, 'too_large', 'Фото завелике');
+    const type = sniffImage(buffer);
+    if (!type) throw new HttpError(415, 'bad_type', 'Підтримуються фото JPG, PNG або WEBP');
+    if (!store.takeHit(`photo:${order.id}`, MAX_PHOTOS, 2 * 60 * 60_000, nowMs)) {
+      throw new HttpError(429, 'rate_limited', `Не більше ${MAX_PHOTOS} фото до однієї заявки`);
+    }
+    const index = Number.isInteger(body.index) ? body.index : 0;
+    const total = Number.isInteger(body.total) ? body.total : 0;
+    const fresh = store.getOrder(order.id);
+    try {
+      await telegram.sendFile(
+        { buffer, filename: `zayavka-${order.order_number}-${index || 1}.${type.ext}`, mime: type.mime },
+        {
+          caption: `📎 Фото до заявки #${order.order_number}${index && total ? ` (${index}/${total})` : ''}`,
+          replyTo: fresh.tg_message_id || undefined,
+        },
+      );
+    } catch (err) {
+      log.error('telegram photo failed', err.message);
+      throw new HttpError(502, 'upstream', 'Не вдалося передати фото - надішліть його в Telegram');
+    }
+    return { ok: true };
   }
 
   /* ---------- Статуси з Telegram ---------- */
@@ -1091,6 +1133,7 @@ p{margin:8px 0;color:#555}</style></head>
       }
       if (req.method === 'POST' && url.pathname === '/proxy/submit') return send(200, await submit(req, url));
       if (req.method === 'POST' && url.pathname === '/proxy/custom') return send(200, await submitCustom(req, url));
+      if (req.method === 'POST' && url.pathname === '/proxy/custom/photo') return send(200, await submitCustomPhoto(req, url));
       if (req.method === 'POST' && url.pathname === '/telegram/webhook') return send(200, await telegramWebhook(req));
       if (req.method === 'POST' && url.pathname === '/mono/webhook') return send(200, await monoWebhook(req));
       return send(404, { ok: false, code: 'not_found' });
