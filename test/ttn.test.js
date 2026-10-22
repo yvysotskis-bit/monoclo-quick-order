@@ -202,3 +202,33 @@ test('одночасні натискання «Створити ТТН» (по�
   await Promise.all([app.tick(), press(app, 'ttn:1')]);
   assert.equal(docCalls(fetchFn).length, 1);
 });
+
+test('KeyCRM відхиляє запис ТТН, бо трек-номер там уже є: цикл не довбе KeyCRM щоразу', async () => {
+  // Менеджер уже вписав той самий номер вручну: повторний запис 422, але в замовленні номер збігається
+  const ctx2 = makeApp({ cfg });
+  ctx2.fetchFn.crmState.trackingLocked = true;
+  ctx2.fetchFn.crmState.order = { shipping: { tracking_code: '20451234567890' } };
+  await submit(ctx2.app, goodBody({ surname: 'Петренко', delivery: warehouse }));
+  await press(ctx2.app, 'pay:full');
+  await pay(ctx2.app, 'inv-1', 178000);
+  await press(ctx2.app, 'ttn:1');
+  assert.equal(ctx2.store.getOrder(1).ttn_crm_synced, 1, 'номер збігається: вважаємо записаним');
+  const putsBefore = ctx2.fetchFn.crm().length;
+  await ctx2.app.tick();
+  await ctx2.app.tick();
+  assert.equal(ctx2.fetchFn.crm().length, putsBefore, 'нових запитів на запис немає');
+  assert.match(ctx2.fetchFn.tg('sendMessage').at(-1).body.text, /Номер записано в KeyCRM/);
+
+  // У замовленні вже інший номер: зупиняємо повтори й не кажемо, що записано
+  const ctx3 = makeApp({ cfg });
+  ctx3.fetchFn.crmState.trackingLocked = true;
+  ctx3.fetchFn.crmState.order = { shipping: { tracking_code: '20400000000001' } };
+  await submit(ctx3.app, goodBody({ surname: 'Петренко', delivery: warehouse }));
+  await press(ctx3.app, 'pay:full');
+  await pay(ctx3.app, 'inv-1', 178000);
+  await press(ctx3.app, 'ttn:1');
+  assert.equal(ctx3.store.getOrder(1).ttn_crm_synced, 1, 'повтори зупинено');
+  assert.match(ctx3.fetchFn.tg('sendMessage').at(-1).body.text, /Номер не вдалося записати в KeyCRM/);
+  await ctx3.app.tick();
+  assert.equal(ctx3.fetchFn.crm().filter((c) => c.body?.shipping?.tracking_code).length, 1, 'лише одна спроба запису');
+});

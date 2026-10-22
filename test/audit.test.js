@@ -709,3 +709,58 @@ test('повідомлення про оплату одразу попередж
   assert.doesNotMatch(buildPaidMessage({ ...base, method: 'warehouse' }), /ℹ️/);
   assert.match(buildPaidMessage({ ...base, paidCents: 100000, method: 'postomat' }), /доставку оплачує відправник/);
 });
+
+test('замовлення видалили в KeyCRM: його статус не блокує синхронізацію інших і не довбе KeyCRM щоциклу', async () => {
+  const { app, fetchFn, now, store } = makeApp({ cfg: { ...payCfg, keycrmStatusMap: { taken: 55 } } });
+  await submit(app, goodBody());
+  await submit(app, goodBody({ phone: '+380671110002', client_id: 'client-id-0002' }));
+  // Перше замовлення в KeyCRM видалили (404), друге живе
+  store.db.prepare('UPDATE orders SET crm_order_id = 900, crm_state = ? WHERE id = 1').run('sent');
+  store.db.prepare('UPDATE orders SET crm_order_id = 777, crm_state = ? WHERE id = 2').run('sent');
+  fetchFn.crmState.notFound = [900];
+  store.db.prepare("UPDATE orders SET status = 'taken', crm_status = 'new'").run();
+  const puts = () => fetchFn.calls.filter((c) => c.method === 'PUT' && c.url.includes('/v1/order/'));
+  await app.tick();
+  assert.equal(store.getOrder(2).crm_status, 'taken', 'друге замовлення синхронізоване попри видалене перше');
+  assert.equal(store.getOrder(1).crm_status, 'taken', 'видалене замовлення більше не в черзі');
+  const first = puts().length;
+  for (let i = 0; i < 3; i += 1) { now.advance(31_000); await app.tick(); }
+  assert.equal(puts().length, first, 'нових запитів до KeyCRM немає');
+});
+
+test('платіж видаленого в KeyCRM замовлення не повторюється вічно, платежі інших замовлень проходять', async () => {
+  const ctx = makeApp({ cfg: payCfg });
+  const { app, fetchFn, now, store } = ctx;
+  await submit(app, goodBody());
+  await submit(app, goodBody({ phone: '+380671110002', client_id: 'client-id-0002' }));
+  store.db.prepare('UPDATE orders SET crm_order_id = 900, crm_state = ? WHERE id = 1').run('sent');
+  store.db.prepare('UPDATE orders SET crm_order_id = 777, crm_state = ? WHERE id = 2').run('sent');
+  fetchFn.crmState.notFound = [900];
+  const ins = store.db.prepare("INSERT INTO payments (order_id, invoice_id, amount, kind, url, status, created_at, paid_at, crm_synced) VALUES (?, ?, 20000, 'prepay', 'u', 'success', 1, 1, 0)");
+  ins.run(1, 'inv-gone');
+  ins.run(2, 'inv-live');
+  await app.tick();
+  const synced = (id) => store.db.prepare('SELECT crm_synced FROM payments WHERE invoice_id = ?').get(id).crm_synced;
+  assert.equal(synced('inv-live'), 1);
+  assert.equal(synced('inv-gone'), 1, 'платіж видаленого замовлення знято з черги');
+  const before = fetchFn.crmReads().length;
+  for (let i = 0; i < 3; i += 1) { now.advance(31_000); await app.tick(); }
+  assert.equal(fetchFn.crmReads().length, before);
+});
+
+test('тимчасовий збій KeyCRM: повтори з наростаючою паузою, а не щоциклу; після відновлення все синхронізується', async () => {
+  const { app, fetchFn, now, store } = makeApp({ cfg: { ...payCfg, keycrmStatusMap: { taken: 55 } } });
+  await submit(app, goodBody());
+  store.db.prepare('UPDATE orders SET crm_order_id = 777, crm_state = ?, status = ?, crm_status = ? WHERE id = 1').run('sent', 'taken', 'new');
+  fetchFn.fail.keycrm = true;
+  const attempts = () => fetchFn.calls.filter((c) => c.method === 'PUT').length;
+  await app.tick();
+  assert.equal(attempts(), 1);
+  now.advance(31_000);
+  await app.tick();
+  assert.equal(attempts(), 1, 'пауза після збою: за 31 с повтору немає');
+  fetchFn.fail.keycrm = false;
+  now.advance(120_000);
+  await app.tick();
+  assert.equal(store.getOrder(1).crm_status, 'taken');
+});

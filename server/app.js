@@ -219,6 +219,20 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     });
   }
 
+  // Повтори синхронізації з KeyCRM з наростаючою паузою на кожну сутність (замовлення, платіж): одна «отруєна» позиція
+  // (наприклад, замовлення, видалене в KeyCRM) не має щоциклу витрачати спільний ліміт запитів і блокувати решту.
+  // Стан у памʼяті: після перезапуску повтори починаються знову, що безпечно
+  const retryState = new Map();
+  const canRetry = (key) => (retryState.get(key)?.next ?? 0) <= now().getTime();
+  const retryFailed = (key) => {
+    const n = (retryState.get(key)?.n || 0) + 1;
+    retryState.set(key, { n, next: now().getTime() + Math.min(30_000 * 2 ** n, 3600e3) });
+  };
+  // Помилка «ця сутність недоступна назавжди» (замовлення видалено), а не тимчасовий збій сервісу
+  const isGone = (err) => err?.status === 404;
+  // Збій самого сервісу чи ліміту: далі пробувати марно, чекаємо наступного циклу
+  const isOutage = (err) => !err?.status || err.status === 429 || err.status >= 500;
+
   // Оплата, що вже надійшла, фіксується в замовленні KeyCRM (якщо вказано спосіб оплати)
   // Платіж потрапляє в KeyCRM рівно один раз: вебхук і фонова черга не працюють одночасно, а перед додаванням
   // перевіряється, чи такого платежу (за номером рахунку в описі) там уже немає, наприклад, якщо відповідь KeyCRM загубилась.
@@ -226,6 +240,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     if (!keycrm || !config.keycrmPaymentMethodId || !order.crm_order_id) return Promise.resolve(false);
     return once('crm-pay', payment.id, async () => {
       if (store.getPayment(payment.id)?.crm_synced) return true;
+      if (!canRetry(`pay:${payment.id}`)) return false;
       try {
         if (!(await keycrm.hasPayment(order.crm_order_id, payment.invoice_id))) {
           await keycrm.addPayment(order.crm_order_id, {
@@ -235,9 +250,17 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
           });
         }
         store.markPaymentSynced(payment.id);
+        retryState.delete(`pay:${payment.id}`);
         return true;
       } catch (err) {
+        // Замовлення видалили в KeyCRM: платіж записувати нікуди, не мучимо його повторами
+        if (isGone(err)) {
+          log.error('keycrm payment: замовлення видалено в KeyCRM', `платіж ${payment.id}`);
+          store.markPaymentSynced(payment.id);
+          return false;
+        }
         log.error('keycrm payment failed', err.message);
+        retryFailed(`pay:${payment.id}`);
         return false;
       }
     });
@@ -247,12 +270,19 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   async function syncStatuses() {
     if (!keycrm) return;
     for (const order of store.statusDrift()) {
+      const key = `status:${order.id}`;
+      if (!canRetry(key)) continue;
       try {
         if (keycrm.statusMap[order.status]) await keycrm.updateStatus(order.crm_order_id, order.status);
         store.markCrmStatus(order.id, order.status);
+        retryState.delete(key);
       } catch (err) {
         log.error('keycrm status', err.message);
-        break;
+        // Замовлення видалили в KeyCRM: зупиняємо спроби, інакше воно вічно стоїть першим у черзі й блокує решту
+        if (isGone(err)) { store.markCrmStatus(order.id, order.status); continue; }
+        retryFailed(key);
+        // Збій сервісу: решта теж не пройде, чекаємо наступного циклу. Відмова щодо одного замовлення решту не блокує
+        if (isOutage(err)) break;
       }
     }
   }
@@ -739,12 +769,30 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   async function syncTtnToCrm(orderId) {
     const order = store.getOrder(orderId);
     if (!keycrm || !order?.crm_order_id || !order.ttn_number) return false;
+    if (!canRetry(`ttn:${order.id}`)) return false;
     try {
       await keycrm.setTrackingCode(order.crm_order_id, order.ttn_number);
       store.markTtnInCrm(order.id);
+      retryState.delete(`ttn:${order.id}`);
       return true;
     } catch (err) {
+      // KeyCRM відхиляє повторний запис трек-номера, якщо в замовленні він уже є (його міг додати менеджер вручну).
+      // Без цього розбору запит повторювався б щоцикл і витрачав спільний ліміт KeyCRM на цьому замовленні вічно
+      if ([400, 404, 422].includes(err.status)) {
+        try {
+          const state = await keycrm.getOrderState(order.crm_order_id);
+          if (state.trackingCode) {
+            store.markTtnInCrm(order.id);
+            if (state.trackingCode !== order.ttn_number) log.error('keycrm tracking differs', `order ${order.order_number}: у KeyCRM інший номер ТТН`);
+            return state.trackingCode === order.ttn_number;
+          }
+        } catch (inner) {
+          // Замовлення видалили в KeyCRM: записувати номер нікуди
+          if (inner.status === 404) { store.markTtnInCrm(order.id); return false; }
+        }
+      }
       log.error('keycrm tracking', err.message);
+      retryFailed(`ttn:${order.id}`);
       return false;
     }
   }

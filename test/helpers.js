@@ -190,6 +190,9 @@ export function mockFetch({ productResponse } = {}) {
       const url = new URL(u);
       const crm = fn.crmState;
       if (fn.fail.keycrm) return new Response('{"message":"boom"}', { status: 500 });
+      // Замовлення, видалені в KeyCRM: будь-який запит до них відповідає 404
+      const goneId = /^\/v1\/order\/(\d+)/.exec(url.pathname);
+      if (goneId && crm.notFound?.includes(Number(goneId[1]))) return new Response('{"message":"Not found"}', { status: 404 });
       // Пошук замовлення за source_uuid (захист від дублів) і читання оплат замовлення
       if (call.method === 'GET' && url.pathname === '/v1/order' && url.searchParams.has('filter[source_id]')) {
         fn.crmLists.push(Object.fromEntries(url.searchParams));
@@ -229,6 +232,8 @@ export function mockFetch({ productResponse } = {}) {
         crm.payments.push({ id: crm.payments.length + 1, order_id: Number(pay[1]), description: call.body.description, amount: call.body.amount });
         return Response.json({ id: crm.payments.length });
       }
+      // Трек-номер уже є в замовленні KeyCRM (додав менеджер): повторний запис відхиляється
+      if (call.method === 'PUT' && call.body?.shipping?.tracking_code && crm.trackingLocked) return new Response('{"message":"tracking code already exists"}', { status: 422 });
       if (call.method === 'PUT') crm.puts.push(call.body);
       return Response.json({ id: 777 });
     }
