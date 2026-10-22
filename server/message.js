@@ -37,7 +37,7 @@ export function describeDelivery(delivery) {
 
 export function buildOrderMessage(o) {
   const lines = [
-    `<b>🛍 Швидке замовлення #${escapeHtml(o.orderNumber)}</b>`,
+    `<b>${o.kind === 'custom' ? '🎨 Свій принт · заявка' : '🛍 Швидке замовлення'} #${escapeHtml(o.orderNumber)}</b>${o.brandName ? ` · <b>${escapeHtml(o.brandName)}</b>` : ''}`,
     `🕒 ${escapeHtml(o.when)}${o.afterHours ? ' · ⏳ <b>поза робочим часом</b>' : ''}`,
   ];
   if (o.delayed) lines.push('⚠️ Повідомлення надійшло із затримкою через збій звʼязку');
@@ -56,8 +56,17 @@ export function buildOrderMessage(o) {
   else if (o.city) lines.push(`📍 ${escapeHtml(o.city)}`);
   if (o.body) lines.push(`📏 Зріст ${o.body.height} см, вага ${o.body.weight} кг`);
   if (o.comment) lines.push(`💬 ${escapeHtml(o.comment)}`);
+  if (o.kind === 'custom') {
+    lines.push(o.photos > 0
+      ? `📎 Фото від клієнта: ${o.photos} шт - нижче, відповіддю на цю картку`
+      : '📎 Фото чи файли клієнт надішле в Telegram');
+    if (o.certificate?.line) lines.push(escapeHtml(o.certificate.line));
+    lines.push(o.certificate?.found && o.certificate.status === 'issued'
+      ? '💰 Оплачено сертифікатом на виріб - доплата лише за дорожчий виріб'
+      : '💰 Ціна орієнтовна - уточніть після ескізу');
+  }
   const source = describeSource(o);
-  lines.push('', `📈 ${source ? escapeHtml(source) : 'прямий візит'}`, '#Monoclo');
+  lines.push('', `📈 ${source ? escapeHtml(source) : 'прямий візит'}`, o.brandTag || '#Monoclo');
   return lines.join('\n');
 }
 

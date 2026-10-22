@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import { verifyProxySignature } from './proxy-signature.js';
 import { validateSubmission } from './validate.js';
+import { CUSTOM_PRODUCT_ID, MAX_PHOTOS, MAX_PHOTO_BYTES, customItems, customOptions, sniffImage, validateCustomBrief } from './custom-print.js';
+import { createCertificates } from './certificates.js';
 import { fetchProduct, optionPairs } from './shopify-product.js';
 import { createTelegram } from './telegram.js';
 import { createBackup } from './backup.js';
@@ -8,6 +10,7 @@ import { createKeycrm } from './keycrm.js';
 import { createNovaPoshta, npDateKey } from './novaposhta.js';
 import { createTtnService } from './ttn.js';
 import { createMonobank } from './monobank.js';
+import { createConversions } from './conversions.js';
 import {
   dateKey,
   effectiveStart,
@@ -59,24 +62,24 @@ class HttpError extends Error {
   }
 }
 
-async function readBuffer(req) {
+async function readBuffer(req, maxBytes = MAX_BODY_BYTES) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw new HttpError(413, 'too_large', 'Запит завеликий');
+    if (size > maxBytes) throw new HttpError(413, 'too_large', 'Запит завеликий');
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
 }
 
-async function readBody(req) {
-  return (await readBuffer(req)).toString('utf8');
+async function readBody(req, maxBytes) {
+  return (await readBuffer(req, maxBytes)).toString('utf8');
 }
 
-async function readJson(req) {
+async function readJson(req, maxBytes) {
   try {
-    return JSON.parse((await readBody(req)) || '{}');
+    return JSON.parse((await readBody(req, maxBytes)) || '{}');
   } catch (err) {
     if (err instanceof HttpError) throw err;
     throw new HttpError(400, 'bad_request', 'Некоректний запит');
@@ -97,6 +100,19 @@ const safeEqual = (a, b) => {
 const fingerprintOf = ({ phone, variantId, quantity }) => `${phone}|${variantId}|${quantity}`;
 
 export function createApp({ config, store, fetchFn = fetch, now = () => new Date(), log = console }) {
+  // Магазини (див. config.shops); без списку — лише основний, як раніше
+  const shops = config.shops?.length ? config.shops : [{
+    key: 'main', shop: config.shop, apiSecret: config.apiSecret, storeOrigin: config.storeOrigin,
+    keycrmSourceId: config.keycrmSourceId, tag: '#Monoclo', name: '', full: true,
+  }];
+  const shopByKey = (key) => shops.find((s) => s.key === (key || 'main')) || shops[0];
+  // Повні функції (оплата, ТТН, покупки в рекламу) — лише для основного магазину
+  const isFull = (order) => shopByKey(order?.data?.shop).full !== false;
+  // Магазин запиту App Proxy: знайдений за параметром shop і з дійсним підписом його секретом
+  const proxyShop = (url) => {
+    const s = shops.find((x) => x.shop === url.searchParams.get('shop'));
+    return s && verifyProxySignature(url.searchParams, s.apiSecret) ? s : null;
+  };
   const telegram = createTelegram({
     token: config.telegramToken,
     chatId: config.telegramChatId,
@@ -117,6 +133,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     : null;
 
   const ttnService = novaPoshta ? createTtnService({ np: novaPoshta, config, store, now }) : null;
+  const certificates = createCertificates({ config, store, keycrm, telegram, now, log });
+  const conversions = createConversions({ config, store, keycrm, fetchFn, now, log, notify: (text) => telegram.sendText(text) });
 
   // Передоплата працює, лише коли є токен Monobank і публічна адреса сервера (для вебхука)
   const monobank = config.monobankToken && config.publicUrl
@@ -124,7 +142,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     : null;
   // Що показувати на кнопках оплати для конкретного замовлення
   const payInfo = (order) => {
-    if (!monobank) return null;
+    if (!monobank || !isFull(order)) return null;
     const paidCents = store.paidTotal(order.id);
     return {
       prepayUah: config.prepayAmountUah,
@@ -173,7 +191,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         return false;
       }
       try {
-        const crmId = await keycrm.createOrder(order);
+        const crmId = await keycrm.createOrder(order, { sourceId: shopByKey(order.data.shop).keycrmSourceId });
         store.markCrmSent(order.id, crmId);
         // Якщо менеджер уже встиг змінити статус у Telegram, підтягуємо його в CRM
         // (якщо оновлення не вдасться, його підхопить syncStatuses у фоновій черзі)
@@ -236,34 +254,52 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
 
   /* ---------- Приймання замовлення ---------- */
 
-  async function submit(req, url) {
-    // 1. Запит має прийти через App Proxy свого магазину
-    if (!verifyProxySignature(url.searchParams, config.apiSecret)) {
+  // Запит має прийти через App Proxy одного з наших магазинів; повертає магазин або кидає HttpError
+  function authorizeProxy(url) {
+    const shop = proxyShop(url);
+    const shopParam = url.searchParams.get('shop');
+    const matched = shops.find((s) => s.shop === shopParam);
+    const knownShop = Boolean(matched);
+    if (!shop && (knownShop || !verifyProxySignature(url.searchParams, config.apiSecret))) {
       // Без самого секрету: лише те, що допомагає знайти причину
+      const checked = matched || shops[0];
       log.error('bad proxy signature', JSON.stringify({
         hasSignature: url.searchParams.has('signature'),
         params: [...new Set(url.searchParams.keys())],
-        secretLength: config.apiSecret.length,
-        secretPrefix: config.apiSecret.slice(0, 3),
+        shopParam,
+        matchedShop: matched ? matched.key : null,
+        configuredShops: shops.map((s) => `${s.key}:${s.shop}`),
+        secretLength: checked.apiSecret.length,
+        secretPrefix: checked.apiSecret.slice(0, 3),
       }));
       throw new HttpError(401, 'unauthorized', 'Недійсний підпис');
     }
     const age = Math.abs(Date.now() / 1000 - Number(url.searchParams.get('timestamp')));
     if (!(age <= PROXY_MAX_AGE_SEC)) throw new HttpError(401, 'unauthorized', 'Запит застарів');
-    if (url.searchParams.get('shop') !== config.shop) {
+    if (!shop) {
       throw new HttpError(403, 'forbidden', 'Магазин не підтримується');
     }
+    return shop;
+  }
+
+  // Ліміт щедрий: якщо Shopify передає одну й ту саму адресу для всіх, 8 замовлень за 10 хвилин на весь магазин блокували б людей.
+  // Основний захист від спаму: підпис проксі, honeypot і ліміт за номером.
+  function limitIp(req, nowMs) {
+    if (!store.takeHit(`ip:${clientIp(req)}`, 30, 10 * 60_000, nowMs)) {
+      log.error('rate limited by ip', clientIp(req));
+      throw new HttpError(429, 'rate_limited', 'Забагато спроб. Спробуйте трохи пізніше');
+    }
+  }
+
+  async function submit(req, url) {
+    // 1. Запит має прийти через App Proxy одного з наших магазинів
+    const shop = authorizeProxy(url);
 
     const date = now();
     const nowMs = date.getTime();
 
     // 2. Ліміт за IP до будь-якої важкої роботи
-    // Ліміт щедрий: якщо Shopify передає одну й ту саму адресу для всіх, 8 замовлень за 10 хвилин на весь магазин блокували б людей.
-    // Основний захист від спаму: підпис проксі, honeypot і ліміт за номером.
-    if (!store.takeHit(`ip:${clientIp(req)}`, 30, 10 * 60_000, nowMs)) {
-      log.error('rate limited by ip', clientIp(req));
-      throw new HttpError(429, 'rate_limited', 'Забагато спроб. Спробуйте трохи пізніше');
-    }
+    limitIp(req, nowMs);
 
     // 3. Валідація
     const parsed = validateSubmission(await readJson(req), { maxQty: config.maxQty });
@@ -287,7 +323,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     // 5. Ціна й наявність беремо з магазину, а не з форми
     let product;
     try {
-      product = await fetchProduct({ fetchFn, origin: config.storeOrigin, handle: input.handle });
+      product = await fetchProduct({ fetchFn, origin: shop.storeOrigin, handle: input.handle });
     } catch (err) {
       log.error('product fetch failed', err.message);
       throw new HttpError(502, 'upstream', 'Не вдалося перевірити товар. Спробуйте ще раз');
@@ -318,7 +354,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       data: {
         productTitle: product.title,
         productHandle: product.handle,
-        productUrl: input.pageUrl || `${config.storeOrigin}/products/${product.handle}`,
+        productId: product.id ? String(product.id) : '',
+        productUrl: input.pageUrl || `${shop.storeOrigin}/products/${product.handle}`,
         variantId: String(variant.id),
         sku: variant.sku || '',
         picture: variant.featured_image?.src || product.featured_image || '',
@@ -337,7 +374,10 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         utm: input.utm,
         referrer: input.referrer,
         click: input.click,
+        ads: input.ads,
         afterHours,
+        // Магазин замовлення: основний не позначаємо, щоб старі й нові замовлення Monoclo виглядали однаково
+        ...(shop.key !== 'main' ? { shop: shop.key, brandTag: shop.tag, brandName: shop.name } : {}),
       },
     });
 
@@ -345,6 +385,115 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     await Promise.allSettled([deliverTelegram(order), deliverCrm(order)]);
     log.log(JSON.stringify({ event: 'order', number: order.order_number, variant: input.variantId, qty: input.quantity }));
     return { ok: true, order_number: order.order_number, after_hours: afterHours };
+  }
+
+  /* ---------- Заявка «Свій принт» (форма-бриф на лендингу) ---------- */
+
+  // Те саме, що швидке замовлення (Telegram-група, кнопки статусів і оплати, KeyCRM), але без товару в магазині:
+  // виріб друкується під замовлення, ціна - з таблиці сервера (server/custom-print.js), ідея - у коментарі.
+  async function submitCustom(req, url) {
+    const shop = authorizeProxy(url);
+    const date = now();
+    const nowMs = date.getTime();
+    limitIp(req, nowMs);
+
+    const items = customItems(config.customPrintPrices);
+    const parsed = validateCustomBrief(await readJson(req), { maxQty: config.maxQty, items });
+    if (!parsed.ok) throw new HttpError(422, parsed.code, parsed.message, parsed.field);
+    const input = parsed.value;
+    if (input.honeypot) return { ok: true, order_number: orderNumber(date, config.timezone) };
+
+    const fingerprint = fingerprintOf({ phone: input.phone, variantId: `custom-${input.itemKey}`, quantity: input.quantity });
+    const duplicate = store.findDuplicate({ clientId: input.clientId, fingerprint, since: nowMs - DUPLICATE_WINDOW_MS });
+    if (duplicate) return { ok: true, order_number: duplicate.order_number, after_hours: duplicate.data.afterHours };
+    if (!store.takeHit(`phone:${input.phone}`, 3, 60 * 60_000, nowMs)) {
+      throw new HttpError(429, 'rate_limited', 'Забагато заявок з цього номера. Спробуйте пізніше');
+    }
+
+    const afterHours = !isWorkingTime(date, config);
+    const unitCents = input.item.priceUah * 100;
+    const order = store.insertOrder({
+      orderNumber: orderNumber(date, config.timezone),
+      clientId: input.clientId,
+      fingerprint,
+      createdAt: nowMs,
+      data: {
+        kind: 'custom',
+        productTitle: `Свій принт · ${input.item.label}`,
+        productHandle: 'vlasnyi-print-zamovlennia',
+        productId: CUSTOM_PRODUCT_ID,
+        productUrl: input.pageUrl || `${shop.storeOrigin}/pages/svii-prynt`,
+        variantId: input.item.variantId,
+        sku: '',
+        picture: '',
+        options: customOptions(input, config.maxQty),
+        quantity: input.quantity,
+        unitCents,
+        totalCents: unitCents * input.quantity,
+        currency: config.currency,
+        name: input.name,
+        surname: '',
+        body: null,
+        phone: input.phone,
+        city: input.city,
+        delivery: null,
+        comment: input.idea,
+        photos: input.photos,
+        certificate: certificates.forBrief(input.certificate),
+        utm: input.utm,
+        referrer: input.referrer,
+        click: input.click,
+        ads: input.ads,
+        afterHours,
+        ...(shop.key !== 'main' ? { shop: shop.key, brandTag: shop.tag, brandName: shop.name } : {}),
+      },
+    });
+
+    await Promise.allSettled([deliverTelegram(order), deliverCrm(order)]);
+    if (order.data.certificate) await certificates.replyToBrief(store.getOrder(order.id));
+    log.log(JSON.stringify({ event: 'custom', number: order.order_number, item: input.itemKey, qty: input.quantity }));
+    return { ok: true, order_number: order.order_number, after_hours: afterHours, value: (unitCents * input.quantity) / 100 };
+  }
+
+  // Фото до заявки «Свій принт»: браузер стискає кожне фото (до ~2000 px) і надсилає окремим запитом після заявки.
+  // Приймаємо лише від того самого браузера (client_id), протягом години після заявки, до MAX_PHOTOS фото на заявку.
+  // Фото не зберігаються на сервері: одразу йдуть у Telegram відповіддю на картку заявки.
+  const PHOTO_BODY_BYTES = Math.ceil(MAX_PHOTO_BYTES * 1.4) + 4096;
+  async function submitCustomPhoto(req, url) {
+    authorizeProxy(url);
+    const nowMs = now().getTime();
+    limitIp(req, nowMs);
+    const body = await readJson(req, PHOTO_BODY_BYTES);
+    const number = typeof body.order_number === 'string' ? body.order_number : '';
+    const order = /^[\d-]{8,40}$/.test(number) ? store.findByNumber(number) : null;
+    if (!order || order.data.kind !== 'custom' || !order.client_id || order.client_id !== body.client_id) {
+      throw new HttpError(404, 'not_found', 'Заявку не знайдено');
+    }
+    if (nowMs - order.created_at > 60 * 60_000) throw new HttpError(410, 'expired', 'Час для фото минув - надішліть їх у Telegram');
+    const raw = typeof body.image === 'string' ? body.image.replace(/^data:[^,]*,/, '') : '';
+    const buffer = Buffer.from(raw, 'base64');
+    if (!buffer.length || buffer.length > MAX_PHOTO_BYTES) throw new HttpError(413, 'too_large', 'Фото завелике');
+    const type = sniffImage(buffer);
+    if (!type) throw new HttpError(415, 'bad_type', 'Підтримуються фото JPG, PNG або WEBP');
+    if (!store.takeHit(`photo:${order.id}`, MAX_PHOTOS, 2 * 60 * 60_000, nowMs)) {
+      throw new HttpError(429, 'rate_limited', `Не більше ${MAX_PHOTOS} фото до однієї заявки`);
+    }
+    const index = Number.isInteger(body.index) ? body.index : 0;
+    const total = Number.isInteger(body.total) ? body.total : 0;
+    const fresh = store.getOrder(order.id);
+    try {
+      await telegram.sendFile(
+        { buffer, filename: `zayavka-${order.order_number}-${index || 1}.${type.ext}`, mime: type.mime },
+        {
+          caption: `📎 Фото до заявки #${order.order_number}${index && total ? ` (${index}/${total})` : ''}`,
+          replyTo: fresh.tg_message_id || undefined,
+        },
+      );
+    } catch (err) {
+      log.error('telegram photo failed', err.message);
+      throw new HttpError(502, 'upstream', 'Не вдалося передати фото - надішліть його в Telegram');
+    }
+    return { ok: true };
   }
 
   /* ---------- Статуси з Telegram ---------- */
@@ -372,8 +521,13 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   }
 
   async function handleTelegramUpdate(update) {
-    // Відповідь менеджера на прохання ввести суму
-    if (update.message) return amountReply(update.message);
+    if (update.message) {
+      // Менеджер написав у групі код сертифіката - відповідаємо станом і кнопкою погашення
+      const m = update.message;
+      if (String(m.chat?.id) === telegram.chatId && !m.reply_to_message && !m.from?.is_bot && await certificates.lookupMessage(m)) return { ok: true };
+      // Відповідь менеджера на прохання ввести суму
+      return amountReply(m);
+    }
 
     const query = update.callback_query;
     if (!query?.message || String(query.message.chat?.id) !== telegram.chatId) return { ok: true };
@@ -382,6 +536,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     if (query.data === 'pay:full') return paymentLink(query, 'full');
     if (query.data === 'pay:custom') return customAmountPrompt(query);
     if (/^ttn0?:\d+(:s)?$/.test(query.data || '')) return createTtn(query);
+    if (/^cert:/.test(query.data || '')) { await certificates.callback(query, actorName(query.from)); return { ok: true }; }
 
     const match = STATUS_ACTION.exec(query.data || '');
     if (!match) return { ok: true };
@@ -474,6 +629,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const order = store.findByMessageId(message.message_id);
     if (!monobank) { await answer('Оплата не налаштована'); return { ok: true }; }
     if (!order) { await answer('Замовлення не знайдено'); return { ok: true }; }
+    if (!isFull(order)) { await answer('Оплата для цього магазину не підключена'); return { ok: true }; }
 
     const total = order.data.totalCents;
     const paid = store.paidTotal(order.id);
@@ -506,6 +662,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const order = store.findByMessageId(message.message_id);
     if (!monobank) { await answer('Оплата не налаштована'); return { ok: true }; }
     if (!order) { await answer('Замовлення не знайдено'); return { ok: true }; }
+    if (!isFull(order)) { await answer('Оплата для цього магазину не підключена'); return { ok: true }; }
     try {
       const sent = await telegram.sendPrompt(buildAmountPrompt({
         orderNumber: order.order_number,
@@ -586,6 +743,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const order = store.getOrder(Number(query.data.slice(query.data.indexOf(':') + 1).replace(/:s$/, '')));
     if (!ttnService) { await answer('Нова пошта не налаштована'); return { ok: true }; }
     if (!order) { await answer('Замовлення не знайдено'); return { ok: true }; }
+    if (!isFull(order)) { await answer('ТТН для цього магазину створюйте в KeyCRM'); return { ok: true }; }
     if (order.ttn_number) { await answer(`ТТН уже створено: ${order.ttn_number}`); return { ok: true }; }
 
     const ran = await once('ttn', order.id, async () => {
@@ -824,6 +982,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       ['statuses', () => syncStatuses()],
       ['ttn', async () => { for (const order of store.ttnNotInCrm()) await syncTtnToCrm(order.id); }],
       ['prompts', async () => store.pruneOldPrompts(date.getTime() - PROMPT_TTL_MS)],
+      ['conversions', () => conversions.tick()],
+      ['certificates', () => certificates.tick()],
       ['reminders', () => sendReminders(date)],
       ['parcels', () => trackParcels(date)],
       ['report', () => sendWeeklyReport(date)],
@@ -852,7 +1012,10 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const stuckSeconds = oldest ? Math.round((nowMs - oldest) / 1000) : 0;
     // 503, якщо замовлення застрягло в черзі: моніторинг одразу сповістить
     const ok = stuckSeconds < STUCK_ALERT_SEC;
-    return { code: ok ? 200 : 503, body: { ok, db: true, ...counts, stuck_seconds: stuckSeconds } };
+    const purchases = conversions.enabled
+      ? { purchases: store.conversionCounts(), conversions: conversions.diagnostics() }
+      : {};
+    return { code: ok ? 200 : 503, body: { ok, db: true, ...counts, stuck_seconds: stuckSeconds, ...purchases } };
   }
 
   // Сторінка-перехідник: Telegram дозволяє лише https-посилання, а вона відкриває Viber
@@ -890,7 +1053,7 @@ p{margin:8px 0;color:#555}</style></head>
 
   async function novaPoshtaLookup(req, url, kind) {
     // Запит має прийти через App Proxy свого магазину
-    if (!verifyProxySignature(url.searchParams, config.apiSecret) || url.searchParams.get('shop') !== config.shop) {
+    if (!proxyShop(url)) {
       throw new HttpError(401, 'unauthorized', 'Недійсний підпис');
     }
     if (!novaPoshta) throw new HttpError(503, 'np_disabled', 'Нова пошта не підключена');
@@ -927,6 +1090,26 @@ p{margin:8px 0;color:#555}</style></head>
     }
   }
 
+  // Службові параметри App Proxy, які не треба передавати далі
+  const PROXY_PARAMS = new Set(['shop', 'logged_in_customer_id', 'path_prefix', 'timestamp', 'signature']);
+  // /proxy/go — адреса GetCheckout за доменом myshopify; /proxy/go/<домен> — за доменом магазину
+  // (у Monoclo оформлення живе на get-checkout.com/monoclo.com.ua/). Дозволені лише ці два варіанти.
+  function checkoutRedirect(url, segment) {
+    const shopParam = url.searchParams.get('shop');
+    const s = shops.find((x) => x.shop === shopParam);
+    const cart = url.searchParams.get('cart') || '';
+    if (!s || !/^[A-Za-z0-9]{8,64}(\?key=[A-Za-z0-9]{8,64})?$/.test(cart)) return null;
+    let storeHost = '';
+    try { storeHost = new URL(s.storeOrigin).host; } catch {}
+    const path = segment || s.shop;
+    if (path !== s.shop && path !== storeHost) return null;
+    const target = new URL(`https://get-checkout.com/${path}/`);
+    for (const [k, v] of url.searchParams) {
+      if (!PROXY_PARAMS.has(k) && k.length <= 40 && v.length <= 300) target.searchParams.append(k, v);
+    }
+    return target.toString();
+  }
+
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const send = (code, body) => {
@@ -944,9 +1127,61 @@ p{margin:8px 0;color:#555}</style></head>
         const { code, body } = status();
         return send(code, body);
       }
+      // Перехід в оформлення GetCheckout через адресу самого магазину (/apps/quick-order/go):
+      // Shopify не показує вікно «Are you sure you want to leave…» для переходів у межах магазину,
+      // а редирект сервера вже не є «посиланням на інший сайт». Хост призначення фіксований — відкритого редиректу немає.
+      const go = req.method === 'GET' && /^\/proxy\/go(?:\/([a-z0-9.-]{3,100}))?\/?$/i.exec(url.pathname);
+      if (go) {
+        const target = checkoutRedirect(url, go[1] && go[1].toLowerCase());
+        if (!target) {
+          res.writeHead(302, { location: '/cart', 'cache-control': 'no-store' });
+          return res.end();
+        }
+        // Не 302: App Proxy Shopify розкодовує Location, і GetCheckout тоді не читає токен кошика.
+        // Сторінка без скриптів Shopify сама переходить на точну адресу.
+        const js = JSON.stringify(target).replace(/</g, '\\u003c');
+        const attr = target.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex' });
+        return res.end(`<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>Оформлення замовлення…</title><script>location.replace(${js})</script><noscript><meta http-equiv="refresh" content="0;url=${attr}"></noscript><a href="${attr}" style="font:16px sans-serif">Перейти до оформлення</a>`);
+      }
       const np = req.method === 'GET' && /^\/proxy\/np\/(cities|points|streets)$/.exec(url.pathname);
       if (np) return send(200, await novaPoshtaLookup(req, url, np[1]));
+      // Друга адреса того самого файлу: Менеджер даних Google Ads запам'ятовує заголовок за адресою,
+      // тож нова адреса змушує його прочитати колонки наново
+      if (req.method === 'GET' && (url.pathname === '/conversions/google-ads.csv' || url.pathname === '/conversions/quick-order-purchases.csv')) {
+        const c = config.conversions;
+        if (!conversions.enabled || !c?.gadsFeedPassword) return send(404, { ok: false, code: 'not_found' });
+        const [scheme, encoded] = String(req.headers.authorization || '').split(' ');
+        const [user, ...pass] = Buffer.from(encoded || '', 'base64').toString('utf8').split(':');
+        if (scheme !== 'Basic' || !safeEqual(user, c.gadsFeedUser) || !safeEqual(pass.join(':'), c.gadsFeedPassword)) {
+          res.writeHead(401, { 'www-authenticate': 'Basic realm="conversions"', 'cache-control': 'no-store' });
+          return res.end();
+        }
+        res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(conversions.googleAdsCsv(url.searchParams.get('format') === 'legacy' ? 'legacy' : 'data_manager'));
+      }
+      // Звірка для таргетолога: усі покупки, передані в Meta (той самий логін і пароль, що й у файлу Google Ads).
+      // ?from=YYYY-MM-DD — з якої дати за Києвом (початок дня з запасом до години взимку), без параметра — усе
+      if (req.method === 'GET' && url.pathname === '/conversions/meta-purchases.csv') {
+        const c = config.conversions;
+        if (!conversions.enabled || !c?.gadsFeedPassword) return send(404, { ok: false, code: 'not_found' });
+        const [scheme, encoded] = String(req.headers.authorization || '').split(' ');
+        const [user, ...pass] = Buffer.from(encoded || '', 'base64').toString('utf8').split(':');
+        if (scheme !== 'Basic' || !safeEqual(user, c.gadsFeedUser) || !safeEqual(pass.join(':'), c.gadsFeedPassword)) {
+          res.writeHead(401, { 'www-authenticate': 'Basic realm="conversions"', 'cache-control': 'no-store' });
+          return res.end();
+        }
+        const from = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('from') || '') ? Date.parse(`${url.searchParams.get('from')}T00:00:00Z`) - 3 * 3600e3 : 0;
+        res.writeHead(200, {
+          'content-type': 'text/csv; charset=utf-8',
+          'content-disposition': 'attachment; filename="monoclo-meta-purchases.csv"',
+          'cache-control': 'no-store',
+        });
+        return res.end(conversions.metaPurchasesCsv(Number.isFinite(from) ? from : 0));
+      }
       if (req.method === 'POST' && url.pathname === '/proxy/submit') return send(200, await submit(req, url));
+      if (req.method === 'POST' && url.pathname === '/proxy/custom') return send(200, await submitCustom(req, url));
+      if (req.method === 'POST' && url.pathname === '/proxy/custom/photo') return send(200, await submitCustomPhoto(req, url));
       if (req.method === 'POST' && url.pathname === '/telegram/webhook') return send(200, await telegramWebhook(req));
       if (req.method === 'POST' && url.pathname === '/mono/webhook') return send(200, await monoWebhook(req));
       return send(404, { ok: false, code: 'not_found' });

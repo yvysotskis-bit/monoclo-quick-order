@@ -14,8 +14,36 @@ export function createTelegram({ token, chatId, fetchFn }) {
     return data.result;
   }
 
+  // Файл (фото або документ) через multipart: бінарні дані не можна передати в JSON
+  async function upload(method, field, { buffer, filename, mime }, extra) {
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    for (const [k, v] of Object.entries(extra)) if (v !== undefined) form.append(k, typeof v === 'string' ? v : JSON.stringify(v));
+    form.append(field, new Blob([buffer], { type: mime }), filename);
+    const res = await fetchFn(`https://api.telegram.org/bot${token}/${method}`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(20000),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(`Telegram ${method} failed: ${data.description || res.status}`);
+    return data.result;
+  }
+
   return {
     chatId: String(chatId),
+    // Фото у відповідь на картку замовлення; якщо Telegram не прийме як фото (розміри, формат) - надсилаємо документом
+    sendFile: async (file, { caption, replyTo } = {}) => {
+      const extra = {
+        caption,
+        reply_parameters: replyTo ? { message_id: replyTo, allow_sending_without_reply: true } : undefined,
+      };
+      try {
+        return await upload('sendPhoto', 'photo', file, extra);
+      } catch {
+        return upload('sendDocument', 'document', file, extra);
+      }
+    },
     sendOrder: (text, replyMarkup) => call('sendMessage', {
       chat_id: chatId,
       text,
@@ -45,6 +73,15 @@ export function createTelegram({ token, chatId, fetchFn }) {
       message_id: messageId,
       text,
       entities,
+      link_preview_options: { is_disabled: true },
+      reply_markup: replyMarkup,
+    }),
+    // Те саме, але текст у HTML (картки сертифікатів)
+    editHtml: ({ messageId, text, replyMarkup }) => call('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      parse_mode: 'HTML',
       link_preview_options: { is_disabled: true },
       reply_markup: replyMarkup,
     }),

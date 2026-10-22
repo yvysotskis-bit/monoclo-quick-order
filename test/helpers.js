@@ -42,6 +42,8 @@ export const config = {
   remindersFrom: 0,
   reportDay: 1,
   reportHour: 9,
+  // Сертифікати перевіряються в test/certificates.test.js; в інших тестах не читають KeyCRM
+  certEnabled: false,
 };
 
 // Пара ключів, якою «банк» підписує вебхуки в тестах
@@ -60,6 +62,7 @@ export const NP = {
 };
 
 export const product = {
+  id: 9001,
   handle: 'tee',
   title: 'Футболка <Volvo> FH16',
   featured_image: '//cdn.test/tee.jpg',
@@ -99,7 +102,7 @@ export function mockFetch({ productResponse } = {}) {
     const u = String(url);
     const call = { url: u, method: init.method || 'GET', body: typeof init.body === 'string' ? JSON.parse(init.body) : (init.body ?? null), headers: init.headers };
     calls.push(call);
-    if (u.startsWith('https://store.test/products/')) {
+    if (/^https:\/\/(store|ms)\.test\/products\//.test(u)) {
       if (productResponse === 404) return new Response('{}', { status: 404 });
       return Response.json(productResponse || product);
     }
@@ -171,17 +174,38 @@ export function mockFetch({ productResponse } = {}) {
         return Response.json({ success: true, data: [{ Addresses: [{ SettlementStreetRef: NP.street, Present: 'вул. Головна', SettlementStreetDescription: 'Головна' }] }] });
       }
     }
+    if (u.startsWith('https://graph.facebook.com/')) {
+      if (fn.fail.meta) return new Response('{"error":{"message":"Invalid OAuth access token"}}', { status: 400 });
+      return Response.json({ events_received: call.body.data.length, fbtrace_id: 'x' });
+    }
+    if (u.startsWith('https://www.google-analytics.com/')) {
+      if (fn.fail.ga) return new Response('', { status: 500 });
+      return new Response(null, { status: 204 });
+    }
     if (u.startsWith('https://openapi.keycrm.app/')) {
       const url = new URL(u);
       const crm = fn.crmState;
       if (fn.fail.keycrm) return new Response('{"message":"boom"}', { status: 500 });
       // Пошук замовлення за source_uuid (захист від дублів) і читання оплат замовлення
+      if (call.method === 'GET' && url.pathname === '/v1/order' && url.searchParams.has('filter[source_id]')) {
+        fn.crmLists.push(Object.fromEntries(url.searchParams));
+        const page = Number(url.searchParams.get('page') || 1);
+        const rows = (crm.list || []).filter((o) => String(o.source_id) === url.searchParams.get('filter[source_id]'));
+        return Response.json({ data: rows.slice((page - 1) * 50, page * 50), current_page: page, last_page: Math.max(1, Math.ceil(rows.length / 50)) });
+      }
+      // Список за період без фільтра джерела (сертифікати): усі замовлення зі crm.list
+      if (call.method === 'GET' && url.pathname === '/v1/order' && url.searchParams.has('filter[created_between]')) {
+        fn.crmLists.push(Object.fromEntries(url.searchParams));
+        const page = Number(url.searchParams.get('page') || 1);
+        const rows = crm.list || [];
+        return Response.json({ data: rows.slice((page - 1) * 50, page * 50), current_page: page, last_page: Math.max(1, Math.ceil(rows.length / 50)) });
+      }
       if (call.method === 'GET' && url.pathname === '/v1/order') {
         const uuid = url.searchParams.get('filter[source_uuid]');
         return Response.json({ data: crm.orders.filter((o) => o.source_uuid === uuid) });
       }
       const single = call.method === 'GET' && /^\/v1\/order\/(\d+)$/.exec(url.pathname);
-      if (single) return Response.json({ id: Number(single[1]), payments: crm.payments.filter((p) => p.order_id === Number(single[1])) });
+      if (single) return Response.json({ id: Number(single[1]), ...(crm.order || {}), payments: crm.payments.filter((p) => p.order_id === Number(single[1])) });
       if (fn.fail.keycrmShipping && call.body?.shipping?.shipping_service) {
         return new Response('{"message":"shipping invalid"}', { status: 422 });
       }
@@ -214,12 +238,15 @@ export function mockFetch({ productResponse } = {}) {
   fn.sentMessages = [];
   fn.crmState = { orders: [], payments: [], puts: [] };
   fn.np = 0;
+  fn.crmLists = [];
   fn.mono = () => calls.filter((c) => c.url.includes('api.monobank.ua') && c.url.endsWith('/invoice/create'));
   fn.monoRemoved = () => calls.filter((c) => c.url.endsWith('/invoice/remove'));
   fn.npTrack = {};
   fn.npTracked = [];
   fn.tg = (method) => calls.filter((c) => c.url.includes('api.telegram.org') && c.url.endsWith(`/${method}`));
   // Лише запити, що змінюють дані (читання для перевірок не рахуємо)
+  fn.meta = () => calls.filter((c) => c.url.startsWith('https://graph.facebook.com/'));
+  fn.ga = () => calls.filter((c) => c.url.startsWith('https://www.google-analytics.com/'));
   fn.crm = () => calls.filter((c) => c.url.includes('keycrm.app') && c.method !== 'GET');
   fn.crmReads = () => calls.filter((c) => c.url.includes('keycrm.app') && c.method === 'GET');
   return fn;

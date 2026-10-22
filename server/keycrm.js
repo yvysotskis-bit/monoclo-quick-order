@@ -45,7 +45,7 @@ export function buildCrmOrder(order, { sourceId, deliveryServiceId = 0 }) {
     source_uuid: `quick-${order.order_number}`,
     buyer_comment: d.comment || undefined,
     manager_comment: [
-      `Швидке замовлення #${order.order_number}${d.afterHours ? ' (поза робочим часом)' : ''}. Сторінка: ${d.productUrl}`,
+      `${d.kind === 'custom' ? 'Заявка «Свій принт»' : 'Швидке замовлення'} #${order.order_number}${d.afterHours ? ' (поза робочим часом)' : ''}. Сторінка: ${d.productUrl}`,
       // Доставку дублюємо текстом: вона лишається видимою, навіть якщо KeyCRM не прийме поля доставки
       ...describeDelivery(d.delivery),
       ...(d.body ? [`Зріст ${d.body.height} см, вага ${d.body.weight} кг (підбір розміру)`] : []),
@@ -104,10 +104,11 @@ export function createKeycrm({ token, sourceId, statusMap = {}, deliveryServiceI
       const data = await call('GET', `/order/${crmOrderId}?include=payments`);
       return (data?.payments || []).some((p) => String(p.description || '').includes(marker));
     },
-    async createOrder(order) {
+    // sourceId: джерело магазину, з якого прийшло замовлення (за замовчуванням — основне)
+    async createOrder(order, { sourceId: orderSourceId } = {}) {
       const existing = await this.findOrderId(`quick-${order.order_number}`);
       if (existing) return existing;
-      const payload = buildCrmOrder(order, { sourceId, deliveryServiceId });
+      const payload = buildCrmOrder(order, { sourceId: orderSourceId || sourceId, deliveryServiceId });
       let data;
       try {
         data = await call('POST', '/order', payload);
@@ -132,6 +133,38 @@ export function createKeycrm({ token, sourceId, statusMap = {}, deliveryServiceI
         status: 'paid',
         description,
       });
+    },
+    // Стан замовлення для зарахування покупки: статус, сума, отримані оплати, ТТН.
+    // Менеджер міг додати оплату чи ТТН вручну в KeyCRM, тому сервер дивиться й туди.
+    async getOrderState(crmOrderId) {
+      const data = await call('GET', `/order/${crmOrderId}?include=payments,shipping`);
+      const payments = Array.isArray(data?.payments) ? data.payments : [];
+      const paidUah = payments
+        .filter((p) => String(p.status || '').toLowerCase() === 'paid')
+        .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+      return {
+        statusId: Number(data?.status_id) || 0,
+        statusGroupId: Number(data?.status_group_id) || 0,
+        grandTotalUah: Number(data?.grand_total) || 0,
+        // Якщо список оплат не прийшов, спираємось на загальну суму оплат замовлення
+        paidUah: paidUah || (payments.length ? 0 : Number(data?.payments_total) || 0),
+        trackingCode: String(data?.shipping?.tracking_code || '').trim(),
+      };
+    },
+    // Сторінка замовлень за період створення: одного джерела (покупки з Instagram Direct тощо) або всіх, якщо sourceId не задано
+    async listOrders({ sourceId, from, to, page = 1 }) {
+      const query = new URLSearchParams({
+        ...(sourceId ? { 'filter[source_id]': String(sourceId) } : {}),
+        'filter[created_between]': `${from}, ${to}`,
+        include: 'payments,shipping,buyer,tags,products',
+        limit: '50',
+        page: String(page),
+      });
+      const data = await call('GET', `/order?${query}`);
+      return {
+        orders: Array.isArray(data?.data) ? data.data : [],
+        hasMore: Boolean(data?.next_page_url) || (Number(data?.current_page) < Number(data?.last_page)),
+      };
     },
     // Записує номер ТТН у замовлення KeyCRM
     async setTrackingCode(crmOrderId, code) {
