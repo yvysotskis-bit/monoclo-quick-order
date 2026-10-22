@@ -34,6 +34,14 @@ CREATE INDEX IF NOT EXISTS orders_message ON orders (tg_message_id);
 CREATE TABLE IF NOT EXISTS hits (key TEXT NOT NULL, at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS hits_key ON hits (key, at);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ab_exposures (
+  exp TEXT NOT NULL,
+  vid TEXT NOT NULL,
+  variant TEXT NOT NULL,
+  first_at INTEGER NOT NULL,
+  converted_at INTEGER,
+  PRIMARY KEY (exp, vid)
+);
 CREATE TABLE IF NOT EXISTS payments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   order_id INTEGER NOT NULL,
@@ -392,6 +400,28 @@ export class Store {
 
   setTtn(id, number, ref) {
     this.run('UPDATE orders SET ttn_number = ?, ttn_ref = ?, ttn_crm_synced = 0 WHERE id = ?', number, ref, id);
+  }
+
+  abExposure(exp, vid) {
+    return this.db.prepare('SELECT variant FROM ab_exposures WHERE exp = ? AND vid = ?').get(exp, vid)?.variant ?? null;
+  }
+
+  abRecordExposure(exp, vid, variant, at) {
+    this.run('INSERT OR IGNORE INTO ab_exposures (exp, vid, variant, first_at) VALUES (?, ?, ?, ?)', exp, vid, variant, at);
+  }
+
+  abMarkConverted(exp, vid, at) {
+    this.run('UPDATE ab_exposures SET converted_at = COALESCE(converted_at, ?) WHERE exp = ? AND vid = ?', at, exp, vid);
+  }
+
+  abStats(exp) {
+    return this.db.prepare('SELECT variant, COUNT(*) AS views, COUNT(converted_at) AS conversions FROM ab_exposures WHERE exp = ? GROUP BY variant').all(exp);
+  }
+
+  // Історія замовлень магазину для підбору розміру (останні 5000, нові першими)
+  sizeHistory(shopKey, limit = 5000) {
+    return this.q('SELECT * FROM orders ORDER BY id DESC LIMIT ?', limit)
+      .filter((o) => (o.data.shop || 'main') === (shopKey || 'main'));
   }
 
   // ТТН створено, але ще не записано в KeyCRM

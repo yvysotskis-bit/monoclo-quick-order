@@ -119,11 +119,12 @@ const mock = `<script>
     streets: ['вул. Головна', 'вул. Героїв Майдану', 'просп. Незалежності'].map(function (n, i) { return { ref: uid(300 + i), name: n }; })
   };
   window.__np = [];
+  window.__calls = [];
   function np(url) {
     var u = new URL(url, location.href);
     var kind = u.pathname.split('/np/')[1];
     var query = (u.searchParams.get('q') || '').toLowerCase();
-    window.__np.push({ kind: kind, q: u.searchParams.get('q'), settlement: u.searchParams.get('settlement'), pointKind: u.searchParams.get('kind') });
+    window.__np.push({ kind: kind, q: u.searchParams.get('q'), settlement: u.searchParams.get('settlement'), pointKind: u.searchParams.get('kind'), lat: u.searchParams.get('lat'), lon: u.searchParams.get('lon') });
     return new Promise(function (resolve) {
       setTimeout(function () {
         if (q.get('np') === 'down') return resolve(new Response(JSON.stringify({ ok: false, code: 'np_disabled' }), { status: 503 }));
@@ -132,6 +133,8 @@ const mock = `<script>
         if (kind === 'points') {
           var all = u.searchParams.get('kind') === 'postomat' ? NPDATA.postomats : NPDATA.branches;
           items = all.filter(function (p) { return !query || p.name.toLowerCase().indexOf(query) !== -1; }).slice(0, 40);
+          // «Поруч зі мною»: відстань зростає з номером, найближчі першими
+          if (u.searchParams.get('lat')) items = items.slice(0, 15).map(function (p, i) { return Object.assign({}, p, { distance: 120 + i * 380 }); });
         }
         if (kind === 'streets') items = NPDATA.streets.filter(function (st) { return st.name.toLowerCase().indexOf(query) !== -1; });
         resolve(new Response(JSON.stringify({ ok: true, items: items }), { status: 200 }));
@@ -141,6 +144,13 @@ const mock = `<script>
 
   window.fetch = function (url, init) {
     if (String(url).indexOf('/np/') !== -1) return np(String(url));
+    // Допоміжні запити: A/B-варіанти (?ab=B), підбір за історією (?hist=1), розмір як минулого разу (?last=M)
+    var path = String(url).split('?')[0];
+    var json = function (data) { return Promise.resolve(new Response(JSON.stringify(data), { status: 200 })); };
+    window.__calls.push(String(url));
+    if (path.slice(-3) === '/ab') return json({ ok: true, variants: q.get('ab') ? { cta: q.get('ab') } : {} });
+    if (path.slice(-5) === '/size') return json(q.get('hist') ? { ok: true, size: 'L', share: 83, n: 24 } : { ok: true, size: null });
+    if (path.slice(-9) === '/lastsize') return json({ ok: true, sizes: q.get('last') ? { tee: q.get('last') } : {} });
     var body = JSON.parse(init.body);
     window.__orders.push(body);
     return new Promise(function (resolve) {

@@ -72,6 +72,7 @@ async function flow(name, viewport) {
   await page.fill('.qo-sizehelper__field:nth-child(1) input', '180');
   await page.fill('.qo-sizehelper__field:nth-child(2) input', '78');
   await page.click('.qo-sizehelper__go');
+  await page.waitForFunction(() => /Рекомендуємо L/.test(document.querySelector('.qo-sizehelper__result').textContent));
   assert.match(await page.textContent('.qo-sizehelper__result'), /Рекомендуємо L/);
   assert.equal(await page.getAttribute('.qo-choice[data-qo-value="L"]', 'aria-checked'), 'true');
   await shot('2b-size-helper');
@@ -214,6 +215,7 @@ await flow('mobile', { width: 390, height: 844 });
   await page.fill('.qo-sizehelper__field:nth-child(1) input', '180');
   await page.fill('.qo-sizehelper__field:nth-child(2) input', '78');
   await page.click('.qo-sizehelper__go');
+  await page.waitForFunction(() => /Оберіть колір/.test(document.querySelector('.qo-sizehelper__result').textContent));
   assert.match(await page.textContent('.qo-sizehelper__result'), /Оберіть колір/);
   assert.equal(await page.evaluate(() => !!document.querySelector('[data-qo-field="option-0"].is-attention')), true);
   assert.deepEqual(errors, []);
@@ -595,6 +597,115 @@ for (const [name, viewport] of [['desktop', { width: 1280, height: 820 }], ['mob
   assert.equal(await page.evaluate(() => document.querySelector('[data-qo-dialog]').open), true, 'попап лишається');
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.querySelector('[data-qo-dialog]').open);
+  await ctx.close();
+}
+
+// Підбір розміру за історією замовлень: пояснення з відсотком, розмір обирається сам
+{
+  const { page, ctx, errors } = await session('size-history', { width: 390, height: 844 }, '?hour=12&hist=1');
+  await open(page);
+  await page.click('.qo-choice[data-qo-value="Чорний"]');
+  await page.click('.qo-sizehelper__toggle');
+  await page.fill('.qo-sizehelper__field:nth-child(1) input', '180');
+  await page.fill('.qo-sizehelper__field:nth-child(2) input', '78');
+  await page.click('.qo-sizehelper__go');
+  await page.waitForFunction(() => /83%/.test(document.querySelector('.qo-sizehelper__result').textContent));
+  assert.match(await page.textContent('.qo-sizehelper__result'), /Рекомендуємо L .*83% покупців із подібним зростом і вагою \(24\)/);
+  assert.equal(await page.getAttribute('.qo-choice[data-qo-value="L"]', 'aria-checked'), 'true');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
+// «Ваш розмір, як минулого разу»: на комп'ютері пропозиція зʼявляється після введення номера й обирається одним дотиком
+{
+  const { page, ctx, shot, errors } = await session('last-size', { width: 1280, height: 820 }, '?hour=12&last=M');
+  await open(page);
+  await page.click('.qo-choice[data-qo-value="Чорний"]');
+  assert.equal(await page.isVisible('[data-qo-lastsize]'), false, 'без номера пропозиції немає');
+  await page.click('[data-qo-phone]');
+  await page.keyboard.type('501112233');
+  await page.waitForSelector('[data-qo-lastsize]:not([hidden])');
+  assert.match(await page.textContent('[data-qo-lastsize]'), /Ваш розмір, як минулого разу: M/);
+  await shot('chip');
+  await page.click('.qo-lastsize__pick');
+  assert.equal(await page.getAttribute('.qo-choice[data-qo-value="M"]', 'aria-checked'), 'true');
+  assert.equal(await page.isVisible('[data-qo-lastsize]'), false, 'після вибору пропозиція ховається');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
+// На телефоні номер вводиться на другому кроці, тож пропозиція одразу зʼявляється лише для збереженого номера
+{
+  const { page, ctx, errors } = await session('last-size-mobile', { width: 390, height: 844 }, '?hour=12&last=M');
+  await page.evaluate(() => localStorage.setItem('qo:contact', JSON.stringify({ name: 'Олена', phone: '+380501112233' })));
+  await page.reload();
+  await open(page);
+  await page.click('.qo-choice[data-qo-value="Чорний"]');
+  await page.waitForSelector('[data-qo-lastsize]:not([hidden])');
+  assert.match(await page.textContent('[data-qo-lastsize]'), /як минулого разу: M/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
+// Найближчі відділення за геолокацією: кнопка, відстань у списку, текстовий пошук скидає режим
+{
+  const { page, ctx, shot, errors } = await session('nearby', { width: 390, height: 844 }, '?hour=12');
+  await ctx.grantPermissions(['geolocation']);
+  await ctx.setGeolocation({ latitude: 48.2921, longitude: 25.9351 });
+  await open(page);
+  await basics(page);
+  assert.equal(await page.isVisible('[data-qo-nearby]'), false, 'кнопки немає, поки не обрано місто');
+  await pickCity(page);
+  await page.click(`${options('city')} >> nth=0`);
+  await page.waitForSelector('[data-qo-nearby]:not([hidden])');
+  await page.click('[data-qo-nearby]');
+  await page.waitForSelector(options('point'));
+  const rows = await page.locator(options('point')).allTextContents();
+  assert.match(rows[0], /120 м від вас/);
+  assert.match(rows[1], /500 м від вас/);
+  const last = await page.evaluate(() => window.__np.filter((n) => n.kind === 'points').pop());
+  assert.equal(last.lat, '48.2921');
+  assert.equal(last.lon, '25.9351');
+  await shot('list');
+  await page.click(`${options('point')} >> nth=0`);
+  assert.match(await page.inputValue('[data-qo-point]'), /Відділення №1/);
+  // Текстовий пошук знову працює без координат
+  await page.fill('[data-qo-point]', 'Тестова, 5');
+  await page.waitForTimeout(600);
+  const typed = await page.evaluate(() => window.__np.filter((n) => n.kind === 'points').pop());
+  assert.equal(typed.lat, null);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
+// A/B-тест кнопки: варіант B змінює текст і йде у замовлення; без відповіді сервера лишається звичайний текст
+for (const [variant, verb] of [['B', 'Підтвердити замовлення'], ['A', 'Замовити']]) {
+  const { page, ctx, errors } = await session(`ab-${variant}`, { width: 1280, height: 820 }, `?hour=12&ab=${variant}`);
+  await open(page);
+  await page.click('.qo-choice[data-qo-value="Чорний"]');
+  await page.click('.qo-choice[data-qo-value="M"]');
+  await page.fill('[data-qo-name]', 'Олена Коваль');
+  await page.click('[data-qo-phone]');
+  await page.keyboard.type('501112233');
+  assert.match(await page.textContent('[data-qo-submit-label]'), new RegExp(`^${verb}`));
+  await page.click('[data-qo-submit]');
+  await page.waitForFunction(() => window.__orders.length === 1);
+  const order = await page.evaluate(() => window.__orders[0]);
+  assert.equal(order.ab.cta, variant);
+  assert.match(order.ab.vid, /^[\w-]{8,64}$/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+{
+  const { page, ctx, errors } = await session('ab-none', { width: 1280, height: 820 }, '?hour=12');
+  await open(page);
+  await page.click('.qo-choice[data-qo-value="Чорний"]');
+  await page.click('.qo-choice[data-qo-value="M"]');
+  await page.fill('[data-qo-name]', 'Олена Коваль');
+  await page.click('[data-qo-phone]');
+  await page.keyboard.type('501112233');
+  assert.match(await page.textContent('[data-qo-submit-label]'), /^Замовити/);
+  assert.deepEqual(errors, []);
   await ctx.close();
 }
 

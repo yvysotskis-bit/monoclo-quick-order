@@ -162,11 +162,13 @@ export function mockFetch({ productResponse } = {}) {
       if (calledMethod === 'getWarehouses') {
         const postomat = p.TypeOfWarehouseRef === 'f9316480-5f2d-425d-bc2c-ac7cd29decf0';
         const rows = postomat
-          ? [{ Ref: NP.postomat, CityRef: 'city-ref', Number: '4101', Description: 'Поштомат "Нова Пошта" №4101: вул. Головна, 12', ShortAddress: 'вул. Головна, 12', CategoryOfWarehouse: 'Postomat' }]
+          ? [{ Ref: NP.postomat, CityRef: 'city-ref', Number: '4101', Description: 'Поштомат "Нова Пошта" №4101: вул. Головна, 12', ShortAddress: 'вул. Головна, 12', CategoryOfWarehouse: 'Postomat', Latitude: '48.2915', Longitude: '25.9340' }]
           : [
-            { Ref: NP.branch, CityRef: 'city-ref', Number: '3', Description: 'Відділення №3: вул. Ольги Кобилянської, 1', ShortAddress: 'вул. Ольги Кобилянської, 1', CategoryOfWarehouse: 'Branch' },
-            { Ref: NP.branch2, Number: '12', Description: 'Відділення №12: просп. Незалежності, 5', ShortAddress: 'просп. Незалежності, 5', CategoryOfWarehouse: 'Branch' },
+            { Ref: NP.branch, CityRef: 'city-ref', Number: '3', Description: 'Відділення №3: вул. Ольги Кобилянської, 1', ShortAddress: 'вул. Ольги Кобилянської, 1', CategoryOfWarehouse: 'Branch', Latitude: '48.2920', Longitude: '25.9350' },
+            { Ref: NP.branch2, Number: '12', Description: 'Відділення №12: просп. Незалежності, 5', ShortAddress: 'просп. Незалежності, 5', CategoryOfWarehouse: 'Branch', Latitude: '48.2800', Longitude: '25.9500' },
             { Ref: NP.leak, Number: '9999', Description: 'Поштомат, що не має бути серед відділень', CategoryOfWarehouse: 'Postomat' },
+            // Повний довідник міста (без фільтра типу) містить і поштомати, як у справжньому API
+            { Ref: NP.postomat, Number: '4101', Description: 'Поштомат "Нова Пошта" №4101: вул. Головна, 12', ShortAddress: 'вул. Головна, 12', CategoryOfWarehouse: 'Postomat', Latitude: '48.2915', Longitude: '25.9340' },
           ];
         return Response.json({ success: true, data: rows.filter((r) => !p.FindByString || r.Description.includes(p.FindByString)) });
       }

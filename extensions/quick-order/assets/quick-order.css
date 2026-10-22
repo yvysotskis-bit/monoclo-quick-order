@@ -814,3 +814,13 @@ html.qo-lock { overflow: hidden; }
 }
 
 .qo-hint--cta:not(:empty) { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; color: var(--qo-ink); }
+
+/* «Ваш розмір, як минулого разу» */
+.qo-lastsize { margin: 8px 0 0; padding: 8px 12px; border-radius: 10px; background: rgba(0,0,0,.05); font-size: 14px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.qo-lastsize[hidden] { display: none; }
+.qo-lastsize__pick { margin-left: auto; padding: 6px 14px; border: 0; border-radius: 999px; background: #111; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+
+/* Найближчі відділення за геолокацією */
+.qo-nearby { margin-top: 8px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 14px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; text-align: left; }
+.qo-nearby[hidden] { display: none; }
+.qo-nearby:disabled { opacity: .6; cursor: default; }

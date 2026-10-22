@@ -1,11 +1,13 @@
 import crypto from 'node:crypto';
 import { verifyProxySignature } from './proxy-signature.js';
-import { validateSubmission } from './validate.js';
+import { validateSubmission, normalizePhone } from './validate.js';
 import { CUSTOM_PRODUCT_ID, MAX_PHOTOS, MAX_PHOTO_BYTES, customItems, customOptions, sniffImage, validateCustomBrief } from './custom-print.js';
 import { createCertificates } from './certificates.js';
 import { fetchProduct, optionPairs } from './shopify-product.js';
 import { createTelegram } from './telegram.js';
 import { createBackup } from './backup.js';
+import { createSizeAdvisor } from './sizes.js';
+import { createExperiments } from './experiments.js';
 import { createKeycrm } from './keycrm.js';
 import { createNovaPoshta, npDateKey } from './novaposhta.js';
 import { createTtnService } from './ttn.js';
@@ -118,6 +120,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     chatId: config.telegramChatId,
     fetchFn,
   });
+  const experiments = createExperiments({ store, config, telegram, now, log });
+  const sizeAdvisor = createSizeAdvisor({ store, minSamples: config.sizeAdvisorMin ?? 5 });
   const backup = createBackup({ config, store, telegram, fetchFn, now, log });
   const keycrm = config.keycrmToken
     ? createKeycrm({
@@ -384,6 +388,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     // 7. Спроба доставити одразу; якщо не вийде, фонова черга повторить
     await Promise.allSettled([deliverTelegram(order), deliverCrm(order)]);
     log.log(JSON.stringify({ event: 'order', number: order.order_number, variant: input.variantId, qty: input.quantity }));
+    experiments.convert(input.ab);
     return { ok: true, order_number: order.order_number, after_hours: afterHours };
   }
 
@@ -987,6 +992,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       ['reminders', () => sendReminders(date)],
       ['parcels', () => trackParcels(date)],
       ['report', () => sendWeeklyReport(date)],
+      ['experiments', () => experiments.tick()],
       ['backup', () => backup.run()],
     ];
     for (const [name, run] of stages) {
@@ -1015,7 +1021,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     const purchases = conversions.enabled
       ? { purchases: store.conversionCounts(), conversions: conversions.diagnostics() }
       : {};
-    return { code: ok ? 200 : 503, body: { ok, db: true, ...counts, stuck_seconds: stuckSeconds, ...purchases } };
+    const tests = experiments.enabled ? { experiments: experiments.summary() } : {};
+    return { code: ok ? 200 : 503, body: { ok, db: true, ...counts, stuck_seconds: stuckSeconds, ...purchases, ...tests } };
   }
 
   // Сторінка-перехідник: Telegram дозволяє лише https-посилання, а вона відкриває Viber
@@ -1051,6 +1058,40 @@ p{margin:8px 0;color:#555}</style></head>
     return value;
   }
 
+  // Підбір розміру за історією: GET /proxy/size?height=&weight=&handle=&title=&sizes=S,M,L
+  function sizeSuggestion(req, url) {
+    const shop = authorizeProxy(url);
+    if (!store.takeHit(`size:${clientIp(req)}`, 120, 60_000, now().getTime())) throw new HttpError(429, 'rate_limited', 'Забагато запитів');
+    const height = Math.round(Number(url.searchParams.get('height')));
+    const weight = Math.round(Number(url.searchParams.get('weight')));
+    if (!(height >= 120 && height <= 220 && weight >= 30 && weight <= 200)) return { ok: true, size: null };
+    const found = sizeAdvisor.recommend({
+      shopKey: shop.key,
+      height,
+      weight,
+      handle: (url.searchParams.get('handle') || '').slice(0, 255),
+      title: (url.searchParams.get('title') || '').slice(0, 200),
+      available: (url.searchParams.get('sizes') || '').split(',').map((v) => v.trim()).filter(Boolean).slice(0, 20),
+    });
+    return { ok: true, ...(found || { size: null }) };
+  }
+
+  // Варіанти A/B-тестів для відвідувача: GET /proxy/ab?vid=...
+  function abAssign(req, url) {
+    authorizeProxy(url);
+    if (!store.takeHit(`ab:${clientIp(req)}`, 120, 60_000, now().getTime())) throw new HttpError(429, 'rate_limited', 'Забагато запитів');
+    return { ok: true, variants: experiments.assign(url.searchParams.get('vid') || '') };
+  }
+
+  // «Ваш розмір, як минулого разу»: лише розміри куплених і не повернутих речей цього номера, суворий ліміт запитів
+  async function lastSizes(req, url) {
+    const shop = authorizeProxy(url);
+    if (!store.takeHit(`lastsize:${clientIp(req)}`, 10, 10 * 60_000, now().getTime())) throw new HttpError(429, 'rate_limited', 'Забагато запитів');
+    const phone = normalizePhone(String((await readJson(req))?.phone ?? ''));
+    if (!phone) return { ok: true, sizes: {} };
+    return { ok: true, sizes: sizeAdvisor.lastSizes({ shopKey: shop.key, phone }) };
+  }
+
   async function novaPoshtaLookup(req, url, kind) {
     // Запит має прийти через App Proxy свого магазину
     if (!proxyShop(url)) {
@@ -1072,6 +1113,13 @@ p{margin:8px 0;color:#555}</style></head>
       if (!UUID.test(settlement)) throw new HttpError(422, 'bad_request', 'Оберіть місто');
       if (kind === 'points') {
         const pointKind = url.searchParams.get('kind') === 'postomat' ? 'postomat' : 'warehouse';
+        // «Поруч зі мною»: координати користувача лише для сортування, нічого не зберігаємо й не кешуємо
+        const lat = Number(url.searchParams.get('lat'));
+        const lon = Number(url.searchParams.get('lon'));
+        if (url.searchParams.has('lat') && url.searchParams.has('lon')) {
+          if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180)) throw new HttpError(422, 'bad_request', 'Некоректні координати');
+          return { ok: true, items: await novaPoshta.searchPoints({ settlement, query: '', kind: pointKind, near: { lat, lon } }) };
+        }
         return {
           ok: true,
           items: await cached(`p:${pointKind}:${settlement}:${q.toLowerCase()}`,
@@ -1179,6 +1227,9 @@ p{margin:8px 0;color:#555}</style></head>
         });
         return res.end(conversions.metaPurchasesCsv(Number.isFinite(from) ? from : 0));
       }
+      if (req.method === 'GET' && url.pathname === '/proxy/ab') return send(200, abAssign(req, url));
+      if (req.method === 'GET' && url.pathname === '/proxy/size') return send(200, sizeSuggestion(req, url));
+      if (req.method === 'POST' && url.pathname === '/proxy/lastsize') return send(200, await lastSizes(req, url));
       if (req.method === 'POST' && url.pathname === '/proxy/submit') return send(200, await submit(req, url));
       if (req.method === 'POST' && url.pathname === '/proxy/custom') return send(200, await submitCustom(req, url));
       if (req.method === 'POST' && url.pathname === '/proxy/custom/photo') return send(200, await submitCustomPhoto(req, url));

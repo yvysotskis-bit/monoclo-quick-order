@@ -204,3 +204,30 @@ test('normalizeCity: DeliveryCity і AddressDeliveryAllowed', async () => {
   assert.equal(c.addressDelivery, false);
   assert.equal(normalizeCity({ Ref: 'r', MainDescription: 'Х' }).addressDelivery, true);
 });
+
+test('«поруч зі мною»: найближчі першими з відстанню, точки без координат пропускаються', async () => {
+  const { app } = makeApp({ cfg: npCfg });
+  const r = await get(app, '/proxy/np/points', { settlement: NP.city, kind: 'warehouse', lat: '48.2921', lon: '25.9351' });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json.items.map((p) => p.number), ['3', '12']);
+  assert.ok(r.json.items[0].distance < 50, `відстань ${r.json.items[0].distance}`);
+  assert.ok(r.json.items[1].distance > r.json.items[0].distance);
+
+  const postomats = await get(app, '/proxy/np/points', { settlement: NP.city, kind: 'postomat', lat: '48.2921', lon: '25.9351' });
+  assert.deepEqual(postomats.json.items.map((p) => p.number), ['4101']);
+});
+
+test('«поруч зі мною»: некоректні координати відхиляються', async () => {
+  const { app } = makeApp({ cfg: npCfg });
+  for (const [lat, lon] of [['abc', '25'], ['95', '25'], ['48', '200']]) {
+    const r = await get(app, '/proxy/np/points', { settlement: NP.city, kind: 'warehouse', lat, lon });
+    assert.equal(r.status, 422, `${lat},${lon}`);
+  }
+});
+
+test('distanceMeters: відомі відстані', async () => {
+  const { distanceMeters } = await import('../server/novaposhta.js');
+  assert.equal(distanceMeters(50.45, 30.52, 50.45, 30.52), 0);
+  const km = distanceMeters(50.4501, 30.5234, 49.8397, 24.0297) / 1000; // Київ — Львів
+  assert.ok(km > 460 && km < 480, `${km}`);
+});

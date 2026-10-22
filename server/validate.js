@@ -1,3 +1,5 @@
+import { cleanAb } from './experiments.js';
+
 const CONTROL_CHARS = /[\u0000-\u001f\u007f<>]/g;
 
 // Повертає +380XXXXXXXXX (UA) або +<цифри> для міжнародних номерів, інакше null
@@ -155,6 +157,7 @@ export function validateSubmission(body, { maxQty }) {
       comment: cleanText(body.comment, 300),
       pageUrl,
       clientId,
+      ab: cleanAb(body.ab),
       honeypot: typeof body.website === 'string' && body.website.trim() !== '',
     },
   };

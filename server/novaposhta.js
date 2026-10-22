@@ -40,6 +40,18 @@ export function formatSchedule(schedule) {
   return parts.join(', ');
 }
 
+const coordinate = (value) => {
+  const n = Number(text(value).replace(',', '.'));
+  return Number.isFinite(n) && n !== 0 ? n : null;
+};
+
+// Відстань між двома точками на Землі, метри (формула гаверсинусів)
+export function distanceMeters(lat1, lon1, lat2, lon2) {
+  const rad = (d) => (d * Math.PI) / 180;
+  const a = Math.sin(rad(lat2 - lat1) / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(rad(lon2 - lon1) / 2) ** 2;
+  return Math.round(12_742_000 * Math.asin(Math.min(1, Math.sqrt(a))));
+}
+
 export function normalizePoint(raw, kind) {
   const description = text(raw.Description);
   return {
@@ -49,6 +61,8 @@ export function normalizePoint(raw, kind) {
     address: text(raw.ShortAddress),
     hours: formatSchedule(raw.Schedule),
     kind,
+    lat: coordinate(raw.Latitude),
+    lon: coordinate(raw.Longitude),
   };
 }
 
@@ -130,7 +144,8 @@ export function createNovaPoshta({ apiKey, fetchFn, sleep = (ms) => new Promise(
     },
 
     // kind: 'warehouse' (відділення) або 'postomat'
-    async searchPoints({ settlement, query, kind }) {
+    // near: { lat, lon } — найближчі до користувача (усі точки міста з відстанню, найближчі перші)
+    async searchPoints({ settlement, query, kind, near }) {
       const wantPostomat = kind === 'postomat';
       const isPostomat = (r) =>
         r.CategoryOfWarehouse === 'Postomat' ||
@@ -153,6 +168,16 @@ export function createNovaPoshta({ apiKey, fetchFn, sleep = (ms) => new Promise(
           ...extra,
         }, { timeoutMs: 15000 });
       const usable = (rows) => rows.filter((r) => isPostomat(r) === wantPostomat).filter(selectable).filter(matches);
+
+      if (near) {
+        const all = usable(await scanPoints(settlement))
+          .map((r) => normalizePoint(r, wantPostomat ? 'postomat' : 'branch'))
+          .filter((p) => p.ref && p.name && p.lat !== null && p.lon !== null)
+          .map((p) => ({ ...p, distance: distanceMeters(near.lat, near.lon, p.lat, p.lon) }))
+          .sort((a, b) => a.distance - b.distance);
+        const seen = new Set();
+        return all.filter((p) => (seen.has(p.ref) ? false : seen.add(p.ref))).slice(0, 15);
+      }
 
       // 1) швидкий пошук на стороні Нової пошти (за типом і введеним текстом), результат ще раз фільтруємо самі
       const typed = wantPostomat ? { TypeOfWarehouseRef: TYPE_POSTOMAT } : {};

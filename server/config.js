@@ -135,6 +135,13 @@ export function loadConfig(env = process.env) {
 
     // Щоденна резервна копія бази: на диск (BACKUP_DIR, за замовчуванням поруч із базою) і, за наявності,
     // у приватний чат Telegram (BACKUP_CHAT_ID). BACKUP_HOUR — година за київським часом.
+    // Мінімум схожих покупців, щоб порадити розмір за історією (менше — лишається таблиця розмірів)
+    sizeAdvisorMin: number('SIZE_ADVISOR_MIN', 5),
+    // A/B-тести форми: вимкнути — AB_ENABLED=false; переможця обирають, коли різниця значуща (p<0,05)
+    abEnabled: optional('AB_ENABLED') !== 'false',
+    abMinViews: number('AB_MIN_VIEWS', 300),
+    abMaxViews: number('AB_MAX_VIEWS', 3000),
+    abMinConversions: number('AB_MIN_CONVERSIONS', 20),
     backupHour: number('BACKUP_HOUR', 4),
     backupKeep: number('BACKUP_KEEP', 7),
     backupChatId: optional('BACKUP_CHAT_ID'),

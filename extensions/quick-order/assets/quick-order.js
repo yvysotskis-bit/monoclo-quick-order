@@ -247,6 +247,34 @@
     try { localStorage.setItem(STORE_KEY, JSON.stringify(value)); } catch (e) { /* приватний режим */ }
   }
 
+  /* ---------- A/B-тест форми ---------- */
+
+  // Анонімний ідентифікатор відвідувача (лише випадкове число в цьому браузері) і варіанти, призначені сервером.
+  // Без відповіді сервера лишається звичайний варіант A.
+  var ab = { vid: '', variants: {}, asked: false };
+  var CTA_VERB = { A: 'Замовити', B: 'Підтвердити замовлення' };
+
+  function ctaVerb() { return CTA_VERB[ab.variants.cta] || CTA_VERB.A; }
+
+  function loadAb() {
+    if (ab.asked) return;
+    ab.asked = true;
+    try {
+      ab.vid = localStorage.getItem('qo:vid') || '';
+      if (!/^[\w-]{8,64}$/.test(ab.vid)) { ab.vid = uuid(); localStorage.setItem('qo:vid', ab.vid); }
+    } catch (e) { ab.vid = uuid(); }
+    quickJson('/ab?vid=' + encodeURIComponent(ab.vid)).then(function (data) {
+      if (!data || !data.variants) return;
+      ab.variants = data.variants;
+      if (state && dialog && dialog.open) refresh();
+    });
+  }
+
+  function abPayload() {
+    if (!ab.vid) return undefined;
+    return Object.assign({ vid: ab.vid }, ab.variants);
+  }
+
   /* ---------- Стан і DOM ---------- */
 
   var dialog, sheet, refs, cfg;
@@ -300,6 +328,7 @@
       deliveryRoot: $('[data-qo-delivery]'),
       npBlock: $('[data-qo-np]'),
       pointField: $('[data-qo-point-field]'),
+      nearby: $('[data-qo-nearby]'),
       pointLabel: $('[data-qo-point-label]'),
       point: $('[data-qo-point]'),
       courier: $('[data-qo-courier]'),
@@ -447,6 +476,8 @@
     hideError();
     setView('form');
     renderOptions();
+    loadLastSizes(state.prevDigits);
+    loadAb();
     showStep(1, false);
 
     var afterHours = isAfterHours();
@@ -656,20 +687,39 @@
         return;
       }
       state.body = { height: height, weight: weight };
-      var size = recommendSize(height, weight, option.values, state.product.title);
-      if (!size) { result.textContent = 'Не вдалося підібрати розмір. Скористайтеся таблицею розмірів.'; return; }
-      if (valueAvailable(optionIndex, size)) {
-        selectValue(optionIndex, size);
-        result.textContent = 'Рекомендуємо ' + size + ' і вже обрали його. Усі наші речі оверсайз: якщо хочете щільніше, візьміть на розмір менше.';
-        // Бракує іншого варіанта (наприклад, кольору): показуємо його й підсвічуємо
-        var next = optionMissing();
-        if (next) {
-          result.textContent = 'Рекомендуємо ' + size + ' і вже обрали його. ' + next.text + '.';
-          highlightMissing();
+      var forState = state;
+      var chosenBefore = state.selected[optionIndex];
+      var tableSize = recommendSize(height, weight, option.values, state.product.title);
+      result.textContent = 'Підбираємо розмір…';
+      // Спершу історія замовлень: який розмір обирали й не повертали покупці з подібними зростом і вагою
+      var query = new URLSearchParams({
+        height: height, weight: weight, handle: state.product.handle || '', title: state.product.title,
+        sizes: option.values.join(',')
+      }).toString();
+      quickJson('/size?' + query).then(function (hint) {
+        if (state !== forState) return;
+        var fromHistory = hint && hint.size ? matchValue(option.values, hint.size) : null;
+        var size = fromHistory || tableSize;
+        if (!size) { result.textContent = 'Не вдалося підібрати розмір. Скористайтеся таблицею розмірів.'; return; }
+        var why = fromHistory
+          ? hint.share + '% покупців із подібним зростом і вагою (' + hint.n + ') обрали цей розмір і не повертали.'
+          : 'Усі наші речі оверсайз: якщо хочете щільніше, візьміть на розмір менше.';
+        // Поки чекали відповідь, клієнт сам обрав інший розмір: його вибір не перебиваємо
+        if (state.selected[optionIndex] !== chosenBefore) {
+          result.textContent = 'Рекомендуємо ' + size + '. ' + why;
+        } else if (valueAvailable(optionIndex, size)) {
+          selectValue(optionIndex, size);
+          result.textContent = 'Рекомендуємо ' + size + ' і вже обрали його. ' + why;
+          // Бракує іншого варіанта (наприклад, кольору): показуємо його й підсвічуємо
+          var next = optionMissing();
+          if (next) {
+            result.textContent = 'Рекомендуємо ' + size + ' і вже обрали його. ' + next.text + '.';
+            highlightMissing();
+          }
+        } else {
+          result.textContent = 'Рекомендуємо ' + size + ', але в обраному кольорі його зараз немає. Спробуйте інший колір.';
         }
-      } else {
-        result.textContent = 'Рекомендуємо ' + size + ', але в обраному кольорі його зараз немає. Спробуйте інший колір.';
-      }
+      });
     });
     return wrap;
   }
@@ -729,6 +779,12 @@
       });
 
       field.appendChild(group);
+      if (SIZE_OPTION.test(option.name)) {
+        var chip = el('p', 'qo-lastsize');
+        chip.dataset.qoLastsize = i;
+        chip.hidden = true;
+        field.appendChild(chip);
+      }
       if (cfg.sizeHelper && SIZE_OPTION.test(option.name)) field.appendChild(buildSizeHelper(i, option));
       refs.options.appendChild(field);
     });
@@ -768,6 +824,7 @@
       var v = state.selected[Number(node.dataset.qoChosen)];
       node.textContent = v || '';
     });
+    updateLastSizeChip();
   }
 
   /* ---------- Кількість, ціна, наявність ---------- */
@@ -994,8 +1051,8 @@
     });
     refs.ctaHint.textContent = missing ? missing.text : '';
     var totalText = money(source.price * state.qty, product.currency);
-    if (state.step === 2) refs.submitLabel.textContent = 'Замовити · ' + totalText;
-    else if (quickReady()) refs.submitLabel.textContent = 'Замовити як ' + (refs.name.value.trim().split(' ')[0] || 'раніше') + ' · ' + totalText;
+    if (state.step === 2) refs.submitLabel.textContent = ctaVerb() + ' · ' + totalText;
+    else if (quickReady()) refs.submitLabel.textContent = ctaVerb() + ' як ' + (refs.name.value.trim().split(' ')[0] || 'раніше') + ' · ' + totalText;
     else refs.submitLabel.textContent = 'Далі';
     refs.sumLabel.textContent = state.qty > 1 ? state.qty + ' × ' + money(source.price, product.currency) : 'Разом';
     refs.sumTotal.textContent = totalText;
@@ -1057,7 +1114,7 @@
     }
     state.prevDigits = d;
     refs.phone.value = formatNational(d);
-    if (d.length === 9) state.touched.phone = true;
+    if (d.length === 9) { state.touched.phone = true; loadLastSizes(d); }
     hideError();
     refresh();
   }
@@ -1068,6 +1125,59 @@
   var npState = { available: true };
 
   function apiBase() { return cfg.endpoint.replace(/\/submit$/, ''); }
+
+  // Допоміжні запити до нашого сервера (підбір розміру за історією): без відповіді за 3 с просто мовчимо
+  function quickJson(path, options) {
+    var controller = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = setTimeout(function () { if (controller) controller.abort(); }, 3000);
+    var init = Object.assign({ headers: { Accept: 'application/json' } }, options || {});
+    if (controller) init.signal = controller.signal;
+    return fetch(apiBase() + path, init)
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .catch(function () { return null; })
+      .then(function (data) { clearTimeout(timer); return data && data.ok ? data : null; });
+  }
+
+  function matchValue(values, size) {
+    var up = String(size || '').toUpperCase();
+    return values.filter(function (v) { return String(v).toUpperCase() === up; })[0] || null;
+  }
+
+  // «Ваш розмір, як минулого разу»: розмір куплених і не повернутих речей цього номера (лише розмір, без іншого)
+  function loadLastSizes(national) {
+    if (!state || national.length !== 9 || state.lastSizesFor === national) return;
+    state.lastSizesFor = national;
+    var forState = state;
+    quickJson('/lastsize', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: '+380' + national })
+    }).then(function (data) {
+      if (state !== forState) return;
+      state.lastSizes = data && data.sizes ? data.sizes : null;
+      updateLastSizeChip();
+    });
+  }
+
+  function updateLastSizeChip() {
+    var chip = dialog && dialog.querySelector('[data-qo-lastsize]');
+    if (!chip || !state) return;
+    var i = chip.dataset.qoLastsize === '' ? -1 : Number(chip.dataset.qoLastsize);
+    var cls = HOODIE_RE.test(state.product.title) ? 'hoodie' : 'tee';
+    var value = state.lastSizes && i >= 0 ? matchValue(state.product.options[i].values, state.lastSizes[cls]) : null;
+    if (!value || state.selected[i] === value || !valueAvailable(i, value)) { chip.hidden = true; chip.dataset.shown = ''; return; }
+    // Не перебудовуємо вже показану пропозицію: інакше кнопка зникає з-під пальця під час кліку
+    if (chip.dataset.shown === value && !chip.hidden) return;
+    chip.dataset.shown = value;
+    chip.textContent = '';
+    chip.appendChild(el('span', '', 'Ваш розмір, як минулого разу: '));
+    chip.appendChild(el('strong', '', value));
+    var pick = el('button', 'qo-lastsize__pick', 'Обрати');
+    pick.type = 'button';
+    pick.addEventListener('click', function () { selectValue(i, value); });
+    chip.appendChild(pick);
+    chip.hidden = false;
+  }
 
   // Запит до нашого сервера (він сам звертається до API Нової пошти з прихованим ключем)
   function npFetch(path, params, signal) {
@@ -1086,6 +1196,36 @@
   }
 
   // Випадаючий список з пошуком (WAI-ARIA combobox): стрілки, Enter, Esc, дотики
+  function formatDistance(m) {
+    if (m < 1000) return Math.max(10, Math.round(m / 10) * 10) + ' м від вас';
+    return (m / 1000).toFixed(m < 10000 ? 1 : 0).replace('.', ',') + ' км від вас';
+  }
+
+  // Кнопка «Найближчі до мене»: браузер питає дозвіл на геолокацію, список сортується за відстанню
+  function initNearby() {
+    var btn = refs.nearby;
+    if (!btn || !('geolocation' in navigator)) return;
+    var label = btn.textContent;
+    btn.addEventListener('click', function () {
+      if (!deliveryActive() || state.delivery.method === 'courier') return;
+      btn.disabled = true;
+      btn.textContent = 'Визначаємо місце…';
+      navigator.geolocation.getCurrentPosition(function (pos) {
+        btn.disabled = false;
+        btn.textContent = label;
+        // Округлюємо до ~10 м: точніше для сортування не потрібно
+        state.nearby = { lat: pos.coords.latitude.toFixed(4), lon: pos.coords.longitude.toFixed(4) };
+        state.delivery.point = null;
+        if (refs.point) refs.point.value = '';
+        refs.pointCombo.open();
+      }, function () {
+        btn.disabled = false;
+        btn.textContent = 'Немає доступу до місця. Знайдіть за номером чи адресою';
+        setTimeout(function () { btn.textContent = label; }, 4000);
+      }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 });
+    });
+  }
+
   function createCombobox(root, o) {
     var input = root.querySelector('input');
     var list = root.querySelector('[role="listbox"]');
@@ -1228,6 +1368,7 @@
       if (row) pick(Number(row.dataset.i));
     });
 
+    api.open = function () { input.focus(); schedule(true); };
     api.close = function () { var was = !list.hidden; setOpen(false); return was; };
     api.reset = function () { clearTimeout(timer); seq++; items = []; setOpen(false); };
     combos.push(api);
@@ -1258,6 +1399,7 @@
   function showNp() {
     syncCourierOption();
     if (refs.npBlock) refs.npBlock.hidden = !deliveryActive();
+    if (refs.nearby) refs.nearby.hidden = !(deliveryActive() && 'geolocation' in navigator);
     if (refs.cityHint) {
       refs.cityHint.hidden = deliveryActive();
       refs.cityHint.textContent = npState.available && cfg.np ? CITY_HINT : 'Введіть місто, менеджер уточнить відділення';
@@ -1287,6 +1429,7 @@
     });
     var courier = method === 'courier';
     refs.pointField.hidden = courier;
+    state.nearby = null;
     refs.courier.hidden = !courier;
     refs.pointLabel.textContent = method === 'postomat' ? T.postomat : T.branch;
     refs.point.placeholder = method === 'postomat' ? T.postomatHint : T.branchHint;
@@ -1331,16 +1474,19 @@
       enabled: function () { return deliveryActive() && state.delivery.method !== 'courier'; },
       hasValue: function () { return !!state.delivery.point; },
       fetch: function (query, signal) {
-        return npFetch('points', {
+        var params = {
           settlement: state.delivery.city.ref,
           kind: state.delivery.method === 'postomat' ? 'postomat' : 'warehouse',
           q: query
-        }, signal);
+        };
+        // «Найближчі до мене»: координати йдуть лише для сортування й ніде не зберігаються
+        if (state.nearby && !query) { params.lat = state.nearby.lat; params.lon = state.nearby.lon; }
+        return npFetch('points', params, signal);
       },
       main: function (p) { return p.name.split(':')[0]; },
-      sub: function (p) { return [p.address, p.hours].filter(Boolean).join(' · '); },
+      sub: function (p) { return [p.distance != null ? formatDistance(p.distance) : '', p.address, p.hours].filter(Boolean).join(' · '); },
       label: function (p) { return p.name; },
-      onType: function () { state.delivery.point = null; refresh(); },
+      onType: function () { state.delivery.point = null; state.nearby = null; refresh(); },
       onPick: function (p) { state.delivery.point = p; refresh(); }
     });
 
@@ -1354,6 +1500,8 @@
       onType: function () { state.delivery.street = null; refresh(); },
       onPick: function (st) { state.delivery.street = st; refresh(); }
     });
+
+    initNearby();
 
     refs.deliveryRoot.querySelectorAll('[data-qo-method]').forEach(function (btn) {
       btn.addEventListener('click', function () { setMethod(btn.dataset.qoMethod); refresh(); });
@@ -1484,6 +1632,7 @@
       ads: (function () { try { return adIds(); } catch (e) { return {}; } })(),
       page_url: window.location.origin + state.product.url,
       client_id: state.clientId,
+      ab: abPayload(),
       website: refs.honeypot.value
     };
 
