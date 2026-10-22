@@ -92,7 +92,7 @@ li span{color:#777;width:22px}li b{flex:1;font-weight:500}li i{font-style:normal
 <h1>Де носять ${escapeHtml(brand)}</h1>
 <p class="lead">Кожна точка — місто, де є наші покупці. Чим більша точка, тим нас там більше.</p>
 <div class="stats"><div><b>${s.owners}</b><span>покупців</span></div><div><b>${s.cities}</b><span>міст і сіл</span></div></div>
-<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Мапа міст покупців"><defs><radialGradient id="glow"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs>${dots}</svg>
+<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Мапа міст покупців"><defs><radialGradient id="glow"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs>${dots}${dots ? '' : `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" style="font-size:20px;fill:#888">Мапа наповнюється: міста зʼявляться, коли в кожному буде щонайменше ${minCity} покупців</text>`}</svg>
 ${rows ? `<ol>${rows}</ol>` : ''}
 <p class="note">Показуємо лише міста, де щонайменше ${minCity} покупців${s.hidden ? `; ще ${s.hidden} ${s.hidden === 1 ? 'місто чи село' : 'міст і сіл'} поки не відображаються` : ''}. Жодних імен чи адрес.</p>
 </main></body></html>`;
