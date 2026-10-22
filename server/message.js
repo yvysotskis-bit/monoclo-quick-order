@@ -56,7 +56,12 @@ export function buildOrderMessage(o) {
   else if (o.city) lines.push(`📍 ${escapeHtml(o.city)}`);
   if (o.body) lines.push(`📏 Зріст ${o.body.height} см, вага ${o.body.weight} кг`);
   if (o.comment) lines.push(`💬 ${escapeHtml(o.comment)}`);
-  if (o.kind === 'custom') lines.push('📎 Фото чи файли клієнт надішле в Telegram - ціна орієнтовна, уточніть після ескізу');
+  if (o.kind === 'custom') {
+    lines.push(o.photos > 0
+      ? `📎 Фото від клієнта: ${o.photos} шт - нижче, відповіддю на цю картку`
+      : '📎 Фото чи файли клієнт надішле в Telegram');
+    lines.push('💰 Ціна орієнтовна - уточніть після ескізу');
+  }
   const source = describeSource(o);
   lines.push('', `📈 ${source ? escapeHtml(source) : 'прямий візит'}`, o.brandTag || '#Monoclo');
   return lines.join('\n');
