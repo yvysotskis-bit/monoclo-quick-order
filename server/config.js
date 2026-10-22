@@ -77,6 +77,8 @@ export function loadConfig(env = process.env) {
     workStart: number('WORK_HOURS_START', 10),
     workEnd: number('WORK_HOURS_END', 20),
     maxQty: number('MAX_QTY', 10),
+    // Ціни заявок «Свій принт» у гривнях поверх таблиці server/custom-print.js, напр. {"tee":1450}
+    customPrintPrices: parseJson(optional('CUSTOM_PRINT_PRICES'), 'CUSTOM_PRINT_PRICES'),
     currency: optional('CURRENCY') || 'UAH',
     // Публічна адреса цього сервера (на Render підставляється автоматично як RENDER_EXTERNAL_URL)
     publicUrl: (optional('PUBLIC_URL') || optional('RENDER_EXTERNAL_URL')).replace(/\/+$/, ''),

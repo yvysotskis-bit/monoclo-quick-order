@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { verifyProxySignature } from './proxy-signature.js';
 import { validateSubmission } from './validate.js';
+import { CUSTOM_PRODUCT_ID, customItems, customOptions, validateCustomBrief } from './custom-print.js';
 import { fetchProduct, optionPairs } from './shopify-product.js';
 import { createTelegram } from './telegram.js';
 import { createBackup } from './backup.js';
@@ -250,8 +251,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
 
   /* ---------- Приймання замовлення ---------- */
 
-  async function submit(req, url) {
-    // 1. Запит має прийти через App Proxy одного з наших магазинів
+  // Запит має прийти через App Proxy одного з наших магазинів; повертає магазин або кидає HttpError
+  function authorizeProxy(url) {
     const shop = proxyShop(url);
     const shopParam = url.searchParams.get('shop');
     const matched = shops.find((s) => s.shop === shopParam);
@@ -275,17 +276,27 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     if (!shop) {
       throw new HttpError(403, 'forbidden', 'Магазин не підтримується');
     }
+    return shop;
+  }
+
+  // Ліміт щедрий: якщо Shopify передає одну й ту саму адресу для всіх, 8 замовлень за 10 хвилин на весь магазин блокували б людей.
+  // Основний захист від спаму: підпис проксі, honeypot і ліміт за номером.
+  function limitIp(req, nowMs) {
+    if (!store.takeHit(`ip:${clientIp(req)}`, 30, 10 * 60_000, nowMs)) {
+      log.error('rate limited by ip', clientIp(req));
+      throw new HttpError(429, 'rate_limited', 'Забагато спроб. Спробуйте трохи пізніше');
+    }
+  }
+
+  async function submit(req, url) {
+    // 1. Запит має прийти через App Proxy одного з наших магазинів
+    const shop = authorizeProxy(url);
 
     const date = now();
     const nowMs = date.getTime();
 
     // 2. Ліміт за IP до будь-якої важкої роботи
-    // Ліміт щедрий: якщо Shopify передає одну й ту саму адресу для всіх, 8 замовлень за 10 хвилин на весь магазин блокували б людей.
-    // Основний захист від спаму: підпис проксі, honeypot і ліміт за номером.
-    if (!store.takeHit(`ip:${clientIp(req)}`, 30, 10 * 60_000, nowMs)) {
-      log.error('rate limited by ip', clientIp(req));
-      throw new HttpError(429, 'rate_limited', 'Забагато спроб. Спробуйте трохи пізніше');
-    }
+    limitIp(req, nowMs);
 
     // 3. Валідація
     const parsed = validateSubmission(await readJson(req), { maxQty: config.maxQty });
@@ -371,6 +382,71 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     await Promise.allSettled([deliverTelegram(order), deliverCrm(order)]);
     log.log(JSON.stringify({ event: 'order', number: order.order_number, variant: input.variantId, qty: input.quantity }));
     return { ok: true, order_number: order.order_number, after_hours: afterHours };
+  }
+
+  /* ---------- Заявка «Свій принт» (форма-бриф на лендингу) ---------- */
+
+  // Те саме, що швидке замовлення (Telegram-група, кнопки статусів і оплати, KeyCRM), але без товару в магазині:
+  // виріб друкується під замовлення, ціна - з таблиці сервера (server/custom-print.js), ідея - у коментарі.
+  async function submitCustom(req, url) {
+    const shop = authorizeProxy(url);
+    const date = now();
+    const nowMs = date.getTime();
+    limitIp(req, nowMs);
+
+    const items = customItems(config.customPrintPrices);
+    const parsed = validateCustomBrief(await readJson(req), { maxQty: config.maxQty, items });
+    if (!parsed.ok) throw new HttpError(422, parsed.code, parsed.message, parsed.field);
+    const input = parsed.value;
+    if (input.honeypot) return { ok: true, order_number: orderNumber(date, config.timezone) };
+
+    const fingerprint = fingerprintOf({ phone: input.phone, variantId: `custom-${input.itemKey}`, quantity: input.quantity });
+    const duplicate = store.findDuplicate({ clientId: input.clientId, fingerprint, since: nowMs - DUPLICATE_WINDOW_MS });
+    if (duplicate) return { ok: true, order_number: duplicate.order_number, after_hours: duplicate.data.afterHours };
+    if (!store.takeHit(`phone:${input.phone}`, 3, 60 * 60_000, nowMs)) {
+      throw new HttpError(429, 'rate_limited', 'Забагато заявок з цього номера. Спробуйте пізніше');
+    }
+
+    const afterHours = !isWorkingTime(date, config);
+    const unitCents = input.item.priceUah * 100;
+    const order = store.insertOrder({
+      orderNumber: orderNumber(date, config.timezone),
+      clientId: input.clientId,
+      fingerprint,
+      createdAt: nowMs,
+      data: {
+        kind: 'custom',
+        productTitle: `Свій принт · ${input.item.label}`,
+        productHandle: 'vlasnyi-print-zamovlennia',
+        productId: CUSTOM_PRODUCT_ID,
+        productUrl: input.pageUrl || `${shop.storeOrigin}/pages/svii-prynt`,
+        variantId: input.item.variantId,
+        sku: '',
+        picture: '',
+        options: customOptions(input, config.maxQty),
+        quantity: input.quantity,
+        unitCents,
+        totalCents: unitCents * input.quantity,
+        currency: config.currency,
+        name: input.name,
+        surname: '',
+        body: null,
+        phone: input.phone,
+        city: input.city,
+        delivery: null,
+        comment: input.idea,
+        utm: input.utm,
+        referrer: input.referrer,
+        click: input.click,
+        ads: input.ads,
+        afterHours,
+        ...(shop.key !== 'main' ? { shop: shop.key, brandTag: shop.tag, brandName: shop.name } : {}),
+      },
+    });
+
+    await Promise.allSettled([deliverTelegram(order), deliverCrm(order)]);
+    log.log(JSON.stringify({ event: 'custom', number: order.order_number, item: input.itemKey, qty: input.quantity }));
+    return { ok: true, order_number: order.order_number, after_hours: afterHours, value: (unitCents * input.quantity) / 100 };
   }
 
   /* ---------- Статуси з Telegram ---------- */
@@ -1014,6 +1090,7 @@ p{margin:8px 0;color:#555}</style></head>
         return res.end(conversions.metaPurchasesCsv(Number.isFinite(from) ? from : 0));
       }
       if (req.method === 'POST' && url.pathname === '/proxy/submit') return send(200, await submit(req, url));
+      if (req.method === 'POST' && url.pathname === '/proxy/custom') return send(200, await submitCustom(req, url));
       if (req.method === 'POST' && url.pathname === '/telegram/webhook') return send(200, await telegramWebhook(req));
       if (req.method === 'POST' && url.pathname === '/mono/webhook') return send(200, await monoWebhook(req));
       return send(404, { ok: false, code: 'not_found' });

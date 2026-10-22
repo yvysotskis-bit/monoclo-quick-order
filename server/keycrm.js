@@ -45,7 +45,7 @@ export function buildCrmOrder(order, { sourceId, deliveryServiceId = 0 }) {
     source_uuid: `quick-${order.order_number}`,
     buyer_comment: d.comment || undefined,
     manager_comment: [
-      `Швидке замовлення #${order.order_number}${d.afterHours ? ' (поза робочим часом)' : ''}. Сторінка: ${d.productUrl}`,
+      `${d.kind === 'custom' ? 'Заявка «Свій принт»' : 'Швидке замовлення'} #${order.order_number}${d.afterHours ? ' (поза робочим часом)' : ''}. Сторінка: ${d.productUrl}`,
       // Доставку дублюємо текстом: вона лишається видимою, навіть якщо KeyCRM не прийме поля доставки
       ...describeDelivery(d.delivery),
       ...(d.body ? [`Зріст ${d.body.height} см, вага ${d.body.weight} кг (підбір розміру)`] : []),
