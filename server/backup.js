@@ -1,6 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import zlib from 'node:zlib';
+import { promisify } from 'node:util';
+import { gzip } from 'node:zlib';
+
+const gzipAsync = promisify(gzip);
+const RETRY_MS = 15 * 60_000;
 import { dateKey, hourOf } from './hours.js';
 
 const PREFIX = 'quick-order-';
@@ -11,7 +15,8 @@ export function createBackup({ config, store, telegram, fetchFn, now, log }) {
   const enabled = Boolean(config.backupDir) || Boolean(config.backupChatId);
 
   async function sendToTelegram(file, caption) {
-    const gz = zlib.gzipSync(fs.readFileSync(file));
+    // Асинхронно: стиснення великої бази не має заморожувати сервер для замовлень і Telegram
+    const gz = await gzipAsync(await fs.promises.readFile(file));
     const form = new FormData();
     form.append('chat_id', config.backupChatId);
     form.append('caption', caption);
@@ -37,6 +42,8 @@ export function createBackup({ config, store, telegram, fetchFn, now, log }) {
     const today = dateKey(date, config.timezone);
     if (hourOf(date, config.timezone) < config.backupHour) return false;
     if (store.getMeta('backup_date') === today) return false;
+    // Після збою Telegram чекаємо, а не повторюємо щоразу: інакше кожен цикл заново знімає й вантажить базу
+    if (date.getTime() < Number(store.getMeta('backup_retry_at') || 0)) return false;
 
     const dir = config.backupDir || path.join(path.dirname(config.dbPath), 'backups');
     fs.mkdirSync(dir, { recursive: true });
@@ -45,7 +52,12 @@ export function createBackup({ config, store, telegram, fetchFn, now, log }) {
     store.snapshot(file);
     prune(dir);
     if (config.backupChatId) {
-      await sendToTelegram(file, `Резервна копія бази Quick Order ${today}`);
+      try {
+        await sendToTelegram(file, `Резервна копія бази Quick Order ${today}`);
+      } catch (err) {
+        store.setMeta('backup_retry_at', date.getTime() + RETRY_MS);
+        throw err;
+      }
     }
     store.setMeta('backup_date', today);
     log.log(`Резервну копію створено: ${file}${config.backupChatId ? ' (і надіслано в Telegram)' : ''}`);

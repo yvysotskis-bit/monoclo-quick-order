@@ -156,6 +156,8 @@ export function mockFetch({ productResponse } = {}) {
       if (calledMethod === 'getStreet') return Response.json({ success: true, data: [{ Ref: 'street-ref' }] });
       if (calledMethod === 'save' && call.body.modelName === 'Address') return Response.json({ success: true, data: [{ Ref: 'address-ref' }] });
       if (calledMethod === 'save' && call.body.modelName === 'InternetDocument') {
+        // Тайм-аут саме на створенні накладної: Нова пошта могла її створити, але відповідь не дійшла
+        if (fn.npTimeoutOnce) { fn.npTimeoutOnce = false; throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }); }
         if (fn.fail.npCod && (p.BackwardDeliveryData || p.AfterpaymentOnGoodsCost)) return Response.json({ success: false, errors: [fn.npCodMessage || 'Передана послуга Післяплата недоступна'], data: [] });
         return Response.json({ success: true, data: [{ Ref: 'doc-ref', IntDocNumber: '20451234567890', CostOnSite: '70' }], warnings: fn.npWarnings || [] });
       }
@@ -275,11 +277,11 @@ export function makeApp({ cfg = {}, fetchOpts, at = '2025-10-05T12:00:00Z' } = {
 }
 
 // Виклик handle() без реального сокета
-export async function call(app, { method = 'POST', url, body, rawBody, headers = {} }) {
+export async function call(app, { method = 'POST', url, body, rawBody, headers = {}, ip = '1.2.3.4' }) {
   const { Readable } = await import('node:stream');
   const payload = rawBody ?? (body === undefined ? null : JSON.stringify(body));
   const req = Readable.from(payload === null ? [] : [Buffer.from(payload)]);
-  Object.assign(req, { method, url, headers, socket: { remoteAddress: '1.2.3.4' } });
+  Object.assign(req, { method, url, headers, socket: { remoteAddress: ip } });
   const res = {
     status: 0,
     headers: {},

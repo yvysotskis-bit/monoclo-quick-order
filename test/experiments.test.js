@@ -29,12 +29,15 @@ test('cleanAb: лише коректний vid і відомі варіанти'
 });
 
 test('призначення варіанта: стабільне для відвідувача, обидва варіанти зустрічаються, показ рахується один раз', async () => {
-  const { app, store } = makeApp();
+  const { app, store, now } = makeApp();
   const first = (await ask(app, 'visitor-aaaa1111')).json.variants.cta;
   assert.ok(['A', 'B'].includes(first));
   for (let i = 0; i < 3; i += 1) assert.equal((await ask(app, 'visitor-aaaa1111')).json.variants.cta, first);
   const seen = new Set();
-  for (let i = 0; i < 60; i += 1) seen.add((await ask(app, `visitor-${String(i).padStart(8, '0')}`)).json.variants.cta);
+  for (let i = 0; i < 60; i += 1) {
+    if (i % 20 === 0) now.advance(61_000); // ліміт запитів з однієї адреси: 30 за хвилину
+    seen.add((await ask(app, `visitor-${String(i).padStart(8, '0')}`)).json.variants.cta);
+  }
   assert.deepEqual([...seen].sort(), ['A', 'B']);
   const totals = store.abStats('cta').reduce((n, r) => n + r.views, 0);
   assert.equal(totals, 61, 'кожен відвідувач — один показ');
@@ -65,7 +68,7 @@ test('значуща різниця: переможець фіксується, 
   await app.tick();
   assert.equal(store.getMeta('ab_winner:cta'), 'B');
   const text = fetchFn.tg('sendMessage').map((c) => c.body.text).find((t) => /A\/B-тест/.test(t));
-  assert.match(text, /переміг варіант «Підтвердити замовлення»/);
+  assert.match(text, /переміг варіант «Підтвердити»/);
   assert.match(text, /10% \(40 із 400\)/);
   assert.match(text, /20% \(80 із 400\)/);
   for (let i = 0; i < 20; i += 1) assert.equal((await ask(app, `newcomer-${String(i).padStart(6, '0')}`)).json.variants.cta, 'B');
@@ -103,4 +106,12 @@ test('/status показує підсумок тестів', async () => {
   const r = await call(app, { method: 'GET', url: '/status' });
   const cta = r.json.experiments.find((e) => e.id === EXPERIMENTS[0].id);
   assert.deepEqual(cta.variants.A, { views: 10, conversions: 1, rate: 10 });
+});
+
+test('/proxy/ab: з однієї адреси не більше 30 запитів за хвилину (захист бази від накрутки показів)', async () => {
+  const { app, store } = makeApp();
+  let limited = 0;
+  for (let i = 0; i < 40; i += 1) if ((await ask(app, `flood-${String(i).padStart(8, '0')}`)).status === 429) limited += 1;
+  assert.equal(limited, 10);
+  assert.equal(store.abStats('cta').reduce((n, s) => n + s.views, 0), 30);
 });

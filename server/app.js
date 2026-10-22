@@ -35,6 +35,7 @@ import {
   ttnKeyboard,
   ttnNoCodKeyboard,
   ttnSenderPaysKeyboard,
+  ttnAmbiguousKeyboard,
   buildPayFailedMessage,
   buildReversedMessage,
   buildPartialRefundMessage,
@@ -121,7 +122,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     fetchFn,
   });
   const experiments = createExperiments({ store, config, telegram, now, log });
-  const sizeAdvisor = createSizeAdvisor({ store, minSamples: config.sizeAdvisorMin ?? 5 });
+  const sizeAdvisor = createSizeAdvisor({ store, minSamples: config.sizeAdvisorMin ?? 5, now: () => now().getTime() });
   const backup = createBackup({ config, store, telegram, fetchFn, now, log });
   const keycrm = config.keycrmToken
     ? createKeycrm({
@@ -468,7 +469,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     authorizeProxy(url);
     const nowMs = now().getTime();
     limitIp(req, nowMs);
-    const body = await readJson(req, PHOTO_BODY_BYTES);
+    const parsedBody = await readJson(req, PHOTO_BODY_BYTES);
+    const body = parsedBody && typeof parsedBody === 'object' && !Array.isArray(parsedBody) ? parsedBody : {};
     const number = typeof body.order_number === 'string' ? body.order_number : '';
     const order = /^[\d-]{8,40}$/.test(number) ? store.findByNumber(number) : null;
     if (!order || order.data.kind !== 'custom' || !order.client_id || order.client_id !== body.client_id) {
@@ -510,7 +512,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     if (!safeEqual(req.headers['x-telegram-bot-api-secret-token'] || '', config.telegramWebhookSecret)) {
       throw new HttpError(401, 'unauthorized', 'Unauthorized');
     }
-    const update = await readJson(req);
+    const parsedUpdate = await readJson(req);
+    const update = parsedUpdate && typeof parsedUpdate === 'object' && !Array.isArray(parsedUpdate) ? parsedUpdate : {};
     if (update.update_id != null) {
       if (seenUpdates.has(update.update_id)) return { ok: true };
       seenUpdates.add(update.update_id);
@@ -541,6 +544,12 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     if (query.data === 'pay:full') return paymentLink(query, 'full');
     if (query.data === 'pay:custom') return customAmountPrompt(query);
     if (/^ttn0?:\d+(:s)?$/.test(query.data || '')) return createTtn(query);
+    // Менеджер перевірив кабінет Нової пошти й підтвердив повторне створення
+    const confirmed = /^ttnok:(\d+)$/.exec(query.data || '');
+    if (confirmed) {
+      store.deleteMeta(`ttn_ambiguous:${confirmed[1]}`);
+      return createTtn({ ...query, data: `ttn:${confirmed[1]}`, confirmed: true });
+    }
     if (/^cert:/.test(query.data || '')) { await certificates.callback(query, actorName(query.from)); return { ok: true }; }
 
     const match = STATUS_ACTION.exec(query.data || '');
@@ -755,12 +764,25 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       // Поки чекали на чергу, ТТН могли створити в іншому запиті
       if (store.getOrder(order.id).ttn_number) { await answer('ТТН уже створено'); return true; }
       const replyTo = order.tg_message_id || message.message_id;
+      // Попередня спроба обірвалась без відповіді Нової пошти: накладна могла бути створена, тож другу без підтвердження не робимо
+      if (store.getMeta(`ttn_ambiguous:${order.id}`) && !query.confirmed) {
+        await telegram.sendText(buildTtnFailedMessage(order.order_number, 'Попередня спроба створити ТТН не отримала відповіді від Нової пошти. Перевірте кабінет Нової пошти: можливо, накладна вже є.'), { replyTo, replyMarkup: ttnAmbiguousKeyboard(order.id) }).catch(() => {});
+        await answer('Спершу перевірте кабінет Нової пошти');
+        return true;
+      }
       let ttn;
       try {
         ttn = await ttnService.create({ order, paidCents: store.paidTotal(order.id), noCod, senderPays });
         store.setTtn(order.id, ttn.number, ttn.ref);
+        store.deleteMeta(`ttn_ambiguous:${order.id}`);
       } catch (err) {
         log.error('ttn failed', err.message);
+        if (err.code === 'ambiguous') {
+          store.setMeta(`ttn_ambiguous:${order.id}`, now().getTime());
+          await telegram.sendText(buildTtnFailedMessage(order.order_number, err.message), { replyTo, replyMarkup: ttnAmbiguousKeyboard(order.id) }).catch(() => {});
+          await answer('Перевірте кабінет Нової пошти');
+          return true;
+        }
         // Кнопки залежать від причини: післяплата недоступна → «без післяплати»; поштомат → «доставку оплачує відправник»
         const unpaid = store.paidTotal(order.id) < order.data.totalCents;
         const flags = { senderPays };
@@ -917,16 +939,19 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   }
 
   // Опитування НП: коли посилка у відділенні (код 7/8) і за добу до платного зберігання, нагадуємо менеджеру
-  const NP_FINAL_CODES = ['2', '3', '9', '10', '11', '102', '103', '105', '106'];
+  // Код 3 («номер не знайдено») не кінцевий: щойно створену накладну Нова пошта інколи ще не бачить
+  const NP_FINAL_CODES = ['2', '9', '10', '11', '102', '103', '105', '106'];
+  const NP_TRACK_MAX_AGE_MS = 60 * 24 * 3600e3;
   const NP_AT_BRANCH = ['7', '8'];
   const TRACK_EVERY_MS = 30 * 60_000;
   async function trackParcels(date) {
     if (!novaPoshta) return;
     const nowMs = date.getTime();
     if (nowMs - Number(store.getMeta('np_track_at') || 0) < TRACK_EVERY_MS) return;
-    const orders = store.ttnTrackable(NP_FINAL_CODES, 100);
+    const orders = store.ttnTrackable(NP_FINAL_CODES, nowMs - NP_TRACK_MAX_AGE_MS, Math.min(Math.max(config.npTrackBatch ?? 100, 1), 100));
     store.setMeta('np_track_at', nowMs);
     if (!orders.length) return;
+    for (const o of orders) store.touchNpPolled(o.id, nowMs);
     const byTtn = new Map(orders.map((o) => [String(o.ttn_number), o]));
     const rows = await novaPoshta.trackDocuments(orders.map((o) => ({ number: o.ttn_number, phone: String(o.data.phone || '').replace(/\D/g, '') })));
     const today = dateKey(date, config.timezone);
@@ -974,27 +999,10 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     }
   }
 
-  // Викликається періодично: повторні відправки, нагадування, тижневий звіт
-  // Кожен етап виконується окремо: збій одного (наприклад, KeyCRM) не зупиняє решту
-  // (доставку в Telegram, нагадування, звіт)
-  async function tick() {
-    const date = now();
-    const stages = [
-      ['telegram', async () => { for (const order of store.telegramDue(date.getTime())) await deliverTelegram(order); }],
-      ['crm', async () => { for (const order of store.crmDue(date.getTime())) await deliverCrm(order); }],
-      ['mono', () => reconcilePayments()],
-      ['payments', async () => { for (const payment of store.unsyncedPayments()) await syncCrmPayment(payment, store.getOrder(payment.order_id)); }],
-      ['statuses', () => syncStatuses()],
-      ['ttn', async () => { for (const order of store.ttnNotInCrm()) await syncTtnToCrm(order.id); }],
-      ['prompts', async () => store.pruneOldPrompts(date.getTime() - PROMPT_TTL_MS)],
-      ['conversions', () => conversions.tick()],
-      ['certificates', () => certificates.tick()],
-      ['reminders', () => sendReminders(date)],
-      ['parcels', () => trackParcels(date)],
-      ['report', () => sendWeeklyReport(date)],
-      ['experiments', () => experiments.tick()],
-      ['backup', () => backup.run()],
-    ];
+  // Фонова робота двома окремими смугами, щоб повільні зовнішні сервіси (Meta, Google, KeyCRM, Нова пошта, копії бази)
+  // не гальмували критичне: доставку замовлень у Telegram, оплати, статуси, нагадування.
+  // Кожен етап виконується окремо: збій одного не зупиняє решту.
+  async function runStages(stages) {
     for (const [name, run] of stages) {
       try {
         await run();
@@ -1002,6 +1010,39 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         log.error(`tick stage ${name} failed`, err.message);
       }
     }
+  }
+
+  // Смуга 1: повторні відправки, оплати, статуси, нагадування, тижневий звіт
+  function tickCore() {
+    const date = now();
+    return runStages([
+      ['telegram', async () => { for (const order of store.telegramDue(date.getTime())) await deliverTelegram(order); }],
+      ['crm', async () => { for (const order of store.crmDue(date.getTime())) await deliverCrm(order); }],
+      ['mono', () => reconcilePayments()],
+      ['payments', async () => { for (const payment of store.unsyncedPayments()) await syncCrmPayment(payment, store.getOrder(payment.order_id)); }],
+      ['statuses', () => syncStatuses()],
+      ['ttn', async () => { for (const order of store.ttnNotInCrm()) await syncTtnToCrm(order.id); }],
+      ['prompts', async () => store.pruneOldPrompts(date.getTime() - PROMPT_TTL_MS)],
+      ['reminders', () => sendReminders(date)],
+      ['report', () => sendWeeklyReport(date)],
+    ]);
+  }
+
+  // Смуга 2: покупки для реклами, сертифікати, відстеження посилок, A/B-тести, резервна копія
+  function tickSlow() {
+    const date = now();
+    return runStages([
+      ['conversions', () => conversions.tick()],
+      ['certificates', () => certificates.tick()],
+      ['parcels', () => trackParcels(date)],
+      ['experiments', () => experiments.tick()],
+      ['backup', () => backup.run()],
+    ]);
+  }
+
+  async function tick() {
+    await tickCore();
+    await tickSlow();
   }
 
   /* ---------- HTTP ---------- */
@@ -1079,14 +1120,17 @@ p{margin:8px 0;color:#555}</style></head>
   // Варіанти A/B-тестів для відвідувача: GET /proxy/ab?vid=...
   function abAssign(req, url) {
     authorizeProxy(url);
-    if (!store.takeHit(`ab:${clientIp(req)}`, 120, 60_000, now().getTime())) throw new HttpError(429, 'rate_limited', 'Забагато запитів');
+    if (!store.takeHit(`ab:${clientIp(req)}`, 30, 60_000, now().getTime())) throw new HttpError(429, 'rate_limited', 'Забагато запитів');
     return { ok: true, variants: experiments.assign(url.searchParams.get('vid') || '') };
   }
 
   // «Ваш розмір, як минулого разу»: лише розміри куплених і не повернутих речей цього номера, суворий ліміт запитів
   async function lastSizes(req, url) {
     const shop = authorizeProxy(url);
-    if (!store.takeHit(`lastsize:${clientIp(req)}`, 10, 10 * 60_000, now().getTime())) throw new HttpError(429, 'rate_limited', 'Забагато запитів');
+    const at = now().getTime();
+    if (!store.takeHit(`lastsize:${clientIp(req)}`, 10, 10 * 60_000, at)) throw new HttpError(429, 'rate_limited', 'Забагато запитів');
+    // Загальна стеля на всіх: перебір чужих номерів з багатьох адрес не має виявляти, хто з номерів купував
+    if (!store.takeHit('lastsize:all', 300, 60 * 60_000, at)) throw new HttpError(429, 'rate_limited', 'Забагато запитів');
     const phone = normalizePhone(String((await readJson(req))?.phone ?? ''));
     if (!phone) return { ok: true, sizes: {} };
     return { ok: true, sizes: sizeAdvisor.lastSizes({ shopKey: shop.key, phone }) };
@@ -1158,6 +1202,16 @@ p{margin:8px 0;color:#555}</style></head>
     return target.toString();
   }
 
+  // Доступ до CSV покупок (логін і пароль): не більше 60 спроб за 10 хв з адреси, щоб пароль не підбирали
+  function feedAccess(req) {
+    const c = config.conversions;
+    if (!conversions.enabled || !c?.gadsFeedPassword) return 'off';
+    if (!store.takeHit(`feed:${clientIp(req)}`, 60, 10 * 60_000, now().getTime())) return 'limited';
+    const [scheme, encoded] = String(req.headers.authorization || '').split(' ');
+    const [user, ...pass] = Buffer.from(encoded || '', 'base64').toString('utf8').split(':');
+    return scheme === 'Basic' && safeEqual(user, c.gadsFeedUser) && safeEqual(pass.join(':'), c.gadsFeedPassword) ? 'ok' : 'denied';
+  }
+
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const send = (code, body) => {
@@ -1197,11 +1251,10 @@ p{margin:8px 0;color:#555}</style></head>
       // Друга адреса того самого файлу: Менеджер даних Google Ads запам'ятовує заголовок за адресою,
       // тож нова адреса змушує його прочитати колонки наново
       if (req.method === 'GET' && (url.pathname === '/conversions/google-ads.csv' || url.pathname === '/conversions/quick-order-purchases.csv')) {
-        const c = config.conversions;
-        if (!conversions.enabled || !c?.gadsFeedPassword) return send(404, { ok: false, code: 'not_found' });
-        const [scheme, encoded] = String(req.headers.authorization || '').split(' ');
-        const [user, ...pass] = Buffer.from(encoded || '', 'base64').toString('utf8').split(':');
-        if (scheme !== 'Basic' || !safeEqual(user, c.gadsFeedUser) || !safeEqual(pass.join(':'), c.gadsFeedPassword)) {
+        const feed = feedAccess(req);
+        if (feed === 'off') return send(404, { ok: false, code: 'not_found' });
+        if (feed === 'limited') return send(429, { ok: false, code: 'rate_limited' });
+        if (feed === 'denied') {
           res.writeHead(401, { 'www-authenticate': 'Basic realm="conversions"', 'cache-control': 'no-store' });
           return res.end();
         }
@@ -1211,11 +1264,10 @@ p{margin:8px 0;color:#555}</style></head>
       // Звірка для таргетолога: усі покупки, передані в Meta (той самий логін і пароль, що й у файлу Google Ads).
       // ?from=YYYY-MM-DD — з якої дати за Києвом (початок дня з запасом до години взимку), без параметра — усе
       if (req.method === 'GET' && url.pathname === '/conversions/meta-purchases.csv') {
-        const c = config.conversions;
-        if (!conversions.enabled || !c?.gadsFeedPassword) return send(404, { ok: false, code: 'not_found' });
-        const [scheme, encoded] = String(req.headers.authorization || '').split(' ');
-        const [user, ...pass] = Buffer.from(encoded || '', 'base64').toString('utf8').split(':');
-        if (scheme !== 'Basic' || !safeEqual(user, c.gadsFeedUser) || !safeEqual(pass.join(':'), c.gadsFeedPassword)) {
+        const feed = feedAccess(req);
+        if (feed === 'off') return send(404, { ok: false, code: 'not_found' });
+        if (feed === 'limited') return send(429, { ok: false, code: 'rate_limited' });
+        if (feed === 'denied') {
           res.writeHead(401, { 'www-authenticate': 'Basic realm="conversions"', 'cache-control': 'no-store' });
           return res.end();
         }
@@ -1245,5 +1297,5 @@ p{margin:8px 0;color:#555}</style></head>
     }
   }
 
-  return { handle, tick, telegram, keycrm };
+  return { handle, tick, tickCore, tickSlow, telegram, keycrm };
 }

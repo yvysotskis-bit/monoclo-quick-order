@@ -38,6 +38,8 @@ test('підбір розміру: замало даних, повернення
   assert.equal((await ask(ctx.app, { height: '180', weight: '80', handle: 'tee', title: 'Футболка' })).json.size, null, 'повернення й неоплачені не рахуються');
 
   await seed(ctx, 6, { size: 'L' });
+  assert.equal((await ask(ctx.app, { height: '180', weight: '80', handle: 'tee', title: 'Футболка' })).json.size, null, 'вибірка кешується на хвилину');
+  ctx.now.advance(61_000);
   assert.equal((await ask(ctx.app, { height: '180', weight: '80', handle: 'tee', title: 'Футболка' })).json.size, 'L');
 
   const mixed = makeApp();
@@ -78,4 +80,16 @@ test('розмір як минулого разу: суворий ліміт з�
   for (let i = 0; i < 10; i += 1) assert.equal((await last(ctx.app, '+380671234567')).status, 200);
   assert.equal((await last(ctx.app, '+380671234567')).status, 429);
   assert.equal((await call(ctx.app, { url: '/proxy/lastsize', body: { phone: '+380671234567' } })).status, 401);
+});
+
+test('розмір як минулого разу: загальна стеля запитів на всіх адресах', async () => {
+  const ctx = makeApp();
+  let ok = 0;
+  let limited = 0;
+  for (let i = 0; i < 320; i += 1) {
+    const res = await call(ctx.app, { url: signedUrl('/proxy/lastsize'), body: { phone: '+380671234567' }, ip: `10.0.${Math.floor(i / 250)}.${i % 250}` });
+    if (res.status === 200) ok += 1; else if (res.status === 429) limited += 1;
+  }
+  assert.equal(ok, 300);
+  assert.equal(limited, 20);
 });

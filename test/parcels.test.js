@@ -35,7 +35,8 @@ test('npDateKey: формати дат Нової пошти', () => {
   assert.equal(npDateKey('02.10.2026 18:04:37'), '2026-10-02');
   assert.equal(npDateKey('02-10-2026 18:04:37'), '2026-10-02');
   assert.equal(npDateKey(''), '');
-  assert.equal(npDateKey('0001-01-01 00:00:00'), '0001-01-01');
+  assert.equal(npDateKey('0001-01-01 00:00:00'), '', 'порожня дата Нової пошти не є датою');
+  assert.equal(npDateKey('01.01.0001 00:00:00'), '');
   assert.equal(npDateKey(null), '');
 });
 
@@ -94,4 +95,48 @@ test('збій Нової пошти під час опитування не л�
   fetchFn.fail.novaposhta = true;
   await app.tick();
   assert.equal(storageMessages(fetchFn).length, 0);
+});
+
+test('порожня дата платного зберігання (0001-01-01) не породжує нагадування про «зберігання з 01.01.0001»', async () => {
+  const { app, fetchFn, now, ttn } = await orderWithTtn();
+  now.advance(31 * 60_000);
+  fetchFn.npTrack[ttn] = { StatusCode: '7', DatePayedKeeping: '0001-01-01 00:00:00' };
+  await app.tick();
+  assert.equal(storageMessages(fetchFn).length, 0);
+});
+
+test('«номер не знайдено» (код 3) відразу після створення не робить накладну кінцевою: опитування триває', async () => {
+  const { app, fetchFn, now, ttn, store } = await orderWithTtn();
+  now.advance(31 * 60_000);
+  fetchFn.npTrack[ttn] = { StatusCode: '3', DatePayedKeeping: '' };
+  await app.tick();
+  assert.equal(fetchFn.npTracked.length, 1);
+  now.advance(31 * 60_000);
+  fetchFn.npTrack[ttn] = { StatusCode: '7', DatePayedKeeping: '2025-10-06' };
+  await app.tick();
+  assert.equal(fetchFn.npTracked.length, 2, 'накладну опитали ще раз');
+  assert.equal(storageMessages(fetchFn).length, 1);
+  assert.equal(store.getOrder(1).np_status_code, '7');
+});
+
+test('накладних більше, ніж влізає в один запит: опитування йде по черзі, жодна не залишається без уваги', async () => {
+  const ctx = makeApp({ cfg: { ...cfg, npTrackBatch: 1 }, at: '2025-10-05T12:00:00Z' });
+  for (const [i, phone] of [[1, '+380671000001'], [2, '+380671000002']]) {
+    await submit(ctx.app, goodBody({ phone, surname: 'Петренко', client_id: `client-rot-${i}-0000`, delivery: warehouse }));
+    ctx.store.db.prepare('UPDATE orders SET ttn_number = ? WHERE id = ?').run(`2045000000000${i}`, i);
+  }
+  for (let round = 0; round < 2; round += 1) {
+    ctx.now.advance(31 * 60_000);
+    await ctx.app.tick();
+  }
+  const asked = ctx.fetchFn.npTracked.flat().map((d) => d.DocumentNumber);
+  assert.deepEqual([...new Set(asked)].sort(), ['20450000000001', '20450000000002']);
+});
+
+test('накладні старші за 60 днів більше не опитуються', async () => {
+  const { app, fetchFn, now, store } = await orderWithTtn();
+  store.db.prepare('UPDATE orders SET created_at = ? WHERE id = 1').run(now().getTime() - 61 * 24 * 3600e3);
+  now.advance(31 * 60_000);
+  await app.tick();
+  assert.equal(fetchFn.npTracked.length, 0);
 });

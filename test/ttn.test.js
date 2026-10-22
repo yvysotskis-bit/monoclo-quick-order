@@ -159,3 +159,46 @@ test('адресна доставка: CityRecipient із DeliveryCity, вули
   const save = npCalls.find((c) => c.body.modelName === 'Address' && c.body.calledMethod === 'save');
   assert.equal(save.body.methodProperties.StreetRef, NP.street);
 });
+
+test('тайм-аут Нової пошти на створенні ТТН: повтор лише після підтвердження менеджера (захист від дубля накладної)', async () => {
+  const ctx = await paidOrder({ surname: 'Петренко', delivery: warehouse }, 178000, 'pay:full');
+  const { app, fetchFn, store } = ctx;
+  fetchFn.npTimeoutOnce = true;
+  await press(app, 'ttn:1');
+  const failed = fetchFn.tg('sendMessage').at(-1).body;
+  assert.match(failed.text, /невідомо, чи накладну створено/);
+  assert.equal(failed.reply_markup.inline_keyboard[0][0].callback_data, 'ttnok:1');
+  assert.equal(store.getOrder(1).ttn_number, null);
+  assert.equal(docCalls(fetchFn).length, 1);
+
+  // Звичайна друга спроба нову накладну не створює, лише нагадує перевірити кабінет
+  await press(app, 'ttn:1');
+  assert.equal(docCalls(fetchFn).length, 1, 'нового запиту на створення не було');
+  assert.match(fetchFn.tg('sendMessage').at(-1).body.text, /Перевірте кабінет Нової пошти/);
+
+  // Підтвердження менеджера: накладна створюється
+  await press(app, 'ttnok:1');
+  assert.equal(docCalls(fetchFn).length, 2);
+  assert.ok(store.getOrder(1).ttn_number);
+  assert.equal(store.getMeta('ttn_ambiguous:1'), null);
+});
+
+test('звичайна помилка Нової пошти (відмова валідації) не блокує повтор: накладної точно немає', async () => {
+  const ctx = await paidOrder({ surname: 'Петренко', delivery: warehouse }, 178000, 'pay:full');
+  ctx.fetchFn.fail.npTtn = true;
+  await press(ctx.app, 'ttn:1');
+  assert.equal(ctx.store.getMeta('ttn_ambiguous:1'), null);
+  ctx.fetchFn.fail.npTtn = false;
+  await press(ctx.app, 'ttn:1');
+  assert.ok(ctx.store.getOrder(1).ttn_number);
+});
+
+test('одночасні натискання «Створити ТТН» (подвійний клік, два менеджери): одна накладна', async () => {
+  const { app, fetchFn, store } = await paidOrder({ surname: 'Петренко', delivery: warehouse }, 178000, 'pay:full');
+  await Promise.all([press(app, 'ttn:1'), press(app, 'ttn:1'), press(app, 'ttn:1', 102), press(app, 'ttn:1', 103)]);
+  assert.equal(docCalls(fetchFn).length, 1);
+  assert.ok(store.getOrder(1).ttn_number);
+  // Також у суміші з фоновим циклом
+  await Promise.all([app.tick(), press(app, 'ttn:1')]);
+  assert.equal(docCalls(fetchFn).length, 1);
+});

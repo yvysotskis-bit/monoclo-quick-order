@@ -74,15 +74,24 @@ export function normalizeStreet(raw) {
 }
 
 export function createNovaPoshta({ apiKey, fetchFn, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+  // Збій звʼязку (тайм-аут, обрив, HTTP-помилка, не-JSON) позначається err.transport: запит міг дійти до Нової пошти й виконатись,
+  // тому для запитів, що створюють дані (накладна), повтор без перевірки небезпечний
   async function call(modelName, calledMethod, methodProperties, { retries = 0, timeoutMs = 8000 } = {}) {
-    const res = await fetchFn(API_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ apiKey, modelName, calledMethod, methodProperties }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) throw new Error(`Нова пошта відповіла ${res.status}`);
+    let res;
+    try {
+      res = await fetchFn(API_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ apiKey, modelName, calledMethod, methodProperties }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      err.transport = true;
+      throw err;
+    }
+    if (!res.ok) throw Object.assign(new Error(`Нова пошта відповіла ${res.status}`), { transport: true });
     const data = await res.json().catch(() => null);
+    if (data === null) throw Object.assign(new Error('Нова пошта повернула некоректну відповідь'), { transport: true });
     if (!data?.success) {
       // Обмеження частоти запитів: чекаємо й пробуємо знову (лише там, де це дозволено)
       const text = (data?.errors || []).join(' ');
@@ -104,6 +113,7 @@ export function createNovaPoshta({ apiKey, fetchFn, sleep = (ms) => new Promise(
   const scanCache = new Map();
   const SCAN_TTL_MS = 6 * 3600e3;
   const MAX_PAGES = 8;
+  const SCAN_CACHE_MAX = 40; // повні переліки великих міст важать мегабайти: пам'ять не має рости з кожним новим містом
 
   function scanPoints(settlement) {
     const hit = scanCache.get(settlement);
@@ -123,6 +133,7 @@ export function createNovaPoshta({ apiKey, fetchFn, sleep = (ms) => new Promise(
       }
       return all;
     })();
+    if (scanCache.size >= SCAN_CACHE_MAX) scanCache.delete(scanCache.keys().next().value);
     scanCache.set(settlement, { promise, expires: Date.now() + SCAN_TTL_MS });
     // Невдале завантаження не кешуємо
     promise.catch(() => scanCache.delete(settlement));
@@ -215,10 +226,11 @@ export function createNovaPoshta({ apiKey, fetchFn, sleep = (ms) => new Promise(
 // Дата з відповіді НП («21.11.2021 13:53:47», «2026-10-02 08:50:08», «02-10-2026 …») → «РРРР-ММ-ДД» або ''
 export function npDateKey(value) {
   const v = text(value);
+  let key = '';
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  m = /^(\d{2})[.-](\d{2})[.-](\d{4})/.exec(v);
-  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
-  m = /\b(\d{2})\.(\d{2})\.(\d{4})\b/.exec(v);
-  return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
+  if (m) key = `${m[1]}-${m[2]}-${m[3]}`;
+  else if ((m = /^(\d{2})[.-](\d{2})[.-](\d{4})/.exec(v))) key = `${m[3]}-${m[2]}-${m[1]}`;
+  else if ((m = /\b(\d{2})\.(\d{2})\.(\d{4})\b/.exec(v))) key = `${m[3]}-${m[2]}-${m[1]}`;
+  // «0001-01-01 00:00:00» Нова пошта пише замість порожньої дати: це не дата
+  return key && Number(key.slice(0, 4)) >= 2000 ? key : '';
 }

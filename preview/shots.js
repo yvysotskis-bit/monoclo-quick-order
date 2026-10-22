@@ -679,7 +679,7 @@ for (const [name, viewport] of [['desktop', { width: 1280, height: 820 }], ['mob
 }
 
 // A/B-тест кнопки: варіант B змінює текст і йде у замовлення; без відповіді сервера лишається звичайний текст
-for (const [variant, verb] of [['B', 'Підтвердити замовлення'], ['A', 'Замовити']]) {
+for (const [variant, verb] of [['B', 'Підтвердити'], ['A', 'Замовити']]) {
   const { page, ctx, errors } = await session(`ab-${variant}`, { width: 1280, height: 820 }, `?hour=12&ab=${variant}`);
   await open(page);
   await page.click('.qo-choice[data-qo-value="Чорний"]');

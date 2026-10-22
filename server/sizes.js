@@ -21,8 +21,17 @@ export function isKeptPurchase(order) {
   return Boolean(order.ttn_number || order.pay_paid_at);
 }
 
-export function createSizeAdvisor({ store, minSamples = 5 }) {
-  const samplesFor = (shopKey) => store.sizeHistory(shopKey)
+export function createSizeAdvisor({ store, minSamples = 5, now = () => Date.now(), ttlMs = 60_000 }) {
+  // Вибірка зі 5000 замовлень не перераховується на кожен запит: кеш на хвилину на магазин
+  const cache = new Map();
+  const samplesFor = (shopKey) => {
+    const hit = cache.get(shopKey || 'main');
+    if (hit && now() - hit.at < ttlMs) return hit.rows;
+    const rows = loadSamples(shopKey);
+    cache.set(shopKey || 'main', { at: now(), rows });
+    return rows;
+  };
+  const loadSamples = (shopKey) => store.sizeHistory(shopKey)
     .filter(isKeptPurchase)
     .map((o) => ({ size: sizeOf(o), height: Number(o.data.body?.height), weight: Number(o.data.body?.weight), handle: o.data.productHandle, cls: productClass(o.data.productTitle), phone: o.data.phone, at: o.created_at }))
     .filter((s) => s.size);

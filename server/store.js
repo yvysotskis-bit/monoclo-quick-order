@@ -117,6 +117,7 @@ const ADDED_COLUMNS = {
   np_status_code: 'TEXT',
   np_paid_from: 'TEXT',
   np_storage_notified: 'INTEGER NOT NULL DEFAULT 0',
+  np_polled_at: 'INTEGER',
   // Покупка для реклами: момент, коли замовлення вперше мало і оплату, і ТТН, та сума покупки
   conv_at: 'INTEGER',
   conv_value_cents: 'INTEGER',
@@ -429,10 +430,16 @@ export class Store {
     return this.q('SELECT * FROM orders WHERE ttn_number IS NOT NULL AND crm_order_id IS NOT NULL AND ttn_crm_synced = 0 ORDER BY id LIMIT ?', limit);
   }
 
-  // Накладні, статус яких ще треба опитувати (не отримані, не відмовлені, не видалені)
-  ttnTrackable(finalCodes, limit = 100) {
+  // Накладні, статус яких ще треба опитувати (не отримані, не відмовлені, не видалені, не старші за since).
+  // Першими йдуть ті, що опитувались найдавніше, тож за сотні накладних жодна не залишається без черги
+  ttnTrackable(finalCodes, since, limit = 100) {
     const marks = finalCodes.map(() => '?').join(',');
-    return this.q(`SELECT * FROM orders WHERE ttn_number IS NOT NULL AND (np_status_code IS NULL OR np_status_code NOT IN (${marks})) ORDER BY id DESC LIMIT ?`, ...finalCodes, limit);
+    return this.q(`SELECT * FROM orders WHERE ttn_number IS NOT NULL AND created_at >= ? AND (np_status_code IS NULL OR np_status_code NOT IN (${marks}))
+      ORDER BY COALESCE(np_polled_at, 0), id LIMIT ?`, since, ...finalCodes, limit);
+  }
+
+  touchNpPolled(id, at) {
+    this.run('UPDATE orders SET np_polled_at = ? WHERE id = ?', at, id);
   }
 
   setNpTracking(id, code, paidFrom) {
@@ -630,6 +637,11 @@ export class Store {
     return changes > 0;
   }
 
+  hasCertificateLine(crmOrderId, lineKeys) {
+    const marks = lineKeys.map(() => '?').join(',');
+    return Boolean(this.db.prepare(`SELECT 1 FROM certificates WHERE crm_order_id = ? AND line_key IN (${marks})`).get(crmOrderId, ...lineKeys));
+  }
+
   getCertificate(code) {
     return this.db.prepare('SELECT * FROM certificates WHERE code = ?').get(code) || null;
   }
@@ -661,6 +673,10 @@ export class Store {
 
   getMeta(key) {
     return this.db.prepare('SELECT value FROM meta WHERE key = ?').get(key)?.value ?? null;
+  }
+
+  deleteMeta(key) {
+    this.run('DELETE FROM meta WHERE key = ?', key);
   }
 
   setMeta(key, value) {

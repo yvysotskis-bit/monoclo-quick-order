@@ -60,13 +60,21 @@ test('резервна копія: надсилається стиснутою �
   assert.equal(noChat.fetchFn.tg('sendDocument').length, 0);
 });
 
-test('збій надсилання копії: tick не падає, наступного разу повторюємо', async () => {
+test('збій надсилання копії: tick не падає, повтор не частіше за раз на 15 хв і день позначається лише після успіху', async () => {
   const dir = tmp();
   const ctx = makeApp({ cfg: { backupDir: dir, backupHour: 4, backupKeep: 7, backupChatId: '777' }, at: AFTER });
   ctx.fetchFn.fail.telegram = true;
   await ctx.app.tick();
   assert.equal(ctx.store.getMeta('backup_date'), null, 'день не позначено виконаним');
+  const attempts = () => ctx.fetchFn.tg('sendDocument').length;
+  assert.equal(attempts(), 1);
+
   ctx.fetchFn.fail.telegram = false;
+  ctx.now.advance(5 * 60_000);
   await ctx.app.tick();
+  assert.equal(attempts(), 1, 'за 5 хв повтору немає');
+  ctx.now.advance(11 * 60_000);
+  await ctx.app.tick();
+  assert.equal(attempts(), 2);
   assert.equal(ctx.store.getMeta('backup_date'), '2025-10-05');
 });

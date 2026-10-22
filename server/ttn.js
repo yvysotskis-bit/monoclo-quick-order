@@ -186,7 +186,17 @@ export function createTtnService({ np, config, store, now = () => new Date() }) 
       }
     }
 
-    const rows = await call('InternetDocument', 'save', props);
+    let rows;
+    try {
+      // Довший тайм-аут: повільна відповідь не має виглядати збоєм, коли накладну вже створено
+      rows = await np.call('InternetDocument', 'save', props, { retries: 3, timeoutMs: 25_000 });
+    } catch (err) {
+      // Звʼязок обірвався, поки Нова пошта могла виконати запит: накладну МОГЛО бути створено
+      if (err.transport) {
+        throw new TtnError('Нова пошта не відповіла вчасно, тож невідомо, чи накладну створено. Перевірте кабінет Нової пошти: якщо ТТН для цього замовлення там уже є, не створюйте другу.', 'ambiguous');
+      }
+      throw err;
+    }
     const doc = rows[0];
     if (!doc?.IntDocNumber) throw new Error('Нова пошта не повернула номер ТТН');
     const deliveryCost = Number(doc.CostOnSite);

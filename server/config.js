@@ -142,6 +142,8 @@ export function loadConfig(env = process.env) {
     abMinViews: number('AB_MIN_VIEWS', 300),
     abMaxViews: number('AB_MAX_VIEWS', 3000),
     abMinConversions: number('AB_MIN_CONVERSIONS', 20),
+    // Скільки накладних Нової пошти опитувати за раз (не більше 100, ліміт методу)
+    npTrackBatch: number('NP_TRACK_BATCH', 100),
     backupHour: number('BACKUP_HOUR', 4),
     backupKeep: number('BACKUP_KEEP', 7),
     backupChatId: optional('BACKUP_CHAT_ID'),

@@ -272,6 +272,10 @@ export function buildTtnMessage({ orderNumber, number, codUah, costUah, address,
   return lines.join('\n');
 }
 
+export const ttnAmbiguousKeyboard = (orderId) => ({
+  inline_keyboard: [[{ text: '🔁 Накладної в кабінеті немає, створити ще раз', callback_data: `ttnok:${orderId}` }]],
+});
+
 // Формат кнопки: ttn:<id> | ttn0:<id> (без післяплати) з необовʼязковим суфіксом :s (доставку оплачує відправник)
 export const ttnCallback = (orderId, { noCod = false, senderPays = false } = {}) => `${noCod ? 'ttn0' : 'ttn'}:${orderId}${senderPays ? ':s' : ''}`;
 

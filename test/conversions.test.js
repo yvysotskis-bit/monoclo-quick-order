@@ -600,3 +600,15 @@ test('CSV покупок для Meta вимкнений без пароля', as
   const { app } = await setup({ cfg: { conversions: conv({ gadsFeedPassword: '' }) } });
   assert.equal((await call(app, { method: 'GET', url: '/conversions/meta-purchases.csv' })).status, 404);
 });
+
+test('CSV покупок: пароль не підбирається, після 60 спроб з адреси відповідь 429', async () => {
+  const { app } = await setup({ cfg: { conversions: conv() } });
+  const bad = { authorization: `Basic ${Buffer.from('googleads:wrong').toString('base64')}` };
+  const statuses = [];
+  for (let i = 0; i < 65; i += 1) statuses.push((await call(app, { method: 'GET', url: '/conversions/google-ads.csv', headers: bad })).status);
+  assert.equal(statuses.filter((s) => s === 401).length, 60);
+  assert.equal(statuses.filter((s) => s === 429).length, 5);
+  // Інша адреса не страждає
+  const good = { authorization: `Basic ${Buffer.from('googleads:feed-pass').toString('base64')}` };
+  assert.equal((await call(app, { method: 'GET', url: '/conversions/google-ads.csv', headers: good, ip: '9.9.9.9' })).status, 200);
+});

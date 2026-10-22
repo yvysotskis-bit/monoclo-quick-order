@@ -21,24 +21,29 @@ server.listen(config.port, () => {
 // Непередбачений збій окремої операції не має обвалювати весь сервер
 process.on('unhandledRejection', (err) => console.error('unhandled rejection', err));
 
-// Фонова черга: повторні відправки, нагадування, тижневий звіт
-let running = false;
-const worker = setInterval(async () => {
-  if (running) return;
-  running = true;
-  try {
-    await app.tick();
-  } catch (err) {
-    console.error('worker tick failed', err);
-  } finally {
-    running = false;
-  }
-}, config.workerIntervalMs);
-worker.unref();
+// Фонова робота двома незалежними смугами: критична (Telegram, оплати, статуси, нагадування) і повільна
+// (реклама, сертифікати, відстеження посилок, резервні копії). Зависання повільних сервісів не затримує критичну.
+function startLane(name, run) {
+  let running = false;
+  const timer = setInterval(async () => {
+    if (running) return;
+    running = true;
+    try {
+      await run();
+    } catch (err) {
+      console.error(`worker lane ${name} failed`, err);
+    } finally {
+      running = false;
+    }
+  }, config.workerIntervalMs);
+  timer.unref();
+  return timer;
+}
+const lanes = [startLane('core', () => app.tickCore()), startLane('slow', () => app.tickSlow())];
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => server.close(() => {
-    clearInterval(worker);
+    lanes.forEach(clearInterval);
     store.close();
     process.exit(0);
   }));

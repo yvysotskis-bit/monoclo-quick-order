@@ -168,10 +168,16 @@ export function createCertificates({ config, store, keycrm, telegram, now, log }
           if (Number.isFinite(created) && created < since) continue;
           const certs = extractCertificates(o, { match: config.certProductMatch, items });
           for (const c of certs) {
+            // Ключ рядка: за id позиції в замовленні KeyCRM, а не за номером у списку. Інакше, коли менеджер додає чи прибирає
+            // інший товар, сертифікат «зсувається» на іншу позицію й отримує другий код. Старі ключі (за номером) теж враховуємо
+            const [position, copy] = c.lineKey.split(':');
+            const productId = o.products?.[Number(position)]?.id;
+            const lineKey = productId ? `p${productId}:${copy}` : c.lineKey;
+            if (store.hasCertificateLine(o.id, [lineKey, c.lineKey])) continue;
             store.insertCertificate({
               code: uniqueCode(),
               crmOrderId: o.id,
-              lineKey: c.lineKey,
+              lineKey,
               itemKey: c.itemKey,
               itemLabel: c.itemLabel,
               amountUah: c.amountUah,
@@ -252,6 +258,9 @@ export function createCertificates({ config, store, keycrm, telegram, now, log }
     const code = findCode(message.text);
     if (!code) return false;
     const cert = store.getCertificate(code);
+    // Невідомий код у довгому тексті — це, найімовірніше, звичайне слово (на кшталт SPRINTER): мовчимо.
+    // Відповідаємо «не знайдено», лише коли менеджер написав саме код
+    if (!cert && String(message.text || '').trim().length > code.length + 15) return false;
     await telegram.sendText(escapeHtml(describeCertificate(cert, code)), {
       replyTo: message.message_id,
       replyMarkup: cert ? certificateKeyboard(cert) : undefined,

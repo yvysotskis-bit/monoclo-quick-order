@@ -130,3 +130,49 @@ test('бриф «Свій принт» з кодом сертифіката: с�
   assert.equal(bad.status, 422);
   assert.equal(bad.json.field, 'certificate');
 });
+
+test('менеджер змінив склад замовлення в KeyCRM: сертифікат не отримує другий код', async () => {
+  const cert = { id: 777, name: 'Подарунковий сертифікат «Свій принт»', price: 2600, quantity: 1, properties: [{ name: 'Виріб', value: 'Худі' }] };
+  const first = crmOrder({ products: [cert, { id: 778, name: 'Худі MONOCLO Ferrari', price: 2200, quantity: 1 }] });
+  const { app, fetchFn, store, now } = setup([first]);
+  await app.tick();
+  assert.equal(fetchFn.sentMessages.filter((m) => m.text.includes('Подарунковий сертифікат ·')).length, 1);
+
+  // Менеджер додав товар на початок і прибрав інший: сертифікат тепер на іншій позиції списку
+  fetchFn.crmState.list = [crmOrder({ products: [{ id: 900, name: 'Стікерпак', price: 100, quantity: 1 }, cert] })];
+  now.advance(11 * 60_000);
+  await app.tick();
+  assert.equal(fetchFn.sentMessages.filter((m) => m.text.includes('Подарунковий сертифікат ·')).length, 1, 'нового коду немає');
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM certificates').get().n, 1);
+});
+
+test('сертифікат, виданий до переходу на id позиції (ключ за номером), не дублюється', async () => {
+  const cert = { id: 777, name: 'Подарунковий сертифікат «Свій принт»', price: 2600, quantity: 1 };
+  const { app, fetchFn, store } = setup([crmOrder({ products: [cert] })]);
+  store.insertCertificate({ code: 'SP-AAAAAA', crmOrderId: 5001, lineKey: '0:1', itemLabel: 'Худі', amountUah: 2450, createdAt: 1 });
+  await app.tick();
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM certificates').get().n, 1);
+  assert.equal(fetchFn.sentMessages.filter((m) => /Подарунковий сертифікат ·/.test(m.text) && !m.text.includes('SP-AAAAAA')).length, 0);
+});
+
+test('невідомий код у довгому повідомленні (на кшталт слова SPRINTER) не викликає відповіді бота', async () => {
+  const { app, fetchFn } = setup([]);
+  const say = (text, id) => call(app, tgUpdate({ message: { message_id: id, text, chat: { id: -100500 }, from: { id: 5, first_name: 'Оля' } } }, id));
+  const before = fetchFn.sentMessages.length;
+  await say('Клієнт замовив SPRINTER у синьому кольорі, надішліть йому завтра', 9101);
+  assert.equal(fetchFn.sentMessages.length, before, 'довге повідомлення зі словом ігнорується');
+  await say('SP-ABCDEF', 9102);
+  assert.match(fetchFn.sentMessages.at(-1).text, /не знайдено/);
+});
+
+test('одночасне погашення сертифіката двома менеджерами: спрацьовує один', async () => {
+  const { app, fetchFn, store } = setup([crmOrder()]);
+  await app.tick();
+  const code = /SP-[A-Z0-9]{6}/.exec(fetchFn.sentMessages.find((m) => m.text.includes('Подарунковий сертифікат ·')).text)[0];
+  const press = (from, id) => call(app, tgUpdate({ callback_query: { id: `cb${id}`, data: `cert:use:${code}`, from, message: { message_id: 55, chat: { id: -100500 }, text: 'T' } } }, id));
+  await Promise.all([press({ id: 1, first_name: 'Оля' }, 8001), press({ id: 2, first_name: 'Іван' }, 8002), press({ id: 3, first_name: 'Марія' }, 8003)]);
+  const answers = fetchFn.tg('answerCallbackQuery').map((c) => c.body.text);
+  assert.equal(answers.filter((t) => /^Погашено/.test(t)).length, 1, answers.join(' | '));
+  assert.equal(answers.filter((t) => /Вже погашено/.test(t)).length, 2);
+  assert.equal(store.getCertificate(code).status, 'used');
+});
