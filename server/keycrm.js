@@ -151,10 +151,10 @@ export function createKeycrm({ token, sourceId, statusMap = {}, deliveryServiceI
         trackingCode: String(data?.shipping?.tracking_code || '').trim(),
       };
     },
-    // Сторінка замовлень джерела за період створення (для покупок з Instagram Direct тощо)
+    // Сторінка замовлень за період створення: одного джерела (покупки з Instagram Direct тощо) або всіх, якщо sourceId не задано
     async listOrders({ sourceId, from, to, page = 1 }) {
       const query = new URLSearchParams({
-        'filter[source_id]': String(sourceId),
+        ...(sourceId ? { 'filter[source_id]': String(sourceId) } : {}),
         'filter[created_between]': `${from}, ${to}`,
         include: 'payments,shipping,buyer,tags,products',
         limit: '50',

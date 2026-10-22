@@ -42,6 +42,8 @@ export const config = {
   remindersFrom: 0,
   reportDay: 1,
   reportHour: 9,
+  // Сертифікати перевіряються в test/certificates.test.js; в інших тестах не читають KeyCRM
+  certEnabled: false,
 };
 
 // Пара ключів, якою «банк» підписує вебхуки в тестах
@@ -185,6 +187,13 @@ export function mockFetch({ productResponse } = {}) {
         fn.crmLists.push(Object.fromEntries(url.searchParams));
         const page = Number(url.searchParams.get('page') || 1);
         const rows = (crm.list || []).filter((o) => String(o.source_id) === url.searchParams.get('filter[source_id]'));
+        return Response.json({ data: rows.slice((page - 1) * 50, page * 50), current_page: page, last_page: Math.max(1, Math.ceil(rows.length / 50)) });
+      }
+      // Список за період без фільтра джерела (сертифікати): усі замовлення зі crm.list
+      if (call.method === 'GET' && url.pathname === '/v1/order' && url.searchParams.has('filter[created_between]')) {
+        fn.crmLists.push(Object.fromEntries(url.searchParams));
+        const page = Number(url.searchParams.get('page') || 1);
+        const rows = crm.list || [];
         return Response.json({ data: rows.slice((page - 1) * 50, page * 50), current_page: page, last_page: Math.max(1, Math.ceil(rows.length / 50)) });
       }
       if (call.method === 'GET' && url.pathname === '/v1/order') {

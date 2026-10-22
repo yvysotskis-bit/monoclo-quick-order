@@ -60,7 +60,10 @@ export function buildOrderMessage(o) {
     lines.push(o.photos > 0
       ? `📎 Фото від клієнта: ${o.photos} шт - нижче, відповіддю на цю картку`
       : '📎 Фото чи файли клієнт надішле в Telegram');
-    lines.push('💰 Ціна орієнтовна - уточніть після ескізу');
+    if (o.certificate?.line) lines.push(escapeHtml(o.certificate.line));
+    lines.push(o.certificate?.found && o.certificate.status === 'issued'
+      ? '💰 Оплачено сертифікатом на виріб - доплата лише за дорожчий виріб'
+      : '💰 Ціна орієнтовна - уточніть після ескізу');
   }
   const source = describeSource(o);
   lines.push('', `📈 ${source ? escapeHtml(source) : 'прямий візит'}`, o.brandTag || '#Monoclo');

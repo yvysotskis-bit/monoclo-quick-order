@@ -4,6 +4,7 @@
 // variantId/productId - товар «Власний принт MONOCLO» (vlasnyi-print-zamovlennia), щоб у звітах і рекламі покупка
 // мала стабільний ідентифікатор.
 import { cleanAds, normalizeName, normalizePhone } from './validate.js';
+import { normalizeCode } from './certificates.js';
 
 export const CUSTOM_PRODUCT_ID = '15443984875741';
 
@@ -81,6 +82,11 @@ export function validateCustomBrief(body, { maxQty, items = CUSTOM_ITEMS }) {
   const size = item.sized ? cleanText(body.size, 12) : '';
   const placement = item.sized ? (PLACEMENTS[body.placement] || '') : '';
 
+  // Код подарункового сертифіката (необов'язково); помилку у форматі показуємо клієнту, щоб він перевірив код
+  const certificateRaw = typeof body.certificate === 'string' ? body.certificate.trim() : '';
+  const certificate = certificateRaw ? normalizeCode(certificateRaw) : '';
+  if (certificateRaw && !certificate) return fail('certificate', 'Перевірте код сертифіката: SP- і 6 символів', 'certificate');
+
   const pageUrl = typeof body.page_url === 'string' && /^https:\/\//.test(body.page_url) ? body.page_url.slice(0, 500) : '';
   const clientId = typeof body.client_id === 'string' && /^[\w-]{8,64}$/.test(body.client_id) ? body.client_id : '';
   const click = ['fbclid', 'gclid', 'ttclid'].includes(body.click) ? body.click : '';
@@ -104,6 +110,7 @@ export function validateCustomBrief(body, { maxQty, items = CUSTOM_ITEMS }) {
       click,
       ads: cleanAds(body.ads),
       photos: Math.min(Math.max(Number.isInteger(body.photos) ? body.photos : 0, 0), MAX_PHOTOS),
+      certificate,
       pageUrl,
       clientId,
       honeypot: typeof body.website === 'string' && body.website.trim() !== '',

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { verifyProxySignature } from './proxy-signature.js';
 import { validateSubmission } from './validate.js';
 import { CUSTOM_PRODUCT_ID, MAX_PHOTOS, MAX_PHOTO_BYTES, customItems, customOptions, sniffImage, validateCustomBrief } from './custom-print.js';
+import { createCertificates } from './certificates.js';
 import { fetchProduct, optionPairs } from './shopify-product.js';
 import { createTelegram } from './telegram.js';
 import { createBackup } from './backup.js';
@@ -131,6 +132,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     : null;
 
   const ttnService = novaPoshta ? createTtnService({ np: novaPoshta, config, store, now }) : null;
+  const certificates = createCertificates({ config, store, keycrm, telegram, now, log });
   const conversions = createConversions({ config, store, keycrm, fetchFn, now, log, notify: (text) => telegram.sendText(text) });
 
   // Передоплата працює, лише коли є токен Monobank і публічна адреса сервера (для вебхука)
@@ -436,6 +438,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         delivery: null,
         comment: input.idea,
         photos: input.photos,
+        certificate: certificates.forBrief(input.certificate),
         utm: input.utm,
         referrer: input.referrer,
         click: input.click,
@@ -446,6 +449,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     });
 
     await Promise.allSettled([deliverTelegram(order), deliverCrm(order)]);
+    if (order.data.certificate) await certificates.replyToBrief(store.getOrder(order.id));
     log.log(JSON.stringify({ event: 'custom', number: order.order_number, item: input.itemKey, qty: input.quantity }));
     return { ok: true, order_number: order.order_number, after_hours: afterHours, value: (unitCents * input.quantity) / 100 };
   }
@@ -516,8 +520,13 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   }
 
   async function handleTelegramUpdate(update) {
-    // Відповідь менеджера на прохання ввести суму
-    if (update.message) return amountReply(update.message);
+    if (update.message) {
+      // Менеджер написав у групі код сертифіката - відповідаємо станом і кнопкою погашення
+      const m = update.message;
+      if (String(m.chat?.id) === telegram.chatId && !m.reply_to_message && !m.from?.is_bot && await certificates.lookupMessage(m)) return { ok: true };
+      // Відповідь менеджера на прохання ввести суму
+      return amountReply(m);
+    }
 
     const query = update.callback_query;
     if (!query?.message || String(query.message.chat?.id) !== telegram.chatId) return { ok: true };
@@ -526,6 +535,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     if (query.data === 'pay:full') return paymentLink(query, 'full');
     if (query.data === 'pay:custom') return customAmountPrompt(query);
     if (/^ttn0?:\d+(:s)?$/.test(query.data || '')) return createTtn(query);
+    if (/^cert:/.test(query.data || '')) { await certificates.callback(query, actorName(query.from)); return { ok: true }; }
 
     const match = STATUS_ACTION.exec(query.data || '');
     if (!match) return { ok: true };
@@ -937,6 +947,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       ['ttn', async () => { for (const order of store.ttnNotInCrm()) await syncTtnToCrm(order.id); }],
       ['prompts', async () => store.pruneOldPrompts(date.getTime() - PROMPT_TTL_MS)],
       ['conversions', () => conversions.tick()],
+      ['certificates', () => certificates.tick()],
       ['reminders', () => sendReminders(date)],
       ['report', () => sendWeeklyReport(date)],
       ['backup', () => backup.run()],
