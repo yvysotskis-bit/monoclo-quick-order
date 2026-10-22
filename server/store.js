@@ -59,6 +59,27 @@ CREATE TABLE IF NOT EXISTS crm_purchases (
   meta_next_at INTEGER,
   meta_error TEXT
 );
+CREATE TABLE IF NOT EXISTS certificates (
+  code TEXT PRIMARY KEY,
+  crm_order_id INTEGER NOT NULL,
+  line_key TEXT NOT NULL,
+  item_key TEXT,
+  item_label TEXT NOT NULL,
+  amount_uah INTEGER NOT NULL,
+  printed INTEGER NOT NULL DEFAULT 0,
+  order_label TEXT,
+  buyer_name TEXT,
+  buyer_phone TEXT,
+  paid_uah INTEGER NOT NULL DEFAULT 0,
+  grand_total_uah INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  tg_message_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'issued',
+  used_by TEXT,
+  used_at INTEGER,
+  used_note TEXT,
+  UNIQUE (crm_order_id, line_key)
+);
 CREATE TABLE IF NOT EXISTS pay_prompts (
   message_id INTEGER PRIMARY KEY,
   order_id INTEGER NOT NULL,
@@ -546,6 +567,49 @@ export class Store {
   // Узгоджений знімок бази в окремий файл (безпечно при активних записах)
   snapshot(file) {
     this.db.exec(`VACUUM INTO '${String(file).replace(/'/g, "''")}'`);
+  }
+
+  /* ---- подарункові сертифікати ---- */
+
+  // false, якщо цей рядок замовлення вже має сертифікат
+  insertCertificate(c) {
+    const { changes } = this.run(
+      `INSERT OR IGNORE INTO certificates (code, crm_order_id, line_key, item_key, item_label, amount_uah, printed,
+         order_label, buyer_name, buyer_phone, paid_uah, grand_total_uah, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      c.code, c.crmOrderId, c.lineKey, c.itemKey || null, c.itemLabel, Math.round(c.amountUah), c.printed ? 1 : 0,
+      c.orderLabel || null, c.buyerName || null, c.buyerPhone || null, Math.round(c.paidUah || 0), Math.round(c.grandTotalUah || 0), c.createdAt,
+    );
+    return changes > 0;
+  }
+
+  getCertificate(code) {
+    return this.db.prepare('SELECT * FROM certificates WHERE code = ?').get(code) || null;
+  }
+
+  certificatesToAnnounce(limit = 10) {
+    return this.db.prepare('SELECT * FROM certificates WHERE tg_message_id IS NULL ORDER BY created_at, code LIMIT ?').all(limit);
+  }
+
+  setCertificateMessage(code, messageId) {
+    this.run('UPDATE certificates SET tg_message_id = ? WHERE code = ?', messageId, code);
+  }
+
+  // true - погашено зараз; false - вже був погашений або не існує
+  redeemCertificate(code, { actor, at, note }) {
+    const { changes } = this.run(
+      "UPDATE certificates SET status = 'used', used_by = ?, used_at = ?, used_note = ? WHERE code = ? AND status = 'issued'",
+      actor, at, note || null, code,
+    );
+    return changes > 0;
+  }
+
+  unredeemCertificate(code) {
+    const { changes } = this.run(
+      "UPDATE certificates SET status = 'issued', used_by = NULL, used_at = NULL, used_note = NULL WHERE code = ? AND status = 'used'",
+      code,
+    );
+    return changes > 0;
   }
 
   getMeta(key) {

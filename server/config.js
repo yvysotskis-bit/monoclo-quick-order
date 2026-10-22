@@ -80,6 +80,14 @@ export function loadConfig(env = process.env) {
     // Ціни заявок «Свій принт» у гривнях поверх таблиці server/custom-print.js, напр. {"tee":1450}
     customPrintPrices: parseJson(optional('CUSTOM_PRINT_PRICES'), 'CUSTOM_PRINT_PRICES'),
     currency: optional('CURRENCY') || 'UAH',
+    // Подарункові сертифікати «Свій принт» (потрібен KEYCRM_API_KEY): коди для замовлень сайту з товаром-сертифікатом.
+    // CERT_ENABLED=0 вимикає; CERT_SOURCE_IDS - джерела KeyCRM замовлень сайту (порожньо = усі джерела)
+    certEnabled: optional('CERT_ENABLED') !== '0',
+    certSourceIds: idList(optional('CERT_SOURCE_IDS')),
+    certProductMatch: optional('CERT_PRODUCT_MATCH') || 'сертифікат',
+    certPollMinutes: number('CERT_POLL_MINUTES', 10),
+    certLookbackDays: number('CERT_LOOKBACK_DAYS', 3),
+    certFrom: parseDate(optional('CERT_FROM'), 'CERT_FROM'),
     // Публічна адреса цього сервера (на Render підставляється автоматично як RENDER_EXTERNAL_URL)
     publicUrl: (optional('PUBLIC_URL') || optional('RENDER_EXTERNAL_URL')).replace(/\/+$/, ''),
 

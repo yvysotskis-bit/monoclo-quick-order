@@ -76,6 +76,15 @@ export function createTelegram({ token, chatId, fetchFn }) {
       link_preview_options: { is_disabled: true },
       reply_markup: replyMarkup,
     }),
+    // Те саме, але текст у HTML (картки сертифікатів)
+    editHtml: ({ messageId, text, replyMarkup }) => call('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      parse_mode: 'HTML',
+      link_preview_options: { is_disabled: true },
+      reply_markup: replyMarkup,
+    }),
     clearButtons: (messageId) => call('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }),
     answerCallback: (id, text) => call('answerCallbackQuery', { callback_query_id: id, text }),
     setWebhook: (url, secretToken) => call('setWebhook', {
