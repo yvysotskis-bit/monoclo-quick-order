@@ -228,6 +228,18 @@ export function buildReminder(orderNumber, minutes) {
   return `⏰ Замовлення #${orderNumber} уже ${minutes} хв без відповіді менеджера.\nНатисніть «✅ Взято в роботу», коли почнете його опрацьовувати.`;
 }
 
+// paidFromKey — «РРРР-ММ-ДД»; today — «РРРР-ММ-ДД» за київським часом
+export function buildStorageReminder({ orderNumber, ttn, paidFromKey, todayKey, name, phone }) {
+  const [y, m, d] = paidFromKey.split('-');
+  const when = paidFromKey > todayKey ? `платне зберігання почнеться <b>${d}.${m}.${y}</b>`
+    : paidFromKey === todayKey ? '<b>сьогодні</b> починається платне зберігання'
+      : `платне зберігання вже триває з <b>${d}.${m}.${y}</b>`;
+  return [
+    `📮 Посилка за замовленням #${escapeHtml(orderNumber)} (ТТН <code>${escapeHtml(ttn)}</code>) чекає у відділенні: ${when}.`,
+    `Напишіть клієнту: ${escapeHtml(name)}, ${escapeHtml(phone)}.`,
+  ].join('\n');
+}
+
 // Кнопка під повідомленням про оплату: менеджер сам запускає створення ТТН
 export const ttnKeyboard = (orderId) => ({
   inline_keyboard: [[{ text: '📦 Створити ТТН', callback_data: `ttn:${orderId}` }]],

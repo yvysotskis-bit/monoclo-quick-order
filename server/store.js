@@ -74,6 +74,9 @@ const ADDED_COLUMNS = {
   ttn_ref: 'TEXT',
   crm_status: 'TEXT',
   ttn_crm_synced: 'INTEGER NOT NULL DEFAULT 0',
+  np_status_code: 'TEXT',
+  np_paid_from: 'TEXT',
+  np_storage_notified: 'INTEGER NOT NULL DEFAULT 0',
 };
 
 function migrate(db) {
@@ -343,6 +346,20 @@ export class Store {
   // ТТН створено, але ще не записано в KeyCRM
   ttnNotInCrm(limit = 10) {
     return this.q('SELECT * FROM orders WHERE ttn_number IS NOT NULL AND crm_order_id IS NOT NULL AND ttn_crm_synced = 0 ORDER BY id LIMIT ?', limit);
+  }
+
+  // Накладні, статус яких ще треба опитувати (не отримані, не відмовлені, не видалені)
+  ttnTrackable(finalCodes, limit = 100) {
+    const marks = finalCodes.map(() => '?').join(',');
+    return this.q(`SELECT * FROM orders WHERE ttn_number IS NOT NULL AND (np_status_code IS NULL OR np_status_code NOT IN (${marks})) ORDER BY id DESC LIMIT ?`, ...finalCodes, limit);
+  }
+
+  setNpTracking(id, code, paidFrom) {
+    this.run('UPDATE orders SET np_status_code = ?, np_paid_from = ? WHERE id = ?', code, paidFrom, id);
+  }
+
+  markStorageNotified(id) {
+    this.run('UPDATE orders SET np_storage_notified = 1 WHERE id = ?', id);
   }
 
   markTtnInCrm(id) {

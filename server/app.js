@@ -5,7 +5,7 @@ import { fetchProduct, optionPairs } from './shopify-product.js';
 import { createTelegram } from './telegram.js';
 import { createBackup } from './backup.js';
 import { createKeycrm } from './keycrm.js';
-import { createNovaPoshta } from './novaposhta.js';
+import { createNovaPoshta, npDateKey } from './novaposhta.js';
 import { createTtnService } from './ttn.js';
 import { createMonobank } from './monobank.js';
 import {
@@ -38,6 +38,7 @@ import {
   parseAmountKopecks,
   PAYMENT_KIND,
   buildReminder,
+  buildStorageReminder,
   newOrderKeyboard,
   viberLink,
   statusKeyboard,
@@ -752,6 +753,41 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     }
   }
 
+  // Опитування НП: коли посилка у відділенні (код 7/8) і за добу до платного зберігання, нагадуємо менеджеру
+  const NP_FINAL_CODES = ['2', '3', '9', '10', '11', '102', '103', '105', '106'];
+  const NP_AT_BRANCH = ['7', '8'];
+  const TRACK_EVERY_MS = 30 * 60_000;
+  async function trackParcels(date) {
+    if (!novaPoshta) return;
+    const nowMs = date.getTime();
+    if (nowMs - Number(store.getMeta('np_track_at') || 0) < TRACK_EVERY_MS) return;
+    const orders = store.ttnTrackable(NP_FINAL_CODES, 100);
+    store.setMeta('np_track_at', nowMs);
+    if (!orders.length) return;
+    const byTtn = new Map(orders.map((o) => [String(o.ttn_number), o]));
+    const rows = await novaPoshta.trackDocuments(orders.map((o) => ({ number: o.ttn_number, phone: String(o.data.phone || '').replace(/\D/g, '') })));
+    const today = dateKey(date, config.timezone);
+    const tomorrow = dateKey(new Date(nowMs + 24 * 3600e3), config.timezone);
+    for (const row of rows) {
+      const order = byTtn.get(String(row.Number));
+      if (!order) continue;
+      const code = String(row.StatusCode ?? '').trim();
+      const paidFrom = npDateKey(row.DatePayedKeeping);
+      if (code !== (order.np_status_code || '') || paidFrom !== (order.np_paid_from || '')) store.setNpTracking(order.id, code, paidFrom);
+      if (NP_AT_BRANCH.includes(code) && paidFrom && paidFrom <= tomorrow && !order.np_storage_notified) {
+        try {
+          await telegram.sendText(buildStorageReminder({
+            orderNumber: order.order_number, ttn: order.ttn_number, paidFromKey: paidFrom, todayKey: today,
+            name: [order.data.name, order.data.surname].filter(Boolean).join(' '), phone: order.data.phone,
+          }), { replyTo: order.tg_message_id || undefined });
+          store.markStorageNotified(order.id);
+        } catch (err) {
+          log.error('storage reminder failed', err.message);
+        }
+      }
+    }
+  }
+
   async function sendWeeklyReport(date) {
     if (isoWeekday(date, config.timezone) !== config.reportDay) return;
     if (hourOf(date, config.timezone) < config.reportHour) return;
@@ -789,6 +825,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       ['ttn', async () => { for (const order of store.ttnNotInCrm()) await syncTtnToCrm(order.id); }],
       ['prompts', async () => store.pruneOldPrompts(date.getTime() - PROMPT_TTL_MS)],
       ['reminders', () => sendReminders(date)],
+      ['parcels', () => trackParcels(date)],
       ['report', () => sendWeeklyReport(date)],
       ['backup', () => backup.run()],
     ];

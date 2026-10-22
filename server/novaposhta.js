@@ -117,6 +117,13 @@ export function createNovaPoshta({ apiKey, fetchFn, sleep = (ms) => new Promise(
 
   return {
     call,
+    // Статуси накладних (до 100 за запит): [{ number, phone }] → масив відповідей НП
+    async trackDocuments(documents) {
+      return call('TrackingDocument', 'getStatusDocuments', {
+        Documents: documents.map((d) => ({ DocumentNumber: d.number, ...(d.phone ? { Phone: d.phone } : {}) })),
+      });
+    },
+
     async searchCities(query) {
       const rows = await call('Address', 'searchSettlements', { CityName: query, Limit: '10', Page: '1' });
       return (rows[0]?.Addresses || []).map(normalizeCity).filter((c) => c.ref && c.name);
@@ -178,4 +185,15 @@ export function createNovaPoshta({ apiKey, fetchFn, sleep = (ms) => new Promise(
       return (rows[0]?.Addresses || []).map(normalizeStreet).filter((s) => s.name);
     },
   };
+}
+
+// Дата з відповіді НП («21.11.2021 13:53:47», «2026-10-02 08:50:08», «02-10-2026 …») → «РРРР-ММ-ДД» або ''
+export function npDateKey(value) {
+  const v = text(value);
+  let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = /^(\d{2})[.-](\d{2})[.-](\d{4})/.exec(v);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  m = /\b(\d{2})\.(\d{2})\.(\d{4})\b/.exec(v);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
 }

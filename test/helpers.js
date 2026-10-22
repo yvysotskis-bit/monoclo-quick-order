@@ -134,6 +134,10 @@ export function mockFetch({ productResponse } = {}) {
           { Ref: 'ffffffff-0000-0000-0000-000000000001', MainDescription: 'Чернівці', Present: 'с. Чернівці, Вінницька обл.', Area: 'Вінницька', Region: 'Могилів-Подільський', Warehouses: '1' },
         ] }] });
       }
+      if (calledMethod === 'getStatusDocuments') {
+        fn.npTracked.push(p.Documents);
+        return Response.json({ success: true, data: p.Documents.map((d) => ({ Number: d.DocumentNumber, ...(fn.npTrack[d.DocumentNumber] || { StatusCode: '5', DatePayedKeeping: '' }) })) });
+      }
       if (calledMethod === 'getCounterparties') return Response.json({ success: true, data: [{ Ref: 'sender-cp' }] });
       if (calledMethod === 'getCounterpartyContactPersons') return Response.json({ success: true, data: [{ Ref: 'sender-contact', Phones: '380501112233' }] });
       if (calledMethod === 'getWarehouses' && p.CityName) {
@@ -212,6 +216,8 @@ export function mockFetch({ productResponse } = {}) {
   fn.np = 0;
   fn.mono = () => calls.filter((c) => c.url.includes('api.monobank.ua') && c.url.endsWith('/invoice/create'));
   fn.monoRemoved = () => calls.filter((c) => c.url.endsWith('/invoice/remove'));
+  fn.npTrack = {};
+  fn.npTracked = [];
   fn.tg = (method) => calls.filter((c) => c.url.includes('api.telegram.org') && c.url.endsWith(`/${method}`));
   // Лише запити, що змінюють дані (читання для перевірок не рахуємо)
   fn.crm = () => calls.filter((c) => c.url.includes('keycrm.app') && c.method !== 'GET');
