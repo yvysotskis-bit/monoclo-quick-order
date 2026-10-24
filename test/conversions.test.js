@@ -576,19 +576,19 @@ test('CSV покупок для Meta: лише з паролем; швидкі �
   assert.equal(res.status, 200);
   assert.match(res.headers['content-type'], /text\/csv/);
   const lines = res.text.replace(/^﻿/, '').trim().split('\n');
-  assert.equal(lines[0], 'джерело,номер_швидкого_замовлення,id_замовлення_keycrm,event_id,час_події_київ,сума,валюта,content_ids,товар,варіант,sku,кількість,стан_відправки_в_meta');
+  assert.equal(lines[0], 'джерело,номер_швидкого_замовлення,id_замовлення_keycrm,event_id,час_події_київ,сума,валюта,content_ids,товар,варіант,sku,кількість,стан_відправки_в_meta,покупка_з_instagram_direct');
   assert.equal(lines.length, 3);
 
   const quick = lines.find((l) => l.startsWith('Швидке замовлення'));
   const quickEvent = sent.find((e) => e.event_id.startsWith('quick-'));
   assert.ok(quick.includes(`,${quickEvent.event_id},`));
   assert.ok(quick.includes(',1780.00,UAH,shopify_UA_9001,'), 'сума й content_ids як у відправленій події');
-  assert.ok(quick.endsWith(',2,відправлено'));
+  assert.ok(quick.endsWith(',2,відправлено,'));
 
   const direct = lines.find((l) => l.startsWith('Instagram Direct'));
   assert.ok(direct.includes(',5001,keycrm-5001,'));
   assert.ok(direct.includes(',1899.00,UAH,'));
-  assert.ok(direct.endsWith(',відправлено'));
+  assert.ok(direct.endsWith(',відправлено,'), 'без Instagram-інтеграції остання колонка порожня');
 
   assert.ok(!/380671234567|380501112233|Петренко|Коваль/.test(res.text), 'ні телефонів, ні імен');
 

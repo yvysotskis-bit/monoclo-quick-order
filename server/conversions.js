@@ -3,6 +3,7 @@
 // і показує в CSV для запланованого завантаження офлайн-конверсій Google Ads.
 // Браузерні події форми лишаються лідом (Lead / generate_lead): на момент заявки покупки ще немає.
 import crypto from 'node:crypto';
+import { buildIgPurchaseEvent, createIgDirectory, findInstagramUsername, keyPaths } from './instagram.js';
 
 const DAY = 24 * 3600e3;
 const META_MAX_AGE_MS = 7 * DAY; // Meta не приймає події, старші за 7 днів
@@ -175,7 +176,15 @@ export function buildGoogleAdsCsv(orders, { conversionName, format = 'data_manag
   return `${lines.join('\n')}\n`;
 }
 
-const META_STATE_LABEL = { sent: 'відправлено', dry: 'тестовий режим (не відправлено)', expired: 'прострочено (не відправлено)' };
+const META_STATE_LABEL = {
+  sent: 'відправлено', dry: 'тестовий режим (не відправлено)', expired: 'прострочено (не відправлено)',
+  skipped_ig: 'відправлено як покупку з Instagram Direct',
+};
+
+const IG_STATE_LABEL = {
+  sent: 'відправлено (business_messaging)', dry: 'тестовий режим', expired: 'прострочено',
+  no_username: 'немає ніка Instagram у KeyCRM', not_found: 'розмову не знайдено',
+};
 
 function metaStateLabel(state, error) {
   if (META_STATE_LABEL[state]) return META_STATE_LABEL[state];
@@ -207,6 +216,7 @@ export function buildMetaPurchasesCsv({ orders = [], crm = [] }, { contentIdTemp
         (event.custom_data.content_ids || []).join(' '), d.productTitle || '',
         (d.options || []).map((o) => o.value).join(' / '), d.sku || '', d.quantity ?? '',
         metaStateLabel(order.meta_state, order.meta_error),
+        '',
       ],
     });
   }
@@ -219,12 +229,13 @@ export function buildMetaPurchasesCsv({ orders = [], crm = [] }, { contentIdTemp
         localTime(p.conv_at, timeZone), (p.value_cents / 100).toFixed(2), 'UAH',
         (cd.content_ids || []).join(' '), '', '', '', cd.num_items ?? '',
         metaStateLabel(p.meta_state, p.meta_error),
+        IG_STATE_LABEL[p.ig_state] || (p.ig_username ? 'шукаємо розмову' : ''),
       ],
     });
   }
   rows.sort((a, b) => a.at - b.at);
   const header = ['джерело', 'номер_швидкого_замовлення', 'id_замовлення_keycrm', 'event_id', 'час_події_київ',
-    'сума', 'валюта', 'content_ids', 'товар', 'варіант', 'sku', 'кількість', 'стан_відправки_в_meta'];
+    'сума', 'валюта', 'content_ids', 'товар', 'варіант', 'sku', 'кількість', 'стан_відправки_в_meta', 'покупка_з_instagram_direct'];
   // BOM: Excel інакше відкриває кирилицю кракозябрами
   return `﻿${[header, ...rows.map((r) => r.cells)].map((cells) => cells.map(csvCell).join(',')).join('\n')}\n`;
 }
@@ -277,9 +288,13 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
   const c = config.conversions || { enabled: false };
   const metaOn = () => Boolean(c.metaDatasetId && c.metaToken);
   const gaOn = () => Boolean(c.gaMeasurementId && c.gaApiSecret);
+  // Direct-покупки як business_messaging: увімкнено й налаштовано сторінку, Instagram, токен і датасет
+  const igOn = () => Boolean(c.igEnabled && c.igPageId && c.igAccountId && c.igPageToken && (c.igDatasetId || c.metaDatasetId));
+  const igSources = new Set((c.igSourceIds || []).map(Number));
+  const igDir = createIgDirectory({ c, store, fetchFn, now, log });
 
   // Діагностика для /status: чому покупки не зараховуються (без персональних даних і секретів)
-  const diag = { lastErrors: {}, lastQualify: null, lastCrmPoll: null };
+  const diag = { lastErrors: {}, lastQualify: null, lastCrmPoll: null, igBuyerPaths: null, igUsernames: { found: 0, missing: 0 } };
   const noteError = (key, err) => {
     diag.lastErrors[key] = { at: new Date(now().getTime()).toISOString(), message: String(err?.message || err).slice(0, 200) };
   };
@@ -386,11 +401,81 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
           if (!verdict.ok) { count(verdict.reason); continue; }
           count('qualified');
           const event = buildCrmMetaEvent(o, { valueCents: verdict.valueCents, eventTimeMs: nowMs });
-          if (store.insertCrmPurchase({ crmOrderId: o.id, sourceId, convAt: nowMs, valueCents: verdict.valueCents, event })) {
+          const igUsername = igOn() && igSources.has(Number(sourceId)) ? await instagramUsernameFor(o) : null;
+          if (store.insertCrmPurchase({ crmOrderId: o.id, sourceId, convAt: nowMs, valueCents: verdict.valueCents, event, igUsername })) {
             log.log(JSON.stringify({ event: 'purchase_qualified', crm_order: o.id, source: sourceId, value: verdict.valueCents / 100 }));
           }
         }
         if (!result.hasMore) break;
+      }
+    }
+  }
+
+  // Нік Instagram покупця: спершу з даних замовлення, інакше з картки покупця KeyCRM
+  async function instagramUsernameFor(o) {
+    let username = findInstagramUsername(o.buyer) || findInstagramUsername(o);
+    if (!username && o.buyer?.id && keycrm.getBuyer) {
+      try {
+        const buyer = await keycrm.getBuyer(o.buyer.id);
+        username = findInstagramUsername(buyer);
+        // Один раз запам'ятовуємо структуру картки (лише назви полів): видно, де KeyCRM тримає соцмережі
+        if (!username && !diag.igBuyerPaths) diag.igBuyerPaths = keyPaths(buyer);
+      } catch (err) {
+        noteError('keycrm_buyer', err);
+      }
+    }
+    diag.igUsernames[username ? 'found' : 'missing'] += 1;
+    return username || null;
+  }
+
+  // Direct-покупка → Purchase з action_source=business_messaging. Нік з KeyCRM зіставляємо з розмовами Instagram.
+  const IG_SYNC_MS = 15 * 60_000;
+  async function deliverIgPurchases() {
+    if (!igOn() || !igSources.size) return;
+    const nowMs = now().getTime();
+    const due = store.crmIgDue(nowMs, [...igSources], { dryRun: Boolean(c.dryRun) });
+    if (!due.length) return;
+    // Довідник розмов оновлюємо не частіше ніж раз на 15 хв (перший раз — одразу)
+    if (due.some((r) => r.ig_username && !igDir.lookup(r.ig_username))
+      && nowMs - Number(store.getMeta('ig_conversations_synced_at') || 0) >= IG_SYNC_MS) {
+      try { await igDir.sync(); } catch (err) { noteError('ig_sync', err); return; }
+    }
+    const resolveMs = (c.igResolveHours ?? 24) * 3600e3;
+    const datasetId = c.igDatasetId || c.metaDatasetId;
+    for (const row of due) {
+      if (!row.ig_username) { store.setCrmIg(row.crm_order_id, { state: 'no_username' }); continue; }
+      const igSid = igDir.lookup(row.ig_username);
+      if (!igSid) {
+        if (nowMs - row.conv_at >= resolveMs) store.setCrmIg(row.crm_order_id, { state: 'not_found' });
+        else store.markCrmIgRetry(row.crm_order_id, 'нік ще не знайдено в розмовах', nowMs + IG_SYNC_MS);
+        continue;
+      }
+      if (nowMs - row.conv_at > META_MAX_AGE_MS) { store.setCrmIg(row.crm_order_id, { state: 'expired', igSid }); continue; }
+      const event = buildIgPurchaseEvent({ igSid, igAccountId: c.igAccountId, valueCents: row.value_cents, eventTimeMs: row.conv_at, crmOrderId: row.crm_order_id });
+      if (c.dryRun) {
+        log.log(JSON.stringify({ event: 'purchase_dry_run', channel: 'instagram', crm_order: row.crm_order_id, value: row.value_cents / 100 }));
+        store.setCrmIg(row.crm_order_id, { state: 'dry', igSid });
+        continue;
+      }
+      try {
+        const body = { data: [event], ...(c.metaTestEventCode ? { test_event_code: c.metaTestEventCode } : {}) };
+        const res = await fetchFn(`https://graph.facebook.com/${c.metaApiVersion}/${encodeURIComponent(datasetId)}/events`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ...body, access_token: c.igPageToken }),
+          signal: AbortSignal.timeout(10000),
+        });
+        const text = await res.text();
+        if (!res.ok) throw new Error(`Meta ${res.status}: ${text.slice(0, 200)}`);
+        store.setCrmIg(row.crm_order_id, { state: 'sent', igSid });
+        log.log(JSON.stringify({ event: 'purchase_sent', channel: 'instagram', crm_order: row.crm_order_id }));
+      } catch (err) {
+        log.error('conversion: instagram failed', err.message);
+        noteError('instagram', err);
+        const attempt = store.markCrmIgRetry(row.crm_order_id, err.message, nowMs + Math.min(30_000 * 2 ** row.ig_attempts, 3600e3));
+        if (attempt === 5 && notify) {
+          await notify(`⚠️ Покупку з Direct (KeyCRM #${row.crm_order_id}) не вдається передати в Meta як покупку з повідомлень: ${String(err.message).slice(0, 150)}. Сервер повторює спроби.`).catch(() => {});
+        }
       }
     }
   }
@@ -400,6 +485,13 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
     if (!metaOn()) return;
     for (const row of store.crmPurchasesDue(nowMs, { dryRun: Boolean(c.dryRun) })) {
       if (nowMs - row.conv_at > META_MAX_AGE_MS) { store.setCrmPurchaseState(row.crm_order_id, 'expired'); continue; }
+      // Direct-покупка йде як business_messaging: стару подію шлемо лише якщо зіставити з розмовою не вдалося
+      if (igOn() && igSources.has(Number(row.source_id)) && !c.igAlsoPixel) {
+        const ig = store.crmIgState(row.crm_order_id);
+        // Ще шукаємо нік у розмовах (або тестова покупка чекає на бойову відправку)
+        if (ig === null || (ig === 'dry' && !c.dryRun)) continue;
+        if (ig === 'sent' || ig === 'dry') { store.setCrmPurchaseState(row.crm_order_id, c.dryRun ? 'dry' : 'skipped_ig'); continue; }
+      }
       const body = { data: [row.event], ...(c.metaTestEventCode ? { test_event_code: c.metaTestEventCode } : {}) };
       if (c.dryRun) {
         log.log(JSON.stringify({ event: 'purchase_dry_run', channel: 'meta', crm_order: row.crm_order_id, value: row.value_cents / 100 }));
@@ -523,6 +615,7 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
     await qualify();
     await deliver();
     await qualifyCrmSources();
+    await deliverIgPurchases();
     await deliverCrmPurchases();
   }
 
@@ -562,6 +655,15 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
         last_qualify: diag.lastQualify,
         last_crm_poll: diag.lastCrmPoll,
         last_errors: diag.lastErrors,
+        instagram: igOn() ? {
+          sources: [...igSources],
+          purchases: store.igCounts(),
+          usernames: diag.igUsernames,
+          known_conversations: store.igUserCount(),
+          last_sync: igDir.diag.lastSync,
+          last_sync_error: igDir.diag.lastError,
+          buyer_fields_when_no_username: diag.igBuyerPaths,
+        } : null,
       };
     },
   };

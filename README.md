@@ -230,6 +230,29 @@ GetCheckout, де її код не видається й не вводиться
 `event_id = keycrm-<id>`, хеші телефону, імені й міста, сума з KeyCRM у гривнях): для GA4 і Google Ads у таких
 замовлень немає ні сесії, ні кліку.
 
+**Direct-покупки для реклами на повідомлення** (`IG_MESSAGING_ENABLED=1`). Подія `system_generated` з телефоном
+не прив'язується до розмови, тож Meta майже не приписує такі покупки рекламі на повідомлення (акаунт 0531).
+З цією змінною Direct-покупка йде як `Purchase` з `action_source: business_messaging`, `messaging_channel: instagram`
+і Instagram-scoped ID клієнта (`ig_sid`) — так Meta зараховує її рекламі, з якої почалась розмова
+([документація](https://developers.facebook.com/docs/marketing-api/conversions-api/business-messaging)).
+- `ig_sid` береться так: KeyCRM підтягує в картку клієнта нік Instagram із чату, а розмови
+  сторінки (`GET /{IG_PAGE_ID}/conversations?platform=instagram`) віддають нік і `ig_sid` кожного співрозмовника.
+  Розмови перечитуються не частіше ніж раз на 15 хв і лише до вже переглянутих; довідник «нік → ig_sid» у базі.
+- Нік шукається в замовленні, інакше в картці покупця (`GET /buyer/{id}`). Немає ніка — одразу стара подія
+  `system_generated`, як раніше. Нік є, але розмову не знайдено за `IG_RESOLVE_HOURS` (24 год) — теж стара подія,
+  щоб покупка не загубилась. Обидві події для однієї покупки не йдуть (Meta їх не зводить), хіба що
+  `IG_ALSO_SEND_SYSTEM_EVENT=1`.
+- Оптимізація кампаній на покупку для Instagram-реклами на повідомлення Meta не дає: це **звітність** — покупки й
+  ROAS по кожній кампанії й креативу в Ads Manager.
+- Датасет: той, що прив'язаний до Instagram-акаунта (`GET /{IG_BUSINESS_ACCOUNT_ID}/dataset`). Для Monoclo це той самий
+  `META_DATASET_ID` 1258409115455825, тож `IG_DATASET_ID` можна не задавати.
+- Токен: вічний токен сторінки Monoclo з дозволами `instagram_basic`, `instagram_manage_messages`,
+  `instagram_manage_events`, `pages_show_list`, `pages_read_engagement` (для власної сторінки достатньо Standard access,
+  App Review не потрібен).
+- `/status` → `conversions.instagram`: скільки покупок відправлено/без ніка/не знайдено, скільки розмов у довіднику,
+  остання синхронізація. Якщо ніки не знаходяться, там же назви полів картки покупця (без значень).
+  У CSV звірки — колонка `покупка_з_instagram_direct`.
+
 **Ручні швидкі замовлення** (`CONVERSIONS_CRM_MANUAL_QUICK`, за замовчуванням увімкнено): менеджери інколи заводять
 замовлення в джерело швидких замовлень (`KEYCRM_SOURCE_ID`) вручну - без номера `quick-…`, часто замість видаленого
 замовлення бота. Бот таких замовлень не знає, тому їх зараховує той самий 15-хвилинний перегляд KeyCRM, що й Direct.

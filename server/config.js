@@ -174,6 +174,22 @@ export function loadConfig(env = process.env) {
       metaApiVersion: optional('META_API_VERSION') || 'v24.0',
       // Як товар записаний у каталозі Meta. Основний каталог Shopify (510365305413392): ID контенту = ID варіанта Shopify
       metaContentId: optional('META_CONTENT_ID') || '{variant_id}',
+      // Instagram Direct → реклама на повідомлення: подія Purchase з action_source=business_messaging і ig_sid клієнта.
+      // Потрібні: сторінка Facebook, прив'язаний Instagram, токен сторінки з instagram_manage_messages та instagram_manage_events
+      igEnabled: optional('IG_MESSAGING_ENABLED') === '1',
+      igPageId: optional('IG_PAGE_ID'),
+      igAccountId: optional('IG_BUSINESS_ACCOUNT_ID'),
+      igPageToken: optional('IG_PAGE_TOKEN'),
+      // Датасет, прив'язаний до Instagram-акаунта (GET /{IG_BUSINESS_ACCOUNT_ID}/dataset); за замовчуванням META_DATASET_ID
+      igDatasetId: optional('IG_DATASET_ID'),
+      // Джерела KeyCRM, замовлення яких приходять з Instagram Direct
+      igSourceIds: idList(optional('IG_CRM_SOURCE_IDS') || '198'),
+      // Скільки годин шукати нік у розмовах, перш ніж відправити стару подію (system_generated) замість business_messaging
+      igResolveHours: number('IG_RESOLVE_HOURS', 24),
+      igLookbackDays: number('IG_LOOKBACK_DAYS', 60),
+      igMaxPages: number('IG_MAX_PAGES', 40),
+      // Чи слати для Direct-покупки ще й стару подію в той самий датасет, коли пішла business_messaging (рахувалась би двічі)
+      igAlsoPixel: optional('IG_ALSO_SEND_SYSTEM_EVENT') === '1',
       gaMeasurementId: optional('GA4_MEASUREMENT_ID'),
       gaApiSecret: optional('GA4_API_SECRET'),
       gadsConversionName: optional('GADS_CONVERSION_NAME') || 'Quick order purchase',

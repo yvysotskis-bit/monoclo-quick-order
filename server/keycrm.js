@@ -166,6 +166,10 @@ export function createKeycrm({ token, sourceId, statusMap = {}, deliveryServiceI
         hasMore: Boolean(data?.next_page_url) || (Number(data?.current_page) < Number(data?.last_page)),
       };
     },
+    // Картка покупця (там KeyCRM зберігає соцмережі клієнта, зокрема нік Instagram із чату)
+    async getBuyer(buyerId) {
+      return call('GET', `/buyer/${buyerId}`);
+    },
     // Записує номер ТТН у замовлення KeyCRM
     async setTrackingCode(crmOrderId, code) {
       await call('PUT', `/order/${crmOrderId}`, { shipping: { tracking_code: code } });
