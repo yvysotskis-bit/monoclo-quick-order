@@ -67,6 +67,12 @@ CREATE TABLE IF NOT EXISTS crm_purchases (
   meta_next_at INTEGER,
   meta_error TEXT
 );
+-- Довідник Instagram: нік клієнта → його Instagram-scoped ID (з розмов сторінки), для покупок з Direct
+CREATE TABLE IF NOT EXISTS ig_users (
+  username TEXT PRIMARY KEY,
+  ig_sid TEXT NOT NULL,
+  seen_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS certificates (
   code TEXT PRIMARY KEY,
   crm_order_id INTEGER NOT NULL,
@@ -150,6 +156,13 @@ function migrate(db) {
   if (!paymentColumns.has('modified_at')) db.exec('ALTER TABLE payments ADD COLUMN modified_at INTEGER');
   if (!paymentColumns.has('polled_at')) db.exec('ALTER TABLE payments ADD COLUMN polled_at INTEGER');
   if (!paymentColumns.has('final_amount')) db.exec('ALTER TABLE payments ADD COLUMN final_amount INTEGER');
+  // Покупки з Direct для реклами на повідомлення: нік Instagram і окремий стан відправки події business_messaging
+  const crmColumns = new Set(db.prepare('PRAGMA table_info(crm_purchases)').all().map((c) => c.name));
+  for (const [name, type] of Object.entries({
+    ig_username: 'TEXT', ig_sid: 'TEXT', ig_state: 'TEXT', ig_attempts: 'INTEGER NOT NULL DEFAULT 0', ig_next_at: 'INTEGER', ig_error: 'TEXT',
+  })) {
+    if (!crmColumns.has(name)) db.exec(`ALTER TABLE crm_purchases ADD COLUMN ${name} ${type}`);
+  }
   // Рахунки зі старої схеми (один на замовлення) переносимо в таблицю платежів; в CRM вони вже потрапили
   db.exec(`INSERT OR IGNORE INTO payments (order_id, invoice_id, amount, kind, url, status, created_at, paid_at, crm_synced)
     SELECT id, pay_invoice_id, COALESCE(pay_amount, 0), 'prepay', COALESCE(pay_url, ''),
@@ -546,9 +559,60 @@ export class Store {
   /* ---- покупки з інших джерел KeyCRM (Instagram Direct) ---- */
 
   // true, якщо покупку додано вперше (повторне зарахування того самого замовлення ігнорується)
-  insertCrmPurchase({ crmOrderId, sourceId, convAt, valueCents, event }) {
-    return this.run('INSERT OR IGNORE INTO crm_purchases (crm_order_id, source_id, conv_at, value_cents, event) VALUES (?, ?, ?, ?, ?)',
-      crmOrderId, sourceId, convAt, valueCents, JSON.stringify(event)).changes > 0;
+  insertCrmPurchase({ crmOrderId, sourceId, convAt, valueCents, event, igUsername = null }) {
+    return this.run('INSERT OR IGNORE INTO crm_purchases (crm_order_id, source_id, conv_at, value_cents, event, ig_username) VALUES (?, ?, ?, ?, ?, ?)',
+      crmOrderId, sourceId, convAt, valueCents, JSON.stringify(event), igUsername || null).changes > 0;
+  }
+
+  /* ---- Instagram: покупки з Direct як подія business_messaging ---- */
+
+  // Покупки, що чекають на зіставлення з розмовою Instagram (ig_state порожній)
+  // Покупки з тестового режиму (dry) після перемикання в бойовий теж ідуть у Meta
+  crmIgDue(now, sourceIds, { dryRun = false, limit = 20 } = {}) {
+    if (!sourceIds.length) return [];
+    const marks = sourceIds.map(() => '?').join(',');
+    const states = dryRun ? 'ig_state IS NULL' : "(ig_state IS NULL OR ig_state = 'dry')";
+    return this.db.prepare(`SELECT * FROM crm_purchases WHERE ${states} AND source_id IN (${marks})
+      AND (ig_next_at IS NULL OR ig_next_at <= ?) ORDER BY conv_at LIMIT ?`).all(...sourceIds, now, limit);
+  }
+
+  // ig_state: sent, dry, no_username (у KeyCRM немає ніка), not_found (ніка немає в розмовах), expired
+  setCrmIg(crmOrderId, { state, igSid = null, error = null }) {
+    this.run('UPDATE crm_purchases SET ig_state = ?, ig_sid = COALESCE(?, ig_sid), ig_error = ?, ig_next_at = NULL WHERE crm_order_id = ?',
+      state, igSid, error ? String(error).slice(0, 300) : null, crmOrderId);
+  }
+
+  // Повтор пізніше (нік ще не знайдено в розмовах або збій Meta). Повертає номер спроби
+  markCrmIgRetry(crmOrderId, error, nextAt) {
+    const row = this.db.prepare('SELECT ig_attempts AS n FROM crm_purchases WHERE crm_order_id = ?').get(crmOrderId);
+    this.run('UPDATE crm_purchases SET ig_attempts = ?, ig_error = ?, ig_next_at = ? WHERE crm_order_id = ?',
+      row.n + 1, String(error).slice(0, 300), nextAt, crmOrderId);
+    return row.n + 1;
+  }
+
+  crmIgState(crmOrderId) {
+    return this.db.prepare('SELECT ig_state FROM crm_purchases WHERE crm_order_id = ?').get(crmOrderId)?.ig_state ?? null;
+  }
+
+  // true, якщо запис новий або ig_sid змінився
+  saveIgUser(username, igSid, now) {
+    const prev = this.db.prepare('SELECT ig_sid FROM ig_users WHERE username = ?').get(username);
+    this.run('INSERT INTO ig_users (username, ig_sid, seen_at) VALUES (?, ?, ?) ON CONFLICT(username) DO UPDATE SET ig_sid = excluded.ig_sid, seen_at = excluded.seen_at',
+      username, igSid, now);
+    return !prev || prev.ig_sid !== igSid;
+  }
+
+  igUserSid(username) {
+    return username ? this.db.prepare('SELECT ig_sid FROM ig_users WHERE username = ?').get(username)?.ig_sid ?? null : null;
+  }
+
+  igUserCount() {
+    return this.db.prepare('SELECT COUNT(*) AS n FROM ig_users').get().n;
+  }
+
+  igCounts() {
+    const rows = this.db.prepare('SELECT ig_state AS s, COUNT(*) AS n FROM crm_purchases WHERE ig_username IS NOT NULL OR ig_state IS NOT NULL GROUP BY ig_state').all();
+    return Object.fromEntries(rows.map((r) => [r.s || 'pending', r.n]));
   }
 
   hasLocalCrmOrder(crmOrderId) {

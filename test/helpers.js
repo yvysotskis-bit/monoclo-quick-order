@@ -178,6 +178,16 @@ export function mockFetch({ productResponse } = {}) {
         return Response.json({ success: true, data: [{ Addresses: [{ SettlementStreetRef: NP.street, Present: 'вул. Головна', SettlementStreetDescription: 'Головна' }] }] });
       }
     }
+    if (u.startsWith('https://graph.facebook.com/') && /\/conversations\?/.test(u)) {
+      // Розмови Instagram сторінки: fn.igConversations — масив сторінок (кожна — масив розмов)
+      fn.igReads.push(Object.fromEntries(new URL(u).searchParams));
+      if (fn.fail.igRead) return new Response('{"error":{"message":"Invalid OAuth access token"}}', { status: 400 });
+      const after = new URL(u).searchParams.get('after');
+      const idx = after ? Number(after) : 0;
+      const pages = fn.igConversations || [[]];
+      const next = idx + 1 < pages.length;
+      return Response.json({ data: pages[idx] || [], paging: next ? { cursors: { after: String(idx + 1) }, next: 'https://graph.facebook.com/next' } : { cursors: {} } });
+    }
     if (u.startsWith('https://graph.facebook.com/')) {
       if (fn.fail.meta) return new Response('{"error":{"message":"Invalid OAuth access token"}}', { status: 400 });
       return Response.json({ events_received: call.body.data.length, fbtrace_id: 'x' });
@@ -210,6 +220,12 @@ export function mockFetch({ productResponse } = {}) {
       if (call.method === 'GET' && url.pathname === '/v1/order') {
         const uuid = url.searchParams.get('filter[source_uuid]');
         return Response.json({ data: crm.orders.filter((o) => o.source_uuid === uuid) });
+      }
+      const buyer = call.method === 'GET' && /^\/v1\/buyer\/(\d+)$/.exec(url.pathname);
+      if (buyer) {
+        fn.crmBuyerReads.push(Number(buyer[1]));
+        const b = crm.buyers?.[buyer[1]];
+        return b ? Response.json(b) : new Response('{"message":"Not found"}', { status: 404 });
       }
       const single = call.method === 'GET' && /^\/v1\/order\/(\d+)$/.exec(url.pathname);
       if (single) return Response.json({ id: Number(single[1]), ...(crm.order || {}), payments: crm.payments.filter((p) => p.order_id === Number(single[1])) });
@@ -248,13 +264,15 @@ export function mockFetch({ productResponse } = {}) {
   fn.crmState = { orders: [], payments: [], puts: [] };
   fn.np = 0;
   fn.crmLists = [];
+  fn.igReads = [];
+  fn.crmBuyerReads = [];
   fn.mono = () => calls.filter((c) => c.url.includes('api.monobank.ua') && c.url.endsWith('/invoice/create'));
   fn.monoRemoved = () => calls.filter((c) => c.url.endsWith('/invoice/remove'));
   fn.npTrack = {};
   fn.npTracked = [];
   fn.tg = (method) => calls.filter((c) => c.url.includes('api.telegram.org') && c.url.endsWith(`/${method}`));
   // Лише запити, що змінюють дані (читання для перевірок не рахуємо)
-  fn.meta = () => calls.filter((c) => c.url.startsWith('https://graph.facebook.com/'));
+  fn.meta = () => calls.filter((c) => c.url.startsWith('https://graph.facebook.com/') && c.method === 'POST');
   fn.ga = () => calls.filter((c) => c.url.startsWith('https://www.google-analytics.com/'));
   fn.crm = () => calls.filter((c) => c.url.includes('keycrm.app') && c.method !== 'GET');
   fn.crmReads = () => calls.filter((c) => c.url.includes('keycrm.app') && c.method === 'GET');
