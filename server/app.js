@@ -1235,15 +1235,27 @@ p{margin:8px 0;color:#555}</style></head>
   const PROXY_PARAMS = new Set(['shop', 'logged_in_customer_id', 'path_prefix', 'timestamp', 'signature']);
   // /proxy/go — адреса GetCheckout за доменом myshopify; /proxy/go/<домен> — за доменом магазину
   // (у Monoclo оформлення живе на get-checkout.com/monoclo.com.ua/). Дозволені лише ці два варіанти.
+  // Відхилений перехід лишає слід у логах (без самого токена кошика): інакше клієнт мовчки повертається в кошик,
+  // і ніхто не бачить, що GetCheckout змінив формат посилки. Не більше 20 записів за 10 хв
+  function logRedirectRejected(reason, detail) {
+    if (store.takeHit('go-rejected-log', 20, 10 * 60_000, now().getTime())) log.error('checkout redirect rejected', reason, detail);
+  }
+
   function checkoutRedirect(url, segment) {
     const shopParam = url.searchParams.get('shop');
     const s = shops.find((x) => x.shop === shopParam);
     const cart = url.searchParams.get('cart') || '';
-    if (!s || !/^[A-Za-z0-9]{8,64}(\?key=[A-Za-z0-9]{8,64})?$/.test(cart)) return null;
+    if (!s) { logRedirectRejected('unknown shop', String(shopParam).slice(0, 60)); return null; }
+    // Токен кошика GetCheckout: літери, цифри, «_» і «-», необов'язково з «?key=…». Лише безпечні символи (жодних «/», «:», пробілів),
+    // тож відкритого редиректу немає: хост і шлях призначення фіксовані
+    if (!/^[A-Za-z0-9_-]{6,128}(\?key=[A-Za-z0-9_-]{4,128})?$/.test(cart)) {
+      logRedirectRejected('cart format', `довжина ${cart.length}, символи: ${[...new Set(cart.replace(/[A-Za-z0-9]/g, 'x'))].join('').slice(0, 20)}`);
+      return null;
+    }
     let storeHost = '';
     try { storeHost = new URL(s.storeOrigin).host; } catch {}
     const path = segment || s.shop;
-    if (path !== s.shop && path !== storeHost) return null;
+    if (path !== s.shop && path !== storeHost) { logRedirectRejected('path', String(path).slice(0, 80)); return null; }
     const target = new URL(`https://get-checkout.com/${path}/`);
     for (const [k, v] of url.searchParams) {
       if (!PROXY_PARAMS.has(k) && k.length <= 40 && v.length <= 300) target.searchParams.append(k, v);

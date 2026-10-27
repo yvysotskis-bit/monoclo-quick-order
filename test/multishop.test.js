@@ -136,3 +136,25 @@ test('/proxy/go/<домен>: лише домен магазину або myshop
   assert.equal(evil.status, 302);
   assert.equal(evil.headers.location, '/cart');
 });
+
+test('/proxy/go: токен кошика з «_» і «-» та довшими значеннями проходить, небезпечні символи ні; відмова лишає слід у логах', async () => {
+  const logs = [];
+  const { app } = makeApp({ cfg, log: { log() {}, error: (...a) => logs.push(a.join(' ')) } });
+  const host = new URL(config.storeOrigin).host;
+  const mainUrl = (path, extra) => {
+    const params = new URLSearchParams({ shop: config.shop, path_prefix: '/apps/quick-order', timestamp: String(Math.floor(Date.now() / 1000)), ...extra });
+    params.set('signature', signParams(params, config.apiSecret));
+    return `${path}?${params}`;
+  };
+  for (const cart of ['ab_cd-EF12gh', 'A'.repeat(100), 'abcdefgh12?key=ab_cd-ef34']) {
+    const r = await call(app, { method: 'GET', url: mainUrl(`/proxy/go/${host}`, { cart }) });
+    assert.equal(r.status, 200, cart);
+  }
+  for (const cart of ['a/../b12345', 'abc def123', 'https://evil.example', 'abcdefgh12?key=x/y', 'short', 'a'.repeat(200)]) {
+    const r = await call(app, { method: 'GET', url: mainUrl(`/proxy/go/${host}`, { cart }) });
+    assert.equal(r.status, 302, cart);
+    assert.equal(r.headers.location, '/cart');
+  }
+  assert.ok(logs.some((l) => /checkout redirect rejected cart format/.test(l)));
+  assert.ok(!logs.some((l) => l.includes('evil.example')), 'токен кошика в логи не потрапляє');
+});

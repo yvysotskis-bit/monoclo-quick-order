@@ -290,12 +290,12 @@ export function clock(iso = '2025-10-05T12:00:00Z') {
   return now;
 }
 
-export function makeApp({ cfg = {}, fetchOpts, at = '2025-10-05T12:00:00Z' } = {}) {
+export function makeApp({ cfg = {}, fetchOpts, at = '2025-10-05T12:00:00Z', log = silentLog } = {}) {
   const fetchFn = mockFetch(fetchOpts);
   const now = clock(at);
   const store = openStore(':memory:');
   const merged = { ...config, ...cfg };
-  const app = createApp({ config: merged, store, fetchFn, log: silentLog, now });
+  const app = createApp({ config: merged, store, fetchFn, log, now });
   return { app, fetchFn, now, store, config: merged };
 }
 
