@@ -1766,7 +1766,8 @@
         startY = null;
         sheet.classList.remove('is-dragging');
         if (dy > 90) close();
-        else sheet.style.transform = '';
+        // close() не закриває шторку під час відправки: без скидання вона лишилась би зсунутою вниз
+        if (dialog.open) sheet.style.transform = '';
       };
       handle.addEventListener('touchend', end);
       handle.addEventListener('touchcancel', end);

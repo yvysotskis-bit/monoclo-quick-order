@@ -709,5 +709,76 @@ for (const [variant, verb] of [['B', 'Підтвердити'], ['A', 'Замо�
   await ctx.close();
 }
 
+// Мобільна адаптивність: жодного горизонтального скролу, нічого за межами шторки, зони натискання ≥ 44 px
+for (const [w, h] of [[320, 568], [360, 740], [390, 844], [430, 932], [568, 320], [768, 1024], [1024, 768]]) {
+  const { page, ctx, errors } = await session(`adapt-${w}x${h}`, { width: w, height: h }, '?hour=12');
+  await open(page);
+  const audit = () => page.evaluate(() => {
+    const issues = [];
+    const root = document.scrollingElement;
+    if (root.scrollWidth > innerWidth + 1) issues.push(`сторінка скролиться вбік ${root.scrollWidth}>${innerWidth}`);
+    const dlg = document.querySelector('[data-qo-dialog]');
+    const sr = dlg.querySelector('.qo-sheet').getBoundingClientRect();
+    const body = dlg.querySelector('.qo-body');
+    if (body.scrollWidth > body.clientWidth + 1) issues.push(`тіло попапа скролиться вбік ${body.scrollWidth}>${body.clientWidth}`);
+    for (const el of dlg.querySelectorAll('*')) {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height || el.closest('[hidden]') || el.closest('.qo-honeypot') || getComputedStyle(el).visibility === 'hidden') continue;
+      if (r.right > sr.right + 1.5 || r.left < sr.left - 1.5) issues.push(`${el.className || el.tagName} виходить за шторку`);
+    }
+    for (const sel of ['.qo-close', '.qo-size-guide', '.qo-sizehelper__toggle', '.qo-steps__back', '.qo-nearby', '.qo-choice', '.qo-segment__btn', '[data-qo-submit]']) {
+      for (const el of dlg.querySelectorAll(sel)) {
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height || el.closest('[hidden]') || el.hidden) continue;
+        if (r.height < 43.5 || r.width < 43.5) issues.push(`${sel} замалий для пальця: ${Math.round(r.width)}×${Math.round(r.height)}`);
+      }
+    }
+    return issues;
+  });
+  assert.deepEqual(await audit(), [], `крок 1 ${w}×${h}`);
+  await toContacts(page);
+  await page.fill('[data-qo-name]', 'Олена Коваль-Петренко');
+  await page.click('[data-qo-city]');
+  await page.keyboard.type('Черн');
+  await page.waitForSelector(options('city'));
+  await page.click(`${options('city')} >> nth=0`);
+  assert.deepEqual(await audit(), [], `контакти ${w}×${h}`);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
+// Свайп вниз під час відправки не лишає шторку зсунутою (закривати не можна, а зсув треба скинути)
+{
+  const { page, ctx } = await session('swipe-while-sending', { width: 390, height: 844 }, '?hour=12');
+  await open(page);
+  await basics(page);
+  await toContacts(page);
+  await page.fill('[data-qo-name]', 'Олена Коваль');
+  await page.click('[data-qo-submit]');
+  const cdp = await ctx.newCDPSession(page);
+  const g = await page.$eval('[data-qo-grabber]', (e) => { const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: g.x, y: g.y }] });
+  for (let i = 1; i <= 8; i += 1) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: g.x, y: g.y + i * 25 }] });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForTimeout(150);
+  assert.equal(await page.$eval('.qo-sheet', (e) => e.style.transform), '', 'шторка не зсунута');
+  await page.waitForSelector('.qo-success:not([hidden])', { timeout: 5000 });
+  await ctx.close();
+}
+
+// Подвійний і потрійний швидкий тап на «Замовити» = одне замовлення
+{
+  const { page, ctx, errors } = await session('triple-tap', { width: 390, height: 844 }, '?hour=12');
+  await open(page);
+  await basics(page);
+  await toContacts(page);
+  await page.fill('[data-qo-name]', 'Олена Коваль');
+  await page.evaluate(() => { const b = document.querySelector('[data-qo-submit]'); b.click(); b.click(); setTimeout(() => b.click(), 60); });
+  await page.waitForSelector('.qo-success:not([hidden])', { timeout: 5000 });
+  assert.equal(await page.evaluate(() => window.__orders.length), 1);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
 await browser.close();
 console.log('E2E: усе пройшло. Скріншоти:', shots);

@@ -153,14 +153,14 @@ html.qo-lock { overflow: hidden; }
 
 .qo-close {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 8px;
+  right: 8px;
   z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -237,7 +237,7 @@ html.qo-lock { overflow: hidden; }
 .qo-price__old { font-size: 13px; color: #999; }
 .qo-badge {
   padding: 2px 6px;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.04em;
   color: var(--qo-on-strong);
   background: var(--qo-strong);
@@ -252,7 +252,8 @@ html.qo-lock { overflow: hidden; }
 /* Кроки */
 .qo-steps { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 4px 0 0; position: relative; }
 .qo-steps__back {
-  flex: none; appearance: none; border: 0; background: none; padding: 6px 8px 6px 0;
+  /* Зона натискання 44px: відступи компенсуються від'ємними, тож верстка не змінюється */
+  flex: none; appearance: none; border: 0; background: none; padding: 15px 12px 15px 0; margin: -9px 0;
   font: inherit; font-size: 13px; color: var(--qo-ink); cursor: pointer;
 }
 .qo-steps__back[hidden] { display: none; }
@@ -303,6 +304,9 @@ html.qo-lock { overflow: hidden; }
 .qo-optional { text-transform: none; letter-spacing: 0; }
 .qo-size-guide {
   margin-left: auto;
+  padding: 15px 0 15px 12px;
+  margin-top: -15px;
+  margin-bottom: -15px;
   font-size: 12px;
   letter-spacing: 0;
   text-transform: none;
@@ -725,6 +729,8 @@ html.qo-lock { overflow: hidden; }
 .qo-combo__list[hidden] { display: none; }
 
 .qo-combo__opt {
+  min-height: 44px;
+  box-sizing: border-box;
   padding: 11px 12px;
   border-radius: calc(var(--qo-input-radius, var(--qo-radius)) - 1px);
   color: var(--qo-ink);
@@ -760,7 +766,7 @@ html.qo-lock { overflow: hidden; }
 /* Підбір розміру */
 .qo-sizehelper { margin-top: 10px; }
 .qo-sizehelper__toggle {
-  appearance: none; background: none; border: 0; padding: 0; cursor: pointer;
+  appearance: none; background: none; border: 0; padding: 15px 0; margin: -15px 0; cursor: pointer;
   font: inherit; font-size: 13px; color: var(--qo-ink);
   text-decoration: underline; text-underline-offset: 3px;
 }
@@ -821,6 +827,6 @@ html.qo-lock { overflow: hidden; }
 .qo-lastsize__pick { margin-left: auto; padding: 6px 14px; border: 0; border-radius: 999px; background: #111; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
 
 /* Найближчі відділення за геолокацією */
-.qo-nearby { margin-top: 8px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 14px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; text-align: left; }
+.qo-nearby { margin-top: -6px; margin-bottom: -14px; padding: 14px 0; border: 0; background: none; color: inherit; font: inherit; font-size: 14px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; text-align: left; }
 .qo-nearby[hidden] { display: none; }
 .qo-nearby:disabled { opacity: .6; cursor: default; }
