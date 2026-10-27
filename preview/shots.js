@@ -780,5 +780,98 @@ for (const [w, h] of [[320, 568], [360, 740], [390, 844], [430, 932], [568, 320]
   await ctx.close();
 }
 
+// Кнопка під тему вирівнюється ще до завантаження quick-order.js: на повільному зʼєднанні вона не «стрибає» (CLS = 0)
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'uk-UA' });
+  const page = await ctx.newPage();
+  await page.route('**/quick-order.js', async (route) => { await new Promise((r) => setTimeout(r, 1800)); await route.continue(); });
+  await page.addInitScript(() => {
+    window.__cls = 0; window.__early = null;
+    new PerformanceObserver((l) => { for (const e of l.getEntries()) if (!e.hadRecentInput) window.__cls += e.value; }).observe({ type: 'layout-shift', buffered: true });
+    new PerformanceObserver((l) => { for (const e of l.getEntries()) if (e.name === 'first-contentful-paint') window.__early = { t: Math.round(e.startTime), h: Math.round(document.querySelector('.qo-trigger').getBoundingClientRect().height) }; }).observe({ type: 'paint', buffered: true });
+  });
+  await page.goto(page_url('?hour=12'));
+  await page.waitForTimeout(400);
+  // JS ще не завантажено, а кнопка вже має розмір кнопки теми (56 px), а не типові 44
+  assert.equal(await page.evaluate(() => typeof window.__qoMatchTheme), 'function');
+  assert.equal(await page.$eval('.qo-trigger', (e) => Math.round(e.getBoundingClientRect().height)), 56);
+  await page.waitForTimeout(2600);
+  assert.equal(await page.$eval('.qo-trigger', (e) => Math.round(e.getBoundingClientRect().height)), 56);
+  assert.ok((await page.evaluate(() => window.__cls)) < 0.001, `CLS ${await page.evaluate(() => window.__cls)}`);
+  await open(page);
+  assert.equal(await page.isVisible('.qo-dialog.is-open'), true, 'попап відкривається після відкладеного завантаження скрипта');
+  await ctx.close();
+}
+
+// Старий вебоглядач без <dialog>.showModal(): попап усе одно відкривається, працює й закривається
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: 'uk-UA' });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.addInitScript(() => { delete HTMLDialogElement.prototype.showModal; delete HTMLDialogElement.prototype.close; });
+  await page.goto(page_url('?hour=12'));
+  await page.click('.qo-block .qo-trigger');
+  await page.waitForSelector('.qo-dialog.is-open');
+  assert.equal(await page.$eval('[data-qo-dialog]', (e) => e.hasAttribute('open')), true);
+  await basics(page);
+  await toContacts(page);
+  await page.fill('[data-qo-name]', 'Олена Коваль');
+  await page.click('[data-qo-submit]');
+  await page.waitForSelector('.qo-success:not([hidden])', { timeout: 5000 });
+  await page.click('[data-qo-close]');
+  await page.waitForFunction(() => !document.querySelector('[data-qo-dialog]').hasAttribute('open'));
+  assert.equal(await page.evaluate(() => document.documentElement.classList.contains('qo-lock')), false);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
+// Геолокація у вбудованому браузері: відповіді немає ніколи, кнопка сама повертається; запізніла відповідь нічого не ламає
+{
+  const { page, ctx, errors } = await session('geo-stuck', { width: 390, height: 844 }, '?hour=12');
+  await page.addInitScript(() => { navigator.geolocation.getCurrentPosition = () => {}; });
+  await page.reload();
+  await open(page);
+  await basics(page);
+  await pickCity(page);
+  await page.click(`${options('city')} >> nth=0`);
+  await page.waitForSelector('[data-qo-nearby]:not([hidden])');
+  await page.click('[data-qo-nearby]');
+  assert.equal(await page.$eval('[data-qo-nearby]', (e) => e.disabled), true);
+  await page.waitForTimeout(12600);
+  assert.equal(await page.$eval('[data-qo-nearby]', (e) => e.disabled), false, 'кнопка знову активна');
+  assert.match(await page.textContent('[data-qo-nearby]'), /Немає доступу до місця/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+{
+  const { page, ctx, errors } = await session('geo-late', { width: 390, height: 844 }, '?hour=12');
+  await page.addInitScript(() => { navigator.geolocation.getCurrentPosition = (ok) => setTimeout(() => ok({ coords: { latitude: 48.2921, longitude: 25.9351 } }), 700); });
+  await page.reload();
+  await open(page);
+  await basics(page);
+  await pickCity(page);
+  await page.click(`${options('city')} >> nth=0`);
+  await page.waitForSelector('[data-qo-nearby]:not([hidden])');
+  await page.click('[data-qo-nearby]');
+  await page.click('[data-qo-close]');
+  await page.waitForTimeout(1200);
+  assert.equal(await page.$eval('[data-qo-point]', (e) => e === document.activeElement), false, 'запізніла відповідь не забирає фокус');
+  assert.equal(await page.evaluate(() => window.__np.some((n) => n.lat)), false, 'запит зі старими координатами не надсилався');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
+// Автозаповнення телефону браузером у різних форматах
+for (const [typed, shown] of [['0671234567', '(67) 123 45 67'], ['+380671234567', '(67) 123 45 67'], ['380671234567', '(67) 123 45 67'], ['067 123-45-67', '(67) 123 45 67']]) {
+  const { page, ctx } = await session('autofill', { width: 390, height: 844 }, '?hour=12');
+  await open(page);
+  await basics(page, { phone: '' });
+  await toContacts(page);
+  await page.evaluate((v) => { const i = document.querySelector('[data-qo-phone]'); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); }, typed);
+  assert.equal(await page.inputValue('[data-qo-phone]'), shown, `автозаповнення «${typed}»`);
+  await ctx.close();
+}
+
 await browser.close();
 console.log('E2E: усе пройшло. Скріншоти:', shots);

@@ -71,6 +71,7 @@
 html.qo-lock { overflow: hidden; }
 
 .qo-dialog {
+  z-index: 2147483000; /* поверх теми, якщо <dialog> недоступний і верхнього шару немає */
   position: fixed;
   inset: 0;
   width: 100%;
@@ -88,16 +89,22 @@ html.qo-lock { overflow: hidden; }
 .qo-dialog:not([open]) { display: none; }
 .qo-dialog::backdrop {
   background: rgba(0, 0, 0, 0);
+  -webkit-backdrop-filter: blur(0);
   backdrop-filter: blur(0);
   transition: background-color 0.25s, backdrop-filter 0.25s;
 }
 .qo-dialog.is-open::backdrop {
   background: rgba(0, 0, 0, 0.42);
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
 
 .qo-sheet {
   position: absolute;
+  box-sizing: border-box;
+  /* Виріз екрана й заокруглені кути в ландшафті (якщо тема вмикає viewport-fit=cover): вміст не заходить під них */
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
   display: flex;
   flex-direction: column;
   background: var(--qo-bg);
@@ -126,6 +133,7 @@ html.qo-lock { overflow: hidden; }
     left: 0;
     right: 0;
     bottom: 0;
+    height: min(88vh, 720px); /* запасний варіант для вебоглядачів без dvh */
     height: min(88dvh, 720px);
     border-radius: var(--qo-radius) var(--qo-radius) 0 0;
     transform: translateY(100%);
@@ -154,7 +162,7 @@ html.qo-lock { overflow: hidden; }
 .qo-close {
   position: absolute;
   top: 8px;
-  right: 8px;
+  right: calc(8px + env(safe-area-inset-right, 0px));
   z-index: 2;
   display: flex;
   align-items: center;

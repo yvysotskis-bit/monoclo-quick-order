@@ -24,6 +24,111 @@
       {{- block.settings.label | escape -}}
     </button>
 
+    {%- comment -%}
+      Підгонка кнопки під тему виконується тут, під час розбору сторінки (до першого малювання), щоб кнопка не змінювала розмір
+      після завантаження quick-order.js. Повторні запуски (resize, редактор тем) викликає quick-order.js через window.__qoMatchTheme.
+    {%- endcomment -%}
+    <script>
+      (function () {
+        if (window.__qoMatchTheme) { window.__qoMatchTheme(); return; }
+        var REF_SELECTORS = [
+          'form[action*="/cart/add"] button[type="submit"]',
+          'form[action*="/cart/add"] [name="add"]',
+          '.product-form__submit',
+          'button[name="add"]'
+        ];
+
+        function parseRgb(value) {
+          var m = String(value).match(/rgba?\(([^)]+)\)/);
+          if (!m) return null;
+          var p = m[1].split(/[ ,\/]+/).filter(Boolean).map(parseFloat);
+          return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+        }
+
+        function isOpaque(c) { return c && c.a > 0.05; }
+
+        function onAccent(c) {
+          if (!c) return '#fff';
+          var lum = (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255;
+          return lum > 0.6 ? '#000' : '#fff';
+        }
+
+        function findReference(blocks) {
+          var triggerTop = blocks[0].querySelector('.qo-trigger').getBoundingClientRect().top;
+          var best = null;
+          var fallback = null;
+          REF_SELECTORS.forEach(function (selector) {
+            document.querySelectorAll(selector).forEach(function (node) {
+              if (node.closest('.qo-root, .qo-block')) return;
+              var rect = node.getBoundingClientRect();
+              if (rect.width < 40 || rect.height < 20) return;
+              fallback = fallback || node;
+              // Найближча основна кнопка над нашою
+              if (rect.bottom <= triggerTop + 1 && (!best || rect.bottom > best.getBoundingClientRect().bottom)) best = node;
+            });
+          });
+          return { style: best || fallback, above: best };
+        }
+
+        function matchTheme() {
+          var blocks = document.querySelectorAll('[data-qo-block]');
+          if (!blocks.length) return;
+          var ref = findReference(blocks);
+          if (!ref.style) return;
+
+          var cs = getComputedStyle(ref.style);
+          var rect = ref.style.getBoundingClientRect();
+          var bg = parseRgb(cs.backgroundColor);
+          var border = parseRgb(cs.borderTopColor);
+          var borderWidth = parseFloat(cs.borderTopWidth) || 0;
+          var text = parseRgb(cs.color);
+          var accent = isOpaque(bg) ? bg : (isOpaque(border) && borderWidth > 0 ? border : text);
+          var accentCss = accent
+            ? 'rgb(' + accent.r + ',' + accent.g + ',' + accent.b + ')'
+            : '#000';
+          var radius = parseFloat(cs.borderTopLeftRadius) || 0;
+          if (radius >= rect.height / 2) radius = 999;
+
+          var set = document.documentElement.style;
+          set.setProperty('--qo-btn-radius', radius + 'px');
+          set.setProperty('--qo-btn-border', Math.max(borderWidth, 1) + 'px');
+          set.setProperty('--qo-btn-font', cs.fontFamily);
+          set.setProperty('--qo-btn-weight', cs.fontWeight);
+          set.setProperty('--qo-btn-size', cs.fontSize);
+          set.setProperty('--qo-btn-spacing', cs.letterSpacing);
+          set.setProperty('--qo-btn-transform', cs.textTransform);
+          set.setProperty('--qo-btn-height', Math.round(Math.min(Math.max(rect.height, 40), 72)) + 'px');
+          set.setProperty('--qo-btn-accent', accentCss);
+          set.setProperty('--qo-btn-on-accent', onAccent(accent));
+          set.setProperty('--qo-input-radius', Math.min(radius, 12) + 'px');
+
+          fitSpacing(blocks, ref.above);
+        }
+
+        // Темам властивий великий відступ між блоками. Підтягуємо нашу кнопку до основної
+        // і вирівнюємо відступ із нижнім сусідом.
+        function fitSpacing(blocks, above) {
+          blocks.forEach(function (block) {
+            block.style.marginTop = '';
+            block.style.marginBottom = '';
+            if (block.dataset.qoAutofit !== 'true' || !above) return;
+            var trigger = block.querySelector('.qo-trigger');
+            var target = Number(block.dataset.qoGap);
+            if (isNaN(target)) target = 12;
+            var gap = trigger.getBoundingClientRect().top - above.getBoundingClientRect().bottom;
+            if (gap > target + 2 && gap < 220) {
+              var delta = Math.round(gap - target);
+              block.style.marginTop = -delta + 'px';
+              block.style.marginBottom = -delta + 'px';
+            }
+          });
+        }
+
+        window.__qoMatchTheme = matchTheme;
+        matchTheme();
+      })();
+    </script>
+
 
     {%- if request.design_mode -%}
       <p class="qo-editor-note" data-qo-editor-note hidden>

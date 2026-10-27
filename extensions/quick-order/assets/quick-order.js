@@ -61,12 +61,16 @@
     return s;
   }
 
+  // Форматувальники Intl створюються один раз: їх створення коштує кілька мілісекунд на телефоні, а money() викликається
+  // десятки разів на кожне відкриття й зміну варіанта
+  var moneyFormat = null;
   function money(cents, currency) {
     var code = currency || 'UAH';
     try {
-      var n = new Intl.NumberFormat('uk-UA', {
+      moneyFormat = moneyFormat || new Intl.NumberFormat('uk-UA', {
         minimumFractionDigits: 0, maximumFractionDigits: 2
-      }).format(cents / 100);
+      });
+      var n = moneyFormat.format(cents / 100);
       return code === 'UAH' ? n + '\u00a0₴' : n + '\u00a0' + code;
     } catch (e) {
       return (cents / 100) + ' ' + code;
@@ -93,9 +97,11 @@
     return null;
   }
 
+  var hourFormats = {};
   function hourIn(tz, date) {
     try {
-      return Number(new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' }).format(date));
+      var format = hourFormats[tz] || (hourFormats[tz] = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' }));
+      return Number(format.format(date));
     } catch (e) {
       return date.getHours();
     }
@@ -266,7 +272,7 @@
     quickJson('/ab?vid=' + encodeURIComponent(ab.vid)).then(function (data) {
       if (!data || !data.variants) return;
       ab.variants = data.variants;
-      if (state && dialog && dialog.open) refresh();
+      if (state && dialog && dialogOpen()) refresh();
     });
   }
 
@@ -282,6 +288,18 @@
   var productCache = {};
 
   function $(selector) { return dialog.querySelector(selector); }
+
+  // <dialog> є не всюди (iOS до 15.4 та старі вебоглядачі): без нього showModal() кидав би помилку, а кнопка мовчала б.
+  // Запасний варіант: атрибут open (панель лишається position: fixed поверх сторінки)
+  function dialogOpen() { return Boolean(dialog) && (dialog.open === true || dialog.hasAttribute('open')); }
+  function openDialog() {
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+  }
+  function closeDialog() {
+    if (typeof dialog.close === 'function') dialog.close();
+    else dialog.removeAttribute('open');
+  }
 
   function init() {
     dialog = document.querySelector('[data-qo-dialog]');
@@ -406,7 +424,7 @@
     });
     // Зміна розміру вікна між телефоном і комп'ютером
     window.matchMedia('(min-width: 641px)').addEventListener('change', function () {
-      if (dialog.open && state) showStep(state.step, false);
+      if (dialogOpen() && state) showStep(state.step, false);
     });
     refs.editData.addEventListener('click', function () { showStep(2, true); });
     // Поле у фокусі завжди прокручується в видиму зону над клавіатурою
@@ -415,7 +433,7 @@
       var field = e.target.closest && e.target.closest('.qo-field');
       if (!field) return;
       setTimeout(function () {
-        if (dialog.open && document.activeElement === e.target) field.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        if (dialogOpen() && document.activeElement === e.target) field.scrollIntoView({ block: 'center', behavior: 'smooth' });
       }, 320);
     });
 
@@ -485,7 +503,7 @@
     if (afterHours) refs.hoursNote.textContent = hoursText();
 
     dialog.classList.remove('is-success', 'is-open');
-    dialog.showModal();
+    openDialog();
     watchViewport(true);
     pushHistory(1);
     document.documentElement.classList.add('qo-lock');
@@ -497,7 +515,7 @@
     if (isDesktop()) {
       // Курсор одразу в першому порожньому полі: можна одразу писати
       setTimeout(function () {
-        if (!dialog.open) return;
+        if (!dialogOpen()) return;
         var target = optionMissing() ? refs.options.querySelector('.qo-choice[tabindex="0"], .qo-choice') : (refs.name.value.trim() ? (digits().length === 9 ? null : refs.phone) : refs.name);
         if (target) target.focus({ preventScroll: true });
       }, 320);
@@ -529,12 +547,12 @@
   }
 
   function close() {
-    if (!dialog || !dialog.open || (state && state.submitting)) return;
+    if (!dialog || !dialogOpen() || (state && state.submitting)) return;
     popHistory();
     dialog.classList.remove('is-open');
     var finish = function () {
       watchViewport(false);
-      if (dialog.open) dialog.close();
+      if (dialogOpen()) closeDialog();
       document.documentElement.classList.remove('qo-lock');
       sheet.style.transform = '';
       var trigger = state && state.trigger;
@@ -998,7 +1016,7 @@
 
   window.addEventListener('popstate', function () {
     if (ignorePop) { ignorePop = false; return; }
-    if (!dialog || !dialog.open) { historyDepth = 0; return; }
+    if (!dialog || !dialogOpen()) { historyDepth = 0; return; }
     if (state && state.step === 2 && historyDepth >= 2) {
       historyDepth = 1;
       showStep(1, false);
@@ -1208,18 +1226,37 @@
     var label = btn.textContent;
     btn.addEventListener('click', function () {
       if (!deliveryActive() || state.delivery.method === 'courier') return;
+      var forState = state;
+      var finished = false;
+      var settle = function () {
+        finished = true;
+        clearTimeout(watchdog);
+        btn.disabled = false;
+      };
+      // У вбудованих браузерах (Instagram, Facebook, Telegram) запит дозволу може не показатися й жодна відповідь не прийти:
+      // тайм-аут геолокації рахується лише після дозволу. Тож кнопка сама повертається в робочий стан через 12 с
+      var watchdog = setTimeout(function () {
+        if (finished) return;
+        settle();
+        btn.textContent = 'Немає доступу до місця. Знайдіть за номером чи адресою';
+        setTimeout(function () { btn.textContent = label; }, 4000);
+      }, 12000);
       btn.disabled = true;
       btn.textContent = 'Визначаємо місце…';
       navigator.geolocation.getCurrentPosition(function (pos) {
-        btn.disabled = false;
+        if (finished) return;
+        settle();
         btn.textContent = label;
+        // Запізніла відповідь не має чіпати інше замовлення чи закритий попап
+        if (state !== forState || !dialogOpen() || state.delivery.method === 'courier') return;
         // Округлюємо до ~10 м: точніше для сортування не потрібно
         state.nearby = { lat: pos.coords.latitude.toFixed(4), lon: pos.coords.longitude.toFixed(4) };
         state.delivery.point = null;
         if (refs.point) refs.point.value = '';
         refs.pointCombo.open();
       }, function () {
-        btn.disabled = false;
+        if (finished) return;
+        settle();
         btn.textContent = 'Немає доступу до місця. Знайдіть за номером чи адресою';
         setTimeout(function () { btn.textContent = label; }, 4000);
       }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 });
@@ -1767,7 +1804,7 @@
         sheet.classList.remove('is-dragging');
         if (dy > 90) close();
         // close() не закриває шторку під час відправки: без скидання вона лишилась би зсунутою вниз
-        if (dialog.open) sheet.style.transform = '';
+        if (dialogOpen()) sheet.style.transform = '';
       };
       handle.addEventListener('touchend', end);
       handle.addEventListener('touchcancel', end);
@@ -1792,6 +1829,19 @@
     document.addEventListener(name, warm, { passive: true, capture: true });
   });
 
+  // У вільний момент після завантаження прогріваємо те, що дорого створювати вперше (ініціалізація попапа, форматувальники Intl):
+  // інакше ця робота лягає на перший тап по кнопці й затримує відкриття, особливо на слабких телефонах
+  function idle(fn) {
+    if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(fn, { timeout: 4000 });
+    else setTimeout(fn, 2000);
+  }
+  idle(function () {
+    try {
+      init();
+      if (cfg) { hourIn(cfg.tz, new Date()); money(0, 'UAH'); }
+    } catch (err) { /* прогрів не критичний */ }
+  });
+
   document.addEventListener('click', function (e) {
     var trigger = e.target.closest && e.target.closest('[data-qo-open]');
     if (!trigger) return;
@@ -1802,99 +1852,12 @@
 
   /* ---------- Підгонка під тему ---------- */
 
-  // Копіюємо вигляд кнопки «Додати до кошика»: форму, рамку, шрифт, висоту.
-  // Так кнопка швидкого замовлення виглядає рідною в будь-якій темі.
-  var REF_SELECTORS = [
-    'form[action*="/cart/add"] button[type="submit"]',
-    'form[action*="/cart/add"] [name="add"]',
-    '.product-form__submit',
-    'button[name="add"]'
-  ];
-
-  function parseRgb(value) {
-    var m = String(value).match(/rgba?\(([^)]+)\)/);
-    if (!m) return null;
-    var p = m[1].split(/[ ,\/]+/).filter(Boolean).map(parseFloat);
-    return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
-  }
-
-  function isOpaque(c) { return c && c.a > 0.05; }
-
-  function onAccent(c) {
-    if (!c) return '#fff';
-    var lum = (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255;
-    return lum > 0.6 ? '#000' : '#fff';
-  }
-
-  function findReference(blocks) {
-    var triggerTop = blocks[0].querySelector('.qo-trigger').getBoundingClientRect().top;
-    var best = null;
-    var fallback = null;
-    REF_SELECTORS.forEach(function (selector) {
-      document.querySelectorAll(selector).forEach(function (node) {
-        if (node.closest('.qo-root, .qo-block')) return;
-        var rect = node.getBoundingClientRect();
-        if (rect.width < 40 || rect.height < 20) return;
-        fallback = fallback || node;
-        // Найближча основна кнопка над нашою
-        if (rect.bottom <= triggerTop + 1 && (!best || rect.bottom > best.getBoundingClientRect().bottom)) best = node;
-      });
-    });
-    return { style: best || fallback, above: best };
-  }
-
+  // Сама підгонка (вигляд кнопки «Додати до кошика» → кнопка швидкого замовлення) живе в інлайн-скрипті блоку кнопки
+  // (blocks/quick-order-button.liquid): він виконується під час розбору сторінки, до першого малювання, тому кнопка
+  // не змінює розмір після завантаження цього файлу (інакше на повільному зʼєднанні вона помітно «стрибає», а все нижче зсувається).
+  // Тут лише повторні запуски, коли тема змінює розмітку чи розмір вікна.
   function matchTheme() {
-    var blocks = document.querySelectorAll('[data-qo-block]');
-    if (!blocks.length) return;
-    var ref = findReference(blocks);
-    if (!ref.style) return;
-
-    var cs = getComputedStyle(ref.style);
-    var rect = ref.style.getBoundingClientRect();
-    var bg = parseRgb(cs.backgroundColor);
-    var border = parseRgb(cs.borderTopColor);
-    var borderWidth = parseFloat(cs.borderTopWidth) || 0;
-    var text = parseRgb(cs.color);
-    var accent = isOpaque(bg) ? bg : (isOpaque(border) && borderWidth > 0 ? border : text);
-    var accentCss = accent
-      ? 'rgb(' + accent.r + ',' + accent.g + ',' + accent.b + ')'
-      : '#000';
-    var radius = parseFloat(cs.borderTopLeftRadius) || 0;
-    if (radius >= rect.height / 2) radius = 999;
-
-    var set = document.documentElement.style;
-    set.setProperty('--qo-btn-radius', radius + 'px');
-    set.setProperty('--qo-btn-border', Math.max(borderWidth, 1) + 'px');
-    set.setProperty('--qo-btn-font', cs.fontFamily);
-    set.setProperty('--qo-btn-weight', cs.fontWeight);
-    set.setProperty('--qo-btn-size', cs.fontSize);
-    set.setProperty('--qo-btn-spacing', cs.letterSpacing);
-    set.setProperty('--qo-btn-transform', cs.textTransform);
-    set.setProperty('--qo-btn-height', Math.round(Math.min(Math.max(rect.height, 40), 72)) + 'px');
-    set.setProperty('--qo-btn-accent', accentCss);
-    set.setProperty('--qo-btn-on-accent', onAccent(accent));
-    set.setProperty('--qo-input-radius', Math.min(radius, 12) + 'px');
-
-    fitSpacing(blocks, ref.above);
-  }
-
-  // Темам властивий великий відступ між блоками. Підтягуємо нашу кнопку до основної
-  // і вирівнюємо відступ із нижнім сусідом.
-  function fitSpacing(blocks, above) {
-    blocks.forEach(function (block) {
-      block.style.marginTop = '';
-      block.style.marginBottom = '';
-      if (block.dataset.qoAutofit !== 'true' || !above) return;
-      var trigger = block.querySelector('.qo-trigger');
-      var target = Number(block.dataset.qoGap);
-      if (isNaN(target)) target = 12;
-      var gap = trigger.getBoundingClientRect().top - above.getBoundingClientRect().bottom;
-      if (gap > target + 2 && gap < 220) {
-        var delta = Math.round(gap - target);
-        block.style.marginTop = -delta + 'px';
-        block.style.marginBottom = -delta + 'px';
-      }
-    });
+    if (typeof window.__qoMatchTheme === 'function') window.__qoMatchTheme();
   }
 
   var themeTimer;
@@ -1940,7 +1903,7 @@
       var schedule = function (delay) {
         timer = setTimeout(function () {
           if (done || shown >= 3 || loops++ > 30) return;
-          var modalOpen = dialog && dialog.open;
+          var modalOpen = dialog && dialogOpen();
           if (visible && !modalOpen && !document.hidden) {
             shown += 1;
             btn.classList.remove('is-nudging');
