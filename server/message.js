@@ -35,6 +35,16 @@ export function describeDelivery(delivery) {
   return lines;
 }
 
+// Короткий текст, який менеджер копіює одним дотиком і надсилає клієнту
+export function buildGreeting(o) {
+  const brand = o.brandName || 'Monoclo';
+  if (o.kind === 'custom') {
+    return `Добрий день! Це ${brand} 🖤 Дякуємо за заявку на свій принт. Надішліть, будь ласка, зображення та побажання - підготуємо ескіз і уточнимо ціну.`;
+  }
+  const item = [o.productTitle, ...o.options.map((p) => p.value)].filter(Boolean).join(', ');
+  return `Добрий день! Це ${brand} 🖤 Дякуємо за замовлення: ${item}, ${formatMoney(o.totalCents, o.currency)}. Підтвердіть, будь ласка, що дані доставки вірні - і ми все оформимо.`;
+}
+
 export function buildOrderMessage(o) {
   const lines = [
     `<b>${o.kind === 'custom' ? '🎨 Свій принт · заявка' : '🛍 Швидке замовлення'} #${escapeHtml(o.orderNumber)}</b>${o.brandName ? ` · <b>${escapeHtml(o.brandName)}</b>` : ''}`,
@@ -65,6 +75,7 @@ export function buildOrderMessage(o) {
       ? '💰 Оплачено сертифікатом на виріб - доплата лише за дорожчий виріб'
       : '💰 Ціна орієнтовна - уточніть після ескізу');
   }
+  lines.push('', 'Привітання клієнту (натисніть, щоб скопіювати):', `<code>${escapeHtml(buildGreeting(o))}</code>`);
   const source = describeSource(o);
   lines.push('', `📈 ${source ? escapeHtml(source) : 'прямий візит'}`, o.brandTag || '#Monoclo');
   return lines.join('\n');

@@ -99,3 +99,15 @@ test('зріст і вага з підбору розміру: валідуют�
   assert.match(text, /📏 Зріст 180 см, вага 75 кг/);
   assert.match(text, /Іван Петренко/);
 });
+
+test('картка замовлення містить привітання для клієнта в <code> (копіюється дотиком)', () => {
+  const text = buildOrderMessage({
+    orderNumber: '1', when: 'now', productTitle: 'Худі <Test>', options: [{ name: 'Розмір', value: 'L' }],
+    quantity: 1, totalCents: 189900, currency: 'UAH', name: 'А', phone: '+380661234567',
+  });
+  const m = text.match(/<code>([^<]*)<\/code>/);
+  assert.ok(m, 'є блок <code>');
+  assert.match(m[1], /Це Monoclo/);
+  assert.match(m[1], /Худі &lt;Test&gt;, L/);
+  assert.match(m[1], /1\s?899/);
+});
