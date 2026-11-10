@@ -1101,6 +1101,8 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       payments: store.paidSince(nowMs - DAY_MS),
       counts: store.digestCounts({
         since: nowMs - 30 * DAY_MS,
+        // «Оплачено без ТТН» має сенс лише для свіжих замовлень: старі давно відправлені поза ботом
+        ttnSince: nowMs - 14 * DAY_MS,
         payValidSince: nowMs - config.payValiditySeconds * 1000,
         storageBy: dateKey(new Date(nowMs + DAY_MS), config.timezone),
       }),

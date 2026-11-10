@@ -686,13 +686,15 @@ export class Store {
   }
 
   // Що зараз чекає на менеджера: для ранкового зведення
-  digestCounts({ since, payValidSince, storageBy }) {
+  digestCounts({ since, payValidSince, storageBy, ttnSince }) {
     const n = (sql, ...params) => this.db.prepare(sql).get(...params).n;
     return {
       unanswered: n("SELECT COUNT(*) AS n FROM orders WHERE status = 'new' AND tg_state = 'sent' AND created_at >= ?", since),
       awaitingPayment: n("SELECT COUNT(DISTINCT order_id) AS n FROM payments WHERE status IN ('created', 'processing') AND created_at >= ?", payValidSince),
-      paidNoTtn: n(`SELECT COUNT(*) AS n FROM orders o WHERE o.ttn_number IS NULL AND o.status NOT IN ('spam', 'cancelled', 'shipped') AND o.created_at >= ?
-        AND EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id AND p.status = 'success')`, since),
+      // conv_at означає, що в KeyCRM у замовлення вже є і оплата, і трек-номер (ТТН створили не через бота)
+      paidNoTtn: n(`SELECT COUNT(*) AS n FROM orders o WHERE o.ttn_number IS NULL AND o.conv_at IS NULL
+        AND o.status NOT IN ('spam', 'cancelled', 'shipped') AND o.created_at >= ?
+        AND EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id AND p.status = 'success')`, ttnSince ?? since),
       atBranch: n("SELECT COUNT(*) AS n FROM orders WHERE np_status_code IN ('7', '8') AND created_at >= ?", since),
       storageSoon: n("SELECT COUNT(*) AS n FROM orders WHERE np_status_code IN ('7', '8') AND np_paid_from != '' AND np_paid_from <= ? AND created_at >= ?", storageBy, since),
     };

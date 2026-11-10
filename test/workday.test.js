@@ -136,3 +136,17 @@ test('пробний віджет: у межах лімітів Telegram; /widge
   await say(app, '/widget');
   assert.equal(fetchFn.tg('sendWidget').length, 1);
 });
+
+test('зведення: «оплачено без ТТН» не рахує замовлення з ТТН у KeyCRM і старші за 14 днів', async () => {
+  const { app, store, now } = makeApp({ cfg: { monobankToken: 'M', publicUrl: 'https://qo.test' } });
+  await submit(app, goodBody());
+  const id = store.insertPayment({ orderId: 1, invoiceId: 'i1', amount: 20000, kind: 'prepay', url: 'u', createdBy: 'x', createdAt: now().getTime() });
+  store.setPaymentStatus(id, 'success', now().getTime());
+  const count = () => store.digestCounts({ since: 0, payValidSince: 0, storageBy: '2099-01-01', ttnSince: now().getTime() - 14 * 24 * 3600e3 }).paidNoTtn;
+  assert.equal(count(), 1);
+  now.advance(15 * 24 * 3600e3);
+  assert.equal(count(), 0, 'старе замовлення');
+  now.advance(-15 * 24 * 3600e3);
+  store.markConversion(1, now().getTime(), 189900);
+  assert.equal(count(), 0, 'у KeyCRM уже є оплата і ТТН');
+});
