@@ -873,5 +873,25 @@ for (const [typed, shown] of [['0671234567', '(67) 123 45 67'], ['+380671234567'
   await ctx.close();
 }
 
+// Воронка форми: анонімні події «відкрили / дійшли до контактів / на чому закрили», кожна раз за відкриття
+{
+  const { page, ctx, errors } = await session('funnel', { width: 390, height: 844 }, '?hour=12');
+  await open(page);
+  await page.click('[data-qo-close]');
+  await page.waitForTimeout(500);
+  assert.deepEqual(await page.evaluate(() => window.__events), ['open', 'close_options'], 'закрили, не обравши варіант');
+  await page.evaluate(() => { window.__events.length = 0; });
+  await open(page);
+  await page.click('.qo-choice[data-qo-value="Чорний"]');
+  await page.click('.qo-choice[data-qo-value="M"]');
+  await toContacts(page);
+  await page.click('[data-qo-close]');
+  await page.waitForTimeout(500);
+  assert.deepEqual(await page.evaluate(() => window.__events), ['open', 'step2', 'close_contacts'], 'закрили на контактах');
+  assert.equal(await page.evaluate(() => window.__orders.length), 0, 'події воронки не створюють замовлень');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
 await browser.close();
 console.log('E2E: усе пройшло. Скріншоти:', shots);

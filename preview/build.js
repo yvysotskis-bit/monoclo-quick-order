@@ -120,6 +120,7 @@ const mock = `<script>
   };
   window.__np = [];
   window.__calls = [];
+  window.__events = [];
   function np(url) {
     var u = new URL(url, location.href);
     var kind = u.pathname.split('/np/')[1];
@@ -148,6 +149,7 @@ const mock = `<script>
     var path = String(url).split('?')[0];
     var json = function (data) { return Promise.resolve(new Response(JSON.stringify(data), { status: 200 })); };
     window.__calls.push(String(url));
+    if (path.slice(-6) === '/event') { window.__events.push(JSON.parse(init.body).event); return json({ ok: true }); }
     if (path.slice(-3) === '/ab') return json({ ok: true, variants: q.get('ab') ? { cta: q.get('ab') } : {} });
     if (path.slice(-5) === '/size') return json(q.get('hist') ? { ok: true, size: 'L', share: 83, n: 24 } : { ok: true, size: null });
     if (path.slice(-9) === '/lastsize') return json({ ok: true, sizes: q.get('last') ? { tee: q.get('last') } : {} });

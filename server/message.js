@@ -42,7 +42,26 @@ export function buildGreeting(o) {
     return `Добрий день! Це ${brand} 🖤 Дякуємо за заявку на свій принт. Надішліть, будь ласка, зображення та побажання - підготуємо ескіз і уточнимо ціну.`;
   }
   const item = [o.productTitle, ...o.options.map((p) => p.value)].filter(Boolean).join(', ');
-  return `Добрий день! Це ${brand} 🖤 Дякуємо за замовлення: ${item}, ${formatMoney(o.totalCents, o.currency)}. Підтвердіть, будь ласка, що дані доставки вірні - і ми все оформимо.`;
+  // Постійному клієнту - тепліше; нічне замовлення менеджер бачить уранці, тож вибачаємось за паузу
+  const hello = o.repeat?.count > 0 ? `Добрий день! Це ${brand} 🖤 Раді бачити вас знову!` : `Добрий день! Це ${brand} 🖤`;
+  const late = o.afterHours ? ' Вибачте, що відповідаємо не одразу: замовлення надійшло поза робочим часом.' : '';
+  return `${hello}${late} Дякуємо за замовлення: ${item}, ${formatMoney(o.totalCents, o.currency)}. Підтвердіть, будь ласка, що дані доставки вірні - і ми все оформимо.`;
+}
+
+// Готові тексти для клієнта на наступних кроках: менеджер копіює одним дотиком
+export const clientTextBlock = (label, text) => [`${label} (натисніть, щоб скопіювати):`, `<code>${escapeHtml(text)}</code>`];
+
+export function buildShippedText({ number, codUah = 0, brand = 'Monoclo' }) {
+  const pay = codUah > 0 ? ` До сплати при отриманні: ${formatMoney(Math.round(codUah * 100))}.` : '';
+  return `Ваше замовлення ${brand} відправлено Новою поштою 🚚 Номер накладної: ${number}.${pay} Відстежити можна в застосунку Нової пошти. Дякуємо, що обрали нас 🖤`;
+}
+
+export function buildReceivedMessage({ orderNumber, name, brand = 'Monoclo' }) {
+  const text = `Добрий день! Це ${brand} 🖤 Бачимо, що ви вже отримали замовлення. Чи все підійшло? Будемо дуже вдячні за короткий відгук або фото - це допомагає нам ставати кращими.`;
+  return [
+    `✅ Посилку за замовленням #${escapeHtml(orderNumber)} отримано${name ? ` (${escapeHtml(name)})` : ''}.`,
+    ...clientTextBlock('Прохання про відгук', text),
+  ].join('\n');
 }
 
 export function buildOrderMessage(o) {
@@ -61,6 +80,9 @@ export function buildOrderMessage(o) {
     `👤 ${escapeHtml([o.name, o.surname].filter(Boolean).join(' '))}`,
     `📞 ${escapeHtml(o.phone)}`,
   );
+  if (o.repeat?.count > 0) {
+    lines.push(`🔁 Постійний клієнт: замовлення №${o.repeat.count + 1}${o.repeat.lastSize ? ` · минулого разу розмір ${escapeHtml(o.repeat.lastSize)}` : ''}`);
+  }
   const delivery = describeDelivery(o.delivery);
   if (delivery.length) lines.push(...delivery.map(escapeHtml));
   else if (o.city) lines.push(`📍 ${escapeHtml(o.city)}`);
@@ -249,7 +271,7 @@ export function buildReminder(orderNumber, minutes) {
 }
 
 // paidFromKey — «РРРР-ММ-ДД»; today — «РРРР-ММ-ДД» за київським часом
-export function buildStorageReminder({ orderNumber, ttn, paidFromKey, todayKey, name, phone }) {
+export function buildStorageReminder({ orderNumber, ttn, paidFromKey, todayKey, name, phone, brand = 'Monoclo' }) {
   const [y, m, d] = paidFromKey.split('-');
   const when = paidFromKey > todayKey ? `платне зберігання почнеться <b>${d}.${m}.${y}</b>`
     : paidFromKey === todayKey ? '<b>сьогодні</b> починається платне зберігання'
@@ -257,6 +279,7 @@ export function buildStorageReminder({ orderNumber, ttn, paidFromKey, todayKey, 
   return [
     `📮 Посилка за замовленням #${escapeHtml(orderNumber)} (ТТН <code>${escapeHtml(ttn)}</code>) чекає у відділенні: ${when}.`,
     `Напишіть клієнту: ${escapeHtml(name)}, ${escapeHtml(phone)}.`,
+    ...clientTextBlock('Текст клієнту', `Добрий день! Це ${brand} 🖤 Ваша посилка (накладна ${ttn}) чекає у відділенні Нової пошти. ${paidFromKey > todayKey ? `З ${d}.${m} там починається платне зберігання` : 'Там уже нараховується платне зберігання'} - заберіть її, будь ласка, найближчим часом.`),
   ].join('\n');
 }
 
@@ -265,7 +288,7 @@ export const ttnKeyboard = (orderId) => ({
   inline_keyboard: [[{ text: '📦 Створити ТТН', callback_data: `ttn:${orderId}` }]],
 });
 
-export function buildTtnMessage({ orderNumber, number, codUah, costUah, address, tracked, unpaidUah = 0, statusFailed = false, deliveryUah = 0, warnings = [], senderPays = false }) {
+export function buildTtnMessage({ orderNumber, number, codUah, costUah, address, tracked, unpaidUah = 0, statusFailed = false, deliveryUah = 0, warnings = [], senderPays = false, brand = 'Monoclo' }) {
   const lines = [`📦 <b>ТТН Нової пошти створено: <code>${escapeHtml(number)}</code></b> · замовлення #${escapeHtml(orderNumber)}`];
   if (address) lines.push(escapeHtml(address));
   lines.push(`Оголошена вартість: ${escapeHtml(formatMoney(Math.round(costUah * 100)))}`);
@@ -280,6 +303,7 @@ export function buildTtnMessage({ orderNumber, number, codUah, costUah, address,
   }
   lines.push(tracked ? '✅ Номер записано в KeyCRM.' : '⚠️ Номер не вдалося записати в KeyCRM, додайте його вручну.');
   if (statusFailed) lines.push('⚠️ Не вдалося змінити статус у KeyCRM, змініть його вручну.');
+  lines.push('', ...clientTextBlock('Текст клієнту', buildShippedText({ number, codUah: unpaidUah > 0 ? 0 : codUah, brand })));
   return lines.join('\n');
 }
 

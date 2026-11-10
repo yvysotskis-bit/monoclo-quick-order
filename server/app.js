@@ -6,7 +6,7 @@ import { createCertificates } from './certificates.js';
 import { fetchProduct, optionPairs } from './shopify-product.js';
 import { createTelegram } from './telegram.js';
 import { createBackup } from './backup.js';
-import { createSizeAdvisor } from './sizes.js';
+import { createSizeAdvisor, sizeOf } from './sizes.js';
 import { createExperiments } from './experiments.js';
 import { createKeycrm } from './keycrm.js';
 import { createNovaPoshta, npDateKey } from './novaposhta.js';
@@ -17,6 +17,7 @@ import {
   dateKey,
   effectiveStart,
   formatDateTime,
+  formatDayMonth,
   formatTime,
   hourOf,
   isWorkingTime,
@@ -26,6 +27,7 @@ import {
 import {
   STATUS_KEYS,
   applyStatus,
+  escapeHtml,
   buildOrderMessage,
   buildAmountPrompt,
   buildPaidMessage,
@@ -45,17 +47,21 @@ import {
   PAYMENT_KIND,
   buildReminder,
   buildStorageReminder,
+  buildReceivedMessage,
   newOrderKeyboard,
   viberLink,
   statusKeyboard,
 } from './message.js';
-import { buildWeeklyReport } from './report.js';
+import { buildDigestWidget } from './widget.js';
+import { buildAbReport, buildDailyDigest, buildFunnelReport, buildWeeklyReport } from './report.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
 const PROXY_MAX_AGE_SEC = 10 * 60;
 const DUPLICATE_WINDOW_MS = 5 * 60 * 1000;
 const STUCK_ALERT_SEC = 10 * 60;
 const PROMPT_TTL_MS = 30 * 60 * 1000;
+// Події воронки форми, які приймає /proxy/event
+const FUNNEL_EVENTS = ['open', 'step2', 'submit', 'close_options', 'close_contacts', 'close_delivery', 'close_ready'];
 const STATUS_ACTION = new RegExp(`^st:(${[...STATUS_KEYS, 'reset'].join('|')})$`);
 
 class HttpError extends Error {
@@ -171,8 +177,11 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     return once('tg', order.id, async () => {
       const d = order.data;
       const delayed = now().getTime() - order.created_at > 2 * 60_000;
+      // Постійний клієнт: скільки замовлень цього номера вже було і який розмір брали минулого разу
+      const earlier = d.phone ? store.customerHistory(d.phone, order.id) : [];
       const text = buildOrderMessage({
         ...d,
+        repeat: earlier.length ? { count: earlier.length, lastSize: earlier.map(sizeOf).find(Boolean) || '' } : null,
         orderNumber: order.order_number,
         when: formatDateTime(new Date(order.created_at), config.timezone),
         delayed,
@@ -559,10 +568,35 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     }
   }
 
+  // Команди менеджера в робочій групі: /digest, /ab, /funnel, /widget
+  async function managerCommand(m) {
+    const match = /^\/(digest|ab|funnel|widget)(?:@\w+)?(?:\s+(\d+))?\s*$/i.exec(String(m.text || '').trim());
+    if (!match) return false;
+    const cmd = match[1].toLowerCase();
+    const reply = (text) => telegram.sendText(text, { replyTo: m.message_id });
+    if (cmd === 'digest') await reply(dailyDigestText(now()));
+    if (cmd === 'ab') await reply(buildAbReport(experiments.enabled ? experiments.summary() : []));
+    if (cmd === 'funnel') {
+      const days = Math.min(Math.max(Number(match[2]) || 7, 1), 90);
+      await reply(buildFunnelReport(store.funnelSince(dateKey(new Date(now().getTime() - (days - 1) * 24 * 3600e3), config.timezone)), days));
+    }
+    if (cmd === 'widget') {
+      // Пробний віджет (новий формат Telegram): якщо бот чи застосунок його ще не підтримує, пояснюємо це текстом
+      try {
+        await telegram.sendWidget(buildDigestWidget(dailyDigestText(now())));
+      } catch (err) {
+        log.error('widget pilot failed', err.message);
+        await reply(`Віджети для цього бота поки недоступні: ${escapeHtml(err.message)}`);
+      }
+    }
+    return true;
+  }
+
   async function handleTelegramUpdate(update) {
     if (update.message) {
       // Менеджер написав у групі код сертифіката - відповідаємо станом і кнопкою погашення
       const m = update.message;
+      if (String(m.chat?.id) === telegram.chatId && !m.from?.is_bot && await managerCommand(m)) return { ok: true };
       if (String(m.chat?.id) === telegram.chatId && !m.reply_to_message && !m.from?.is_bot && await certificates.lookupMessage(m)) return { ok: true };
       // Відповідь менеджера на прохання ввести суму
       return amountReply(m);
@@ -865,6 +899,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
           address: describeDelivery(order.data.delivery).join('\n'),
           tracked,
           statusFailed,
+          brand: order.data.brandName || undefined,
         }), { replyTo });
       } catch (err) {
         log.error('ttn notice failed', err.message);
@@ -992,6 +1027,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
   const NP_FINAL_CODES = ['2', '9', '10', '11', '102', '103', '105', '106'];
   const NP_TRACK_MAX_AGE_MS = 60 * 24 * 3600e3;
   const NP_AT_BRANCH = ['7', '8'];
+  const NP_RECEIVED = ['9', '10', '11'];
   const TRACK_EVERY_MS = 30 * 60_000;
   async function trackParcels(date) {
     if (!novaPoshta) return;
@@ -1010,12 +1046,21 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       if (!order) continue;
       const code = String(row.StatusCode ?? '').trim();
       const paidFrom = npDateKey(row.DatePayedKeeping);
+      const justReceived = NP_RECEIVED.includes(code) && !NP_RECEIVED.includes(order.np_status_code || '');
       if (code !== (order.np_status_code || '') || paidFrom !== (order.np_paid_from || '')) store.setNpTracking(order.id, code, paidFrom);
+      // Клієнт забрав посилку: менеджеру готовий текст із проханням про відгук (один раз, у момент зміни статусу)
+      if (justReceived && config.reviewAsk !== false) {
+        await telegram.sendText(buildReceivedMessage({
+          orderNumber: order.order_number, name: [order.data.name, order.data.surname].filter(Boolean).join(' '),
+          brand: order.data.brandName || undefined,
+        }), { replyTo: order.tg_message_id || undefined }).catch((err) => log.error('review ask failed', err.message));
+      }
       if (NP_AT_BRANCH.includes(code) && paidFrom && paidFrom <= tomorrow && !order.np_storage_notified) {
         try {
           await telegram.sendText(buildStorageReminder({
             orderNumber: order.order_number, ttn: order.ttn_number, paidFromKey: paidFrom, todayKey: today,
             name: [order.data.name, order.data.surname].filter(Boolean).join(' '), phone: order.data.phone,
+            brand: order.data.brandName || undefined,
           }), { replyTo: order.tg_message_id || undefined });
           store.markStorageNotified(order.id);
         } catch (err) {
@@ -1048,6 +1093,38 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
     }
   }
 
+  const DAY_MS = 24 * 3600e3;
+  function dailyDigestText(date) {
+    const nowMs = date.getTime();
+    return buildDailyDigest({
+      orders: store.ordersSince(nowMs - DAY_MS),
+      payments: store.paidSince(nowMs - DAY_MS),
+      counts: store.digestCounts({
+        since: nowMs - 30 * DAY_MS,
+        payValidSince: nowMs - config.payValiditySeconds * 1000,
+        storageBy: dateKey(new Date(nowMs + DAY_MS), config.timezone),
+      }),
+      currency: config.currency,
+      dayLabel: formatDayMonth(date, config.timezone),
+    });
+  }
+
+  // Раз на день у вікні 4 години від DIGEST_HOUR: після перезапуску ввечері зведення вже не шлемо
+  async function sendDailyDigest(date) {
+    if (config.digestEnabled === false) return;
+    const hour = hourOf(date, config.timezone);
+    const from = config.digestHour ?? 9;
+    if (hour < from || hour >= from + 4) return;
+    const key = dateKey(date, config.timezone);
+    if (store.getMeta('last_digest') === key) return;
+    try {
+      await telegram.sendText(dailyDigestText(date));
+      store.setMeta('last_digest', key);
+    } catch (err) {
+      log.error('daily digest failed', err.message);
+    }
+  }
+
   // Фонова робота двома окремими смугами, щоб повільні зовнішні сервіси (Meta, Google, KeyCRM, Нова пошта, копії бази)
   // не гальмували критичне: доставку замовлень у Telegram, оплати, статуси, нагадування.
   // Кожен етап виконується окремо: збій одного не зупиняє решту.
@@ -1074,6 +1151,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       ['prompts', async () => store.pruneOldPrompts(date.getTime() - PROMPT_TTL_MS)],
       ['reminders', () => sendReminders(date)],
       ['report', () => sendWeeklyReport(date)],
+      ['digest', () => sendDailyDigest(date)],
     ]);
   }
 
@@ -1164,6 +1242,15 @@ p{margin:8px 0;color:#555}</style></head>
       available: (url.searchParams.get('sizes') || '').split(',').map((v) => v.trim()).filter(Boolean).slice(0, 20),
     });
     return { ok: true, ...(found || { size: null }) };
+  }
+
+  // Воронка форми: POST /proxy/event {event}; рахуємо лише кількість за день, без даних відвідувача
+  async function funnelEvent(req, url) {
+    const shop = authorizeProxy(url);
+    if (!store.takeHit(`event:${clientIp(req)}`, 120, 60_000, now().getTime())) throw new HttpError(429, 'rate_limited', 'Забагато запитів');
+    const event = String((await readJson(req, 512))?.event ?? '');
+    if (FUNNEL_EVENTS.includes(event)) store.funnelHit(dateKey(now(), config.timezone), shop.key, event);
+    return { ok: true };
   }
 
   // Варіанти A/B-тестів для відвідувача: GET /proxy/ab?vid=...
@@ -1342,6 +1429,7 @@ p{margin:8px 0;color:#555}</style></head>
       }
       if (req.method === 'GET' && url.pathname === '/proxy/ab') return send(200, abAssign(req, url));
       if (req.method === 'GET' && url.pathname === '/proxy/size') return send(200, sizeSuggestion(req, url));
+      if (req.method === 'POST' && url.pathname === '/proxy/event') return send(200, await funnelEvent(req, url));
       if (req.method === 'POST' && url.pathname === '/proxy/lastsize') return send(200, await lastSizes(req, url));
       if (req.method === 'POST' && url.pathname === '/proxy/submit') return send(200, await submit(req, url));
       if (req.method === 'POST' && url.pathname === '/proxy/custom') return send(200, await submitCustom(req, url));

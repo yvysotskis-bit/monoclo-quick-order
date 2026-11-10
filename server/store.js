@@ -34,6 +34,13 @@ CREATE INDEX IF NOT EXISTS orders_message ON orders (tg_message_id);
 CREATE TABLE IF NOT EXISTS hits (key TEXT NOT NULL, at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS hits_key ON hits (key, at);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS funnel (
+  day TEXT NOT NULL,
+  shop TEXT NOT NULL,
+  event TEXT NOT NULL,
+  n INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, shop, event)
+);
 CREATE TABLE IF NOT EXISTS ab_exposures (
   exp TEXT NOT NULL,
   vid TEXT NOT NULL,
@@ -669,6 +676,36 @@ export class Store {
   }
 
   /* ---- звіт та моніторинг ---- */
+
+  // Попередні замовлення цього номера (без спаму й скасованих), нові першими
+  customerHistory(phone, beforeId, limit = 50) {
+    return this.q(
+      "SELECT * FROM orders WHERE id < ? AND status NOT IN ('spam', 'cancelled') AND json_extract(data, '$.phone') = ? ORDER BY id DESC LIMIT ?",
+      beforeId, phone, limit,
+    );
+  }
+
+  // Що зараз чекає на менеджера: для ранкового зведення
+  digestCounts({ since, payValidSince, storageBy }) {
+    const n = (sql, ...params) => this.db.prepare(sql).get(...params).n;
+    return {
+      unanswered: n("SELECT COUNT(*) AS n FROM orders WHERE status = 'new' AND tg_state = 'sent' AND created_at >= ?", since),
+      awaitingPayment: n("SELECT COUNT(DISTINCT order_id) AS n FROM payments WHERE status IN ('created', 'processing') AND created_at >= ?", payValidSince),
+      paidNoTtn: n(`SELECT COUNT(*) AS n FROM orders o WHERE o.ttn_number IS NULL AND o.status NOT IN ('spam', 'cancelled', 'shipped') AND o.created_at >= ?
+        AND EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id AND p.status = 'success')`, since),
+      atBranch: n("SELECT COUNT(*) AS n FROM orders WHERE np_status_code IN ('7', '8') AND created_at >= ?", since),
+      storageSoon: n("SELECT COUNT(*) AS n FROM orders WHERE np_status_code IN ('7', '8') AND np_paid_from != '' AND np_paid_from <= ? AND created_at >= ?", storageBy, since),
+    };
+  }
+
+  // Воронка форми: лише лічильники за днями, без жодних даних відвідувача
+  funnelHit(day, shop, event) {
+    this.run('INSERT INTO funnel (day, shop, event, n) VALUES (?, ?, ?, 1) ON CONFLICT(day, shop, event) DO UPDATE SET n = n + 1', day, shop, event);
+  }
+
+  funnelSince(day) {
+    return this.db.prepare('SELECT event, SUM(n) AS n FROM funnel WHERE day >= ? GROUP BY event').all(day);
+  }
 
   ordersSince(since) {
     return this.q('SELECT * FROM orders WHERE created_at >= ? ORDER BY id', since);

@@ -427,6 +427,8 @@
       if (dialogOpen() && state) showStep(state.step, false);
     });
     refs.editData.addEventListener('click', function () { showStep(2, true); });
+    // На великому екрані кроків немає: «дійшли до контактів» рахуємо за першим фокусом у цьому блоці
+    refs.step2.addEventListener('focusin', function () { funnel('step2'); });
     // Поле у фокусі завжди прокручується в видиму зону над клавіатурою
     refs.form.addEventListener('focusin', function (e) {
       if (!window.matchMedia('(max-width: 640px)').matches) return;
@@ -504,6 +506,7 @@
 
     dialog.classList.remove('is-success', 'is-open');
     openDialog();
+    funnel('open');
     watchViewport(true);
     pushHistory(1);
     document.documentElement.classList.add('qo-lock');
@@ -548,6 +551,7 @@
 
   function close() {
     if (!dialog || !dialogOpen() || (state && state.submitting)) return;
+    if (state && !state.ordered) funnel(closeStage());
     popHistory();
     dialog.classList.remove('is-open');
     var finish = function () {
@@ -966,6 +970,7 @@
     hideError();
     refresh();
     if (n === 2 && !both) {
+      funnel('step2');
       pushHistory(2);
       if (focus !== false && !(refs.name.value.trim())) refs.name.focus({ preventScroll: true });
     }
@@ -1154,6 +1159,28 @@
       .then(function (res) { return res.ok ? res.json() : null; })
       .catch(function () { return null; })
       .then(function (data) { clearTimeout(timer); return data && data.ok ? data : null; });
+  }
+
+  // Воронка форми: анонімний лічильник (подія без жодних даних відвідувача), кожна подія раз за відкриття
+  function funnel(event) {
+    if (!state || !cfg || !cfg.endpoint) return;
+    state.funnel = state.funnel || {};
+    if (state.funnel[event]) return;
+    state.funnel[event] = true;
+    try {
+      fetch(apiBase() + '/event', {
+        method: 'POST', keepalive: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: event })
+      }).catch(function () {});
+    } catch (err) { /* лічильник не має заважати формі */ }
+  }
+
+  // На чому зупинились, коли закрили форму без замовлення
+  function closeStage() {
+    if (optionMissing()) return 'close_options';
+    if (!nameValid() || !phoneValid()) return 'close_contacts';
+    return deliveryMissing() ? 'close_delivery' : 'close_ready';
   }
 
   function matchValue(values, size) {
@@ -1749,6 +1776,8 @@
     refs.body.scrollTop = 0;
     refs.successTitle.focus({ preventScroll: true });
 
+    state.ordered = true;
+    funnel('submit');
     track(data, variant);
   }
 

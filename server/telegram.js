@@ -85,6 +85,8 @@ export function createTelegram({ token, chatId, fetchFn }) {
       link_preview_options: { is_disabled: true },
       reply_markup: replyMarkup,
     }),
+    // Віджет у повідомленні (Bot API 10.4): HTML до 32 КБ, сервер Telegram сам його стискає й перевіряє
+    sendWidget: (html) => call('sendWidget', { chat_id: chatId, html }),
     clearButtons: (messageId) => call('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }),
     answerCallback: (id, text) => call('answerCallbackQuery', { callback_query_id: id, text }),
     setWebhook: (url, secretToken) => call('setWebhook', {

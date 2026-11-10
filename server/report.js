@@ -67,3 +67,61 @@ export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH'
   });
   return lines.join('\n');
 }
+
+// Ранкове зведення: що сталося за добу і що зараз чекає на менеджера
+export function buildDailyDigest({ orders, payments = [], counts, currency = 'UAH', dayLabel }) {
+  const real = orders.filter((o) => o.status !== 'spam' && o.status !== 'cancelled');
+  const sum = real.reduce((acc, o) => acc + o.data.totalCents, 0);
+  const paidSum = payments.reduce((acc, p) => acc + p.amount, 0);
+  const lines = [
+    `☀️ <b>Зведення на ${escapeHtml(dayLabel)}</b>`,
+    '',
+    `За останню добу: <b>${real.length}</b> ${plural(real.length, 'замовлення', 'замовлення', 'замовлень')} на ${escapeHtml(formatMoney(sum, currency))}`
+      + (payments.length ? `, оплат ${payments.length} на ${escapeHtml(formatMoney(paidSum, currency))}` : ''),
+    '',
+    '<b>Зараз чекає на вас</b>',
+  ];
+  const todo = [
+    [counts.unanswered, '🆕 Без відповіді'],
+    [counts.awaitingPayment, '💳 Надіслано посилання, чекаємо оплату'],
+    [counts.paidNoTtn, '📦 Оплачено, ще без ТТН'],
+    [counts.atBranch, '📮 Посилок у відділенні'],
+    [counts.storageSoon, '⚠️ З них скоро платне зберігання'],
+  ].filter(([n]) => n > 0);
+  if (todo.length) lines.push(...todo.map(([n, label]) => `${label}: <b>${n}</b>`));
+  else lines.push('Усе опрацьовано 👌');
+  return lines.join('\n');
+}
+
+const FUNNEL_LABELS = [
+  ['open', 'Відкрили форму'],
+  ['step2', 'Дійшли до контактів'],
+  ['submit', 'Оформили замовлення'],
+];
+const CLOSE_LABELS = [
+  ['close_options', 'не обрали розмір чи колір'],
+  ['close_contacts', 'не заповнили імʼя чи телефон'],
+  ['close_delivery', 'не обрали місто чи відділення'],
+  ['close_ready', 'усе заповнили, але не натиснули'],
+];
+
+// Воронка форми за період: де саме люди закривають попап
+export function buildFunnelReport(rows, days) {
+  const by = Object.fromEntries(rows.map((r) => [r.event, r.n]));
+  const opened = by.open || 0;
+  const title = `🔎 <b>Воронка форми за ${days} ${plural(days, 'день', 'дні', 'днів')}</b>`;
+  if (!opened) return `${title}\n\nДаних ще немає: вони зʼявляться після оновлення розширення в Shopify і перших відкриттів форми.`;
+  const share = (n) => `${Math.round((n / opened) * 100)}%`;
+  const lines = [title, '', ...FUNNEL_LABELS.map(([key, label]) => `${label}: <b>${by[key] || 0}</b> (${share(by[key] || 0)})`)];
+  const closes = CLOSE_LABELS.filter(([key]) => by[key]);
+  if (closes.length) lines.push('', '<b>Закрили без замовлення</b>', ...closes.map(([key, label]) => `${label}: ${by[key]} (${share(by[key])})`));
+  return lines.join('\n');
+}
+
+export function buildAbReport(summary) {
+  if (!summary.length) return '🧪 A/B-тестів зараз немає.';
+  return summary.map((e) => [
+    `🧪 <b>${escapeHtml(e.title)}</b>${e.winner ? ` · переможець: «${escapeHtml(e.labels?.[e.winner] || e.winner)}»` : ' · триває'}`,
+    ...Object.entries(e.variants).map(([v, s]) => `${escapeHtml(e.labels?.[v] || v)}: ${s.rate}% (${s.conversions} із ${s.views})`),
+  ].join('\n')).join('\n\n');
+}

@@ -71,7 +71,7 @@ export function createExperiments({ store, config, telegram, now, log }) {
   function summary() {
     return EXPERIMENTS.map((e) => {
       const s = stats(e.id);
-      return { id: e.id, title: e.title, winner: winnerOf(e.id) || null, variants: Object.fromEntries(e.variants.map((v) => [v, { ...s[v], rate: rate(s[v]) }])) };
+      return { id: e.id, title: e.title, labels: e.labels, winner: winnerOf(e.id) || null, variants: Object.fromEntries(e.variants.map((v) => [v, { ...s[v], rate: rate(s[v]) }])) };
     });
   }
 

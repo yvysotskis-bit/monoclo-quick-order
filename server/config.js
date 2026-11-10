@@ -132,6 +132,11 @@ export function loadConfig(env = process.env) {
     // Тижневий звіт: день тижня (1 = понеділок) і година за київським часом
     reportDay: number('REPORT_DAY', 1),
     reportHour: number('REPORT_HOUR', 9),
+    // Ранкове зведення для менеджера: година за київським часом; вимкнути — DIGEST_ENABLED=false
+    digestEnabled: optional('DIGEST_ENABLED') !== 'false',
+    digestHour: number('DIGEST_HOUR', 9),
+    // Після отримання посилки бот дає менеджеру готовий текст із проханням про відгук; вимкнути — REVIEW_ASK=false
+    reviewAsk: optional('REVIEW_ASK') !== 'false',
 
     // Щоденна резервна копія бази: на диск (BACKUP_DIR, за замовчуванням поруч із базою) і, за наявності,
     // у приватний чат Telegram (BACKUP_CHAT_ID). BACKUP_HOUR — година за київським часом.
