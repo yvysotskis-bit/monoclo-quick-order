@@ -793,7 +793,11 @@
           btn.textContent = value;
         }
         btn.addEventListener('click', function () {
-          if (btn.getAttribute('aria-disabled') === 'true') return;
+          if (btn.getAttribute('aria-disabled') === 'true') {
+            // Натиснули на те, чого немає: анонімний лічильник попиту (товар і варіант, без даних відвідувача)
+            funnel('soldout', { product: state.product.title, variant: state.product.options[i].name + ': ' + value });
+            return;
+          }
           selectValue(i, value);
         });
         btn.addEventListener('keydown', onChoiceKey);
@@ -1162,16 +1166,17 @@
   }
 
   // Воронка форми: анонімний лічильник (подія без жодних даних відвідувача), кожна подія раз за відкриття
-  function funnel(event) {
+  function funnel(event, extra) {
     if (!state || !cfg || !cfg.endpoint) return;
     state.funnel = state.funnel || {};
-    if (state.funnel[event]) return;
-    state.funnel[event] = true;
+    var key = event + (extra ? ':' + extra.variant : '');
+    if (state.funnel[key]) return;
+    state.funnel[key] = true;
     try {
       fetch(apiBase() + '/event', {
         method: 'POST', keepalive: true,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event: event })
+        body: JSON.stringify(Object.assign({ event: event }, extra || {}))
       }).catch(function () {});
     } catch (err) { /* лічильник не має заважати формі */ }
   }

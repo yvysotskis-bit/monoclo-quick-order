@@ -43,7 +43,7 @@ export function buildGreeting(o) {
   }
   const item = [o.productTitle, ...o.options.map((p) => p.value)].filter(Boolean).join(', ');
   // Постійному клієнту - тепліше; нічне замовлення менеджер бачить уранці, тож вибачаємось за паузу
-  const hello = o.repeat?.count > 0 ? `Добрий день! Це ${brand} 🖤 Раді бачити вас знову!` : `Добрий день! Це ${brand} 🖤`;
+  const hello = o.repeat?.count > 0 && !o.refusals ? `Добрий день! Це ${brand} 🖤 Раді бачити вас знову!` : `Добрий день! Це ${brand} 🖤`;
   const late = o.afterHours ? ' Вибачте, що відповідаємо не одразу: замовлення надійшло поза робочим часом.' : '';
   return `${hello}${late} Дякуємо за замовлення: ${item}, ${formatMoney(o.totalCents, o.currency)}. Підтвердіть, будь ласка, що дані доставки вірні - і ми все оформимо.`;
 }
@@ -80,6 +80,9 @@ export function buildOrderMessage(o) {
     `👤 ${escapeHtml([o.name, o.surname].filter(Boolean).join(' '))}`,
     `📞 ${escapeHtml(o.phone)}`,
   );
+  if (o.refusals > 0) {
+    lines.push(`⚠️ <b>Цей номер раніше не забрав посилку${o.refusals > 1 ? ` (${o.refusals} рази)` : ''}</b>: радимо передоплату`);
+  }
   if (o.repeat?.count > 0) {
     lines.push(`🔁 Постійний клієнт: замовлення №${o.repeat.count + 1}${o.repeat.lastSize ? ` · минулого разу розмір ${escapeHtml(o.repeat.lastSize)}` : ''}`);
   }

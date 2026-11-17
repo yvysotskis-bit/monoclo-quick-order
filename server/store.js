@@ -34,6 +34,14 @@ CREATE INDEX IF NOT EXISTS orders_message ON orders (tg_message_id);
 CREATE TABLE IF NOT EXISTS hits (key TEXT NOT NULL, at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS hits_key ON hits (key, at);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS demand (
+  day TEXT NOT NULL,
+  shop TEXT NOT NULL,
+  product TEXT NOT NULL,
+  variant TEXT NOT NULL,
+  n INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, shop, product, variant)
+);
 CREATE TABLE IF NOT EXISTS funnel (
   day TEXT NOT NULL,
   shop TEXT NOT NULL,
@@ -703,6 +711,26 @@ export class Store {
   // Воронка форми: лише лічильники за днями, без жодних даних відвідувача
   funnelHit(day, shop, event) {
     this.run('INSERT INTO funnel (day, shop, event, n) VALUES (?, ?, ?, 1) ON CONFLICT(day, shop, event) DO UPDATE SET n = n + 1', day, shop, event);
+  }
+
+  // Попит на те, чого немає: скільки разів натискали на розмір чи колір, який закінчився.
+  // Не більше maxRows різних рядків на день, щоб сміттєві запити не роздували базу
+  demandHit(day, shop, product, variant, maxRows = 300) {
+    const known = this.db.prepare('SELECT 1 AS x FROM demand WHERE day = ? AND shop = ? AND product = ? AND variant = ?').get(day, shop, product, variant);
+    if (!known && this.db.prepare('SELECT COUNT(*) AS n FROM demand WHERE day = ?').get(day).n >= maxRows) return false;
+    this.run('INSERT INTO demand (day, shop, product, variant, n) VALUES (?, ?, ?, ?, 1) ON CONFLICT(day, shop, product, variant) DO UPDATE SET n = n + 1', day, shop, product, variant);
+    return true;
+  }
+
+  demandSince(day, limit = 5) {
+    return this.db.prepare('SELECT product, variant, SUM(n) AS n FROM demand WHERE day >= ? GROUP BY product, variant ORDER BY n DESC, product LIMIT ?').all(day, limit);
+  }
+
+  // Скільки разів цей номер раніше не забрав посилку (відмова, повернення, припинено зберігання)
+  refusals(phone, beforeId) {
+    return this.db.prepare(
+      "SELECT COUNT(*) AS n FROM orders WHERE id < ? AND np_status_code IN ('102', '103', '105') AND json_extract(data, '$.phone') = ?",
+    ).get(beforeId, phone).n;
   }
 
   funnelSince(day) {

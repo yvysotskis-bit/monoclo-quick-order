@@ -9,9 +9,23 @@ const plural = (n, one, few, many) => {
   return many;
 };
 
-export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH', payments = [], startOf = (o) => o.created_at }) {
+export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH', payments = [], startOf = (o) => o.created_at, funnel = [], demand = [], ab = [] }) {
   const title = `📊 <b>Звіт за тиждень ${formatDayMonth(new Date(from), timezone)}–${formatDayMonth(new Date(to), timezone)}</b>`;
-  if (!orders.length) return `${title}\n\nЗамовлень за цей період не було.`;
+  // Форма, попит і тести показуються й тоді, коли замовлень не було: саме тоді вони найпотрібніші
+  const extra = [];
+  const by = Object.fromEntries(funnel.map((r) => [r.event, r.n]));
+  if (by.open) {
+    const pct = (n) => `${Math.round(((n || 0) / by.open) * 100)}%`;
+    extra.push('', '<b>Форма на сайті</b>', `Відкрили: ${by.open} · дійшли до контактів: ${by.step2 || 0} (${pct(by.step2)}) · оформили: ${by.submit || 0} (${pct(by.submit)})`);
+    const worst = CLOSE_LABELS.filter(([key]) => by[key]).sort((a, b) => by[b[0]] - by[a[0]])[0];
+    if (worst) extra.push(`Найчастіше закривають, коли ${worst[1]}: ${by[worst[0]]}`);
+  }
+  if (demand.length) {
+    extra.push('', '<b>Хотіли, але немає в наявності</b>', ...demand.map((d) => `${escapeHtml(d.product)}, ${escapeHtml(d.variant)}: ${d.n}`));
+  }
+  const running = ab.filter((e) => !e.winner);
+  if (running.length) extra.push('', buildAbReport(running));
+  if (!orders.length) return [`${title}\n\nЗамовлень за цей період не було.`, ...extra].join('\n');
 
   const counts = {};
   const products = new Map();
@@ -21,6 +35,7 @@ export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH'
   const paid = payments.length;
   const paidSum = payments.reduce((sum, p) => sum + p.amount, 0);
   const responseTimes = [];
+  const managers = new Map();
 
   for (const o of orders) {
     counts[o.status] = (counts[o.status] || 0) + 1;
@@ -31,7 +46,15 @@ export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH'
     const source = describeSource(o.data) || 'прямий візит';
     sources.set(source, (sources.get(source) || 0) + 1);
     // Нічні замовлення чекають не з моменту створення, а з початку робочого дня
-    if (o.first_response_at) responseTimes.push(Math.max(o.first_response_at - startOf(o), 0));
+    if (o.first_response_at) {
+      const waited = Math.max(o.first_response_at - startOf(o), 0);
+      responseTimes.push(waited);
+      // Менеджер, який поставив останній статус (на практиці той самий, хто взяв замовлення)
+      if (o.status_by) {
+        const m = managers.get(o.status_by) || { n: 0, sum: 0 };
+        managers.set(o.status_by, { n: m.n + 1, sum: m.sum + waited });
+      }
+    }
   }
 
   const top = (map, limit) => [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit);
@@ -55,6 +78,11 @@ export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH'
   if (responseTimes.length) {
     const avg = Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length / 60_000);
     lines.push('', `⏱ Середній час до першої відповіді: ${avg} хв`);
+    if (managers.size > 1) {
+      for (const [name, m] of [...managers.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 6)) {
+        lines.push(`${escapeHtml(name)}: ${m.n} ${plural(m.n, 'замовлення', 'замовлення', 'замовлень')}, відповідь у середньому за ${Math.round(m.sum / m.n / 60_000)} хв`);
+      }
+    }
   }
 
   lines.push('', '<b>Топ товарів</b>');
@@ -65,6 +93,7 @@ export function buildWeeklyReport(orders, { from, to, timezone, currency = 'UAH'
   top(sources, 5).forEach(([name, n]) => {
     lines.push(`${escapeHtml(name)}: ${n} ${plural(n, 'замовлення', 'замовлення', 'замовлень')}`);
   });
+  lines.push(...extra);
   return lines.join('\n');
 }
 

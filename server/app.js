@@ -182,6 +182,7 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       const text = buildOrderMessage({
         ...d,
         repeat: earlier.length ? { count: earlier.length, lastSize: earlier.map(sizeOf).find(Boolean) || '' } : null,
+        refusals: d.phone ? store.refusals(d.phone, order.id) : 0,
         orderNumber: order.order_number,
         when: formatDateTime(new Date(order.created_at), config.timezone),
         delayed,
@@ -1083,6 +1084,9 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
       timezone: config.timezone,
       currency: config.currency,
       payments: store.paidSince(from),
+      funnel: store.funnelSince(dateKey(new Date(from), config.timezone)),
+      demand: store.demandSince(dateKey(new Date(from), config.timezone)),
+      ab: experiments.enabled ? experiments.summary() : [],
       startOf: (o) => effectiveStart(o.created_at, config),
     });
     try {
@@ -1250,8 +1254,17 @@ p{margin:8px 0;color:#555}</style></head>
   async function funnelEvent(req, url) {
     const shop = authorizeProxy(url);
     if (!store.takeHit(`event:${clientIp(req)}`, 120, 60_000, now().getTime())) throw new HttpError(429, 'rate_limited', 'Забагато запитів');
-    const event = String((await readJson(req, 512))?.event ?? '');
-    if (FUNNEL_EVENTS.includes(event)) store.funnelHit(dateKey(now(), config.timezone), shop.key, event);
+    const body = await readJson(req, 1024);
+    const event = String(body?.event ?? '');
+    const day = dateKey(now(), config.timezone);
+    if (FUNNEL_EVENTS.includes(event)) store.funnelHit(day, shop.key, event);
+    // Натиснули на варіант, якого немає в наявності: лише назва товару й варіанта, обрізані й без керівних символів
+    if (event === 'soldout') {
+      const clean = (v, max) => String(v ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max);
+      const product = clean(body.product, 120);
+      const variant = clean(body.variant, 60);
+      if (product && variant) store.demandHit(day, shop.key, product, variant);
+    }
     return { ok: true };
   }
 

@@ -150,3 +150,49 @@ test('зведення: «оплачено без ТТН» не рахує за�
   store.markConversion(1, now().getTime(), 189900);
   assert.equal(count(), 0, 'у KeyCRM уже є оплата і ТТН');
 });
+
+test('картка попереджає про номер, який раніше не забрав посилку, і не вітає його «раді бачити»', async () => {
+  const { app, fetchFn, store, now } = makeApp();
+  await submit(app, goodBody());
+  store.setNpTracking(1, '103', '');
+  now.advance(11 * 60_000);
+  await submit(app, goodBody({ client_id: 'c-2' }));
+  const second = texts(fetchFn).filter((t) => /Швидке замовлення/.test(t))[1];
+  assert.match(second, /Цей номер раніше не забрав посилку<\/b>: радимо передоплату/);
+  assert.doesNotMatch(second, /Раді бачити/);
+  assert.equal(store.refusals('+380000000000', 99), 0);
+});
+
+test('попит на відсутнє: /proxy/event soldout зберігає товар і варіант, обрізає й обмежує кількість рядків', async () => {
+  const { app, store } = makeApp();
+  const hit = (body) => call(app, { url: signedUrl('/proxy/event'), body });
+  await hit({ event: 'soldout', product: 'Худі Test', variant: 'Розмір: XL' });
+  await hit({ event: 'soldout', product: 'Худі Test', variant: 'Розмір: XL' });
+  await hit({ event: 'soldout', product: 'x'.repeat(500), variant: 'Колір:\u0007 Білий' });
+  await hit({ event: 'soldout', product: '', variant: 'Розмір: S' });
+  const rows = store.demandSince('2000-01-01', 10);
+  assert.deepEqual({ ...rows[0] }, { product: 'Худі Test', variant: 'Розмір: XL', n: 2 });
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1].product.length, 120);
+  assert.equal(rows[1].variant, 'Колір:  Білий');
+  for (let i = 0; i < 5; i++) store.demandHit('2025-01-01', 'main', `p${i}`, 'v', 3);
+  assert.equal(store.demandSince('2025-01-01', 50).filter((r) => /^p\d$/.test(r.product)).length, 3);
+});
+
+test('тижневий звіт: форма, попит, тест і менеджери', async () => {
+  const { buildWeeklyReport } = await import('../server/report.js');
+  const order = (by, wait) => ({ status: 'taken', status_by: by, created_at: 0, first_response_at: wait * 60_000, data: { totalCents: 100000, quantity: 1, productTitle: 'Худі' } });
+  const extra = {
+    from: 0, to: 7 * 24 * 3600e3, timezone: 'Europe/Kyiv',
+    funnel: [{ event: 'open', n: 200 }, { event: 'step2', n: 80 }, { event: 'submit', n: 20 }, { event: 'close_contacts', n: 90 }, { event: 'close_options', n: 40 }],
+    demand: [{ product: 'Худі <b>', variant: 'Розмір: XL', n: 7 }],
+    ab: [{ id: 'cta', title: 'Кнопка', labels: { A: 'Замовити', B: 'Підтвердити' }, winner: null, variants: { A: { views: 10, conversions: 1, rate: 10 }, B: { views: 10, conversions: 2, rate: 20 } } }],
+  };
+  const text = buildWeeklyReport([order('Оля', 10), order('Оля', 20), order('Іра', 5)], extra);
+  assert.match(text, /Відкрили: 200 · дійшли до контактів: 80 \(40%\) · оформили: 20 \(10%\)/);
+  assert.match(text, /Найчастіше закривають, коли не заповнили імʼя чи телефон: 90/);
+  assert.match(text, /Худі &lt;b&gt;, Розмір: XL: 7/);
+  assert.match(text, /Оля: 2 замовлення, відповідь у середньому за 15 хв/);
+  assert.match(text, /Кнопка<\/b> · триває/);
+  assert.match(buildWeeklyReport([], extra), /Замовлень за цей період не було[\s\S]*Форма на сайті/);
+});

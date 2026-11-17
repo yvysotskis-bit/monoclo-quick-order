@@ -893,5 +893,19 @@ for (const [typed, shown] of [['0671234567', '(67) 123 45 67'], ['+380671234567'
   await ctx.close();
 }
 
+// Попит на те, чого немає: натиск на недоступний розмір рахується один раз і нічого не обирає
+{
+  const { page, ctx, errors } = await session('demand', { width: 390, height: 844 }, '?hour=12');
+  await open(page);
+  await page.click('.qo-choice[data-qo-value="Білий"]');
+  await page.click('.qo-choice[data-qo-value="XL"]', { force: true });
+  await page.click('.qo-choice[data-qo-value="XL"]', { force: true });
+  await page.waitForTimeout(300);
+  assert.deepEqual(await page.evaluate(() => window.__demand), ['Розмір: XL'], 'один запис про відсутній розмір');
+  assert.equal(await page.getAttribute('.qo-choice[data-qo-value="XL"]', 'aria-checked'), 'false');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
 await browser.close();
 console.log('E2E: усе пройшло. Скріншоти:', shots);
