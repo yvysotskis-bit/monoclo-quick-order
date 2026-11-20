@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { cleanAds } from '../server/validate.js';
-import { buildGoogleAdsCsv, contentId, evaluatePurchase } from '../server/conversions.js';
+import { buildGoogleAdsCsv, buildMetaEvent, contentId, crmEventSourceUrl, evaluatePurchase } from '../server/conversions.js';
 import { call, goodBody, makeApp, submit } from './helpers.js';
 
 const sha = (v) => crypto.createHash('sha256').update(v).digest('hex');
@@ -445,6 +445,7 @@ test('Instagram Direct: оплачене замовлення з ТТН іде �
   const event = meta.body.data[0];
   assert.equal(event.event_id, 'keycrm-5001');
   assert.equal(event.action_source, 'system_generated');
+  assert.equal(event.event_source_url, 'https://store.test/direct', 'адреса для власної конверсії «URL містить домен»');
   assert.equal(event.custom_data.currency, 'UAH');
   assert.equal(event.custom_data.value, 1899);
   assert.deepEqual(event.user_data.ph, [sha('380501112233')]);
@@ -611,4 +612,23 @@ test('CSV покупок: пароль не підбирається, після
   // Інша адреса не страждає
   const good = { authorization: `Basic ${Buffer.from('googleads:feed-pass').toString('base64')}` };
   assert.equal((await call(app, { method: 'GET', url: '/conversions/google-ads.csv', headers: good, ip: '9.9.9.9' })).status, 200);
+});
+
+test('адреса події для власної конверсії Meta: Direct, швидке з KeyCRM, інше джерело, без домену', () => {
+  assert.equal(crmEventSourceUrl('https://monoclo.com.ua/', 198), 'https://monoclo.com.ua/direct');
+  assert.equal(crmEventSourceUrl('https://monoclo.com.ua', 216), 'https://monoclo.com.ua/quick-order');
+  assert.equal(crmEventSourceUrl('https://monoclo.com.ua', 999), 'https://monoclo.com.ua/keycrm');
+  assert.equal(crmEventSourceUrl('', 198), '', 'без домену адреси немає, подія йде як раніше');
+});
+
+test('швидке замовлення без user-agent: system_generated, але з адресою сторінки товару', () => {
+  const order = {
+    order_number: '20251105-100000',
+    conv_value_cents: 89000,
+    data: { phone: '+380671234567', name: 'Іван', productUrl: 'https://monoclo.com.ua/products/f1-hoodie', productTitle: 'Худі', quantity: 1, unitCents: 89000, ads: {} },
+  };
+  const event = buildMetaEvent(order, { contentIdTemplate: '{variant_id}', eventTimeMs: Date.UTC(2025, 10, 5) });
+  assert.equal(event.action_source, 'system_generated');
+  assert.equal(event.event_source_url, 'https://monoclo.com.ua/products/f1-hoodie');
+  assert.equal(event.user_data.client_user_agent, undefined);
 });

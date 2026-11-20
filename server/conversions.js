@@ -71,7 +71,9 @@ export function buildMetaEvent(order, { contentIdTemplate, eventTimeMs }) {
     event_id: `quick-${order.order_number}`,
     // Для action_source=website Meta вимагає user-agent; без нього подія позначається як згенерована системою
     action_source: ads.ua ? 'website' : 'system_generated',
-    ...(ads.ua ? { event_source_url: d.productUrl } : {}),
+    // Адресу шлемо завжди: власна конверсія в Meta «URL містить monoclo.com.ua» відсікає покупки Shopify
+    // з чернеток (вони без адреси), а наші мають у неї потрапити
+    ...(d.productUrl ? { event_source_url: d.productUrl } : {}),
     user_data: userData,
     custom_data: {
       currency: 'UAH',
@@ -256,7 +258,16 @@ export function evaluateCrmOrder(o, { excludeStatusIds = [], excludeStatusGroupI
   return { ok: true, valueCents: Math.round(totalUah * 100) };
 }
 
-export function buildCrmMetaEvent(o, { valueCents, eventTimeMs }) {
+// Умовна адреса для покупок без сторінки (Direct тощо): за нею власна конверсія в Meta
+// («URL містить домен магазину») відрізняє наші покупки від покупок Shopify з чернеток, у яких адреси немає
+const CRM_SOURCE_PATH = { 198: 'direct', 216: 'quick-order' };
+export function crmEventSourceUrl(storeOrigin, sourceId) {
+  const origin = String(storeOrigin || '').replace(/\/+$/, '');
+  if (!/^https?:\/\//.test(origin)) return '';
+  return `${origin}/${CRM_SOURCE_PATH[Number(sourceId)] || 'keycrm'}`;
+}
+
+export function buildCrmMetaEvent(o, { valueCents, eventTimeMs, storeOrigin }) {
   const phone = phoneDigits(o.buyer?.phone || o.shipping?.recipient_phone);
   const fullName = String(o.buyer?.full_name || o.shipping?.recipient_full_name || '').trim();
   // KeyCRM пише «Прізвище Ім'я» або «Ім'я Прізвище» — порядок невідомий, тож хешуємо лише як є перші два слова
@@ -268,11 +279,13 @@ export function buildCrmMetaEvent(o, { valueCents, eventTimeMs }) {
   const city = norm(String(o.shipping?.shipping_address_city || '').replace(/^(м\.|с\.|смт)\s*/i, '')).replace(/[^\p{L}]/gu, '');
   if (city) userData.ct = [sha256(city)];
   const products = Array.isArray(o.products) ? o.products : [];
+  const url = crmEventSourceUrl(storeOrigin, o.source_id);
   return {
     event_name: 'Purchase',
     event_time: Math.floor(eventTimeMs / 1000),
     event_id: `keycrm-${o.id}`,
     action_source: 'system_generated',
+    ...(url ? { event_source_url: url } : {}),
     user_data: userData,
     custom_data: {
       currency: 'UAH',
@@ -400,7 +413,7 @@ export function createConversions({ config, store, keycrm, fetchFn, now, log, no
           const verdict = evaluateCrmOrder(o, c);
           if (!verdict.ok) { count(verdict.reason); continue; }
           count('qualified');
-          const event = buildCrmMetaEvent(o, { valueCents: verdict.valueCents, eventTimeMs: nowMs });
+          const event = buildCrmMetaEvent(o, { valueCents: verdict.valueCents, eventTimeMs: nowMs, storeOrigin: config.storeOrigin });
           const igUsername = igOn() && igSources.has(Number(sourceId)) ? await instagramUsernameFor(o) : null;
           if (store.insertCrmPurchase({ crmOrderId: o.id, sourceId, convAt: nowMs, valueCents: verdict.valueCents, event, igUsername })) {
             log.log(JSON.stringify({ event: 'purchase_qualified', crm_order: o.id, source: sourceId, value: verdict.valueCents / 100 }));
