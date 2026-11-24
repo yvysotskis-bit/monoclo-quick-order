@@ -88,6 +88,9 @@ export function loadConfig(env = process.env) {
     certPollMinutes: number('CERT_POLL_MINUTES', 10),
     certLookbackDays: number('CERT_LOOKBACK_DAYS', 3),
     certFrom: parseDate(optional('CERT_FROM'), 'CERT_FROM'),
+    // Токен для GET /api/certificates?crm_order=<id> (бот @monoclo_store_bot сам надсилає покупцю електронний сертифікат).
+    // Порожньо — ендпоінт вимкнено (404)
+    certApiToken: optional('CERT_API_TOKEN'),
     // Публічна адреса цього сервера (на Render підставляється автоматично як RENDER_EXTERNAL_URL)
     publicUrl: (optional('PUBLIC_URL') || optional('RENDER_EXTERNAL_URL')).replace(/\/+$/, ''),
 
