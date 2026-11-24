@@ -1388,6 +1388,14 @@ p{margin:8px 0;color:#555}</style></head>
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
         return res.end(viberPage(viber[1]));
       }
+      if (req.method === 'GET' && url.pathname === '/api/certificates') {
+        // Бот покупців забирає код електронного сертифіката, щоб надіслати його сам. Без токена — як неіснуючий шлях
+        const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+        if (!config.certApiToken || !token || !safeEqual(token, config.certApiToken)) return send(404, { error: 'not found' });
+        const orderId = Number(url.searchParams.get('crm_order'));
+        if (!Number.isInteger(orderId) || orderId <= 0) return send(400, { error: 'crm_order' });
+        return send(200, { certificates: certificates.forOrder(orderId) });
+      }
       if (req.method === 'GET' && url.pathname === '/status') {
         const { code, body } = status();
         return send(code, body);

@@ -176,3 +176,28 @@ test('одночасне погашення сертифіката двома м
   assert.equal(answers.filter((t) => /Вже погашено/.test(t)).length, 2);
   assert.equal(store.getCertificate(code).status, 'used');
 });
+
+
+test('API для бота: сертифікати замовлення лише з токеном, картка каже, що надішле бот', async () => {
+  const ctx = makeApp({ cfg: { keycrmToken: 'k', certEnabled: true, certApiToken: 'secret-token-123' } });
+  ctx.fetchFn.crmState.list = [crmOrder({ products: [{ id: 1, name: 'Подарунковий сертифікат «Свій принт» - Худі / Електронний', price: 2450, quantity: 1 }] })];
+  await ctx.app.tick();
+  const card = ctx.fetchFn.sentMessages.find((m) => m.text.includes('Подарунковий сертифікат ·'));
+  assert.match(card.text, /бот сам надішле код покупцю/);
+  const url = '/api/certificates?crm_order=5001';
+  assert.equal((await call(ctx.app, { method: 'GET', url })).status, 404);
+  assert.equal((await call(ctx.app, { method: 'GET', url, headers: { authorization: 'Bearer wrong' } })).status, 404);
+  const ok = await call(ctx.app, { method: 'GET', url, headers: { authorization: 'Bearer secret-token-123' } });
+  assert.equal(ok.status, 200);
+  const [c] = ok.json.certificates;
+  assert.match(c.code, /^SP-[A-Z0-9]{6}$/);
+  assert.deepEqual({ item: c.item, amount: c.amount_uah, printed: c.printed, status: c.status }, { item: 'Худі', amount: 2450, printed: false, status: 'issued' });
+  assert.match(c.link, new RegExp(`/pages/svii-prynt\\?cert=${c.code}#brif$`));
+  const empty = await call(ctx.app, { method: 'GET', url: '/api/certificates?crm_order=9', headers: { authorization: 'Bearer secret-token-123' } });
+  assert.deepEqual(empty.json, { certificates: [] });
+});
+
+test('API сертифікатів без CERT_API_TOKEN вимкнено', async () => {
+  const { app } = setup([]);
+  assert.equal((await call(app, { method: 'GET', url: '/api/certificates?crm_order=1', headers: { authorization: 'Bearer ' } })).status, 404);
+});

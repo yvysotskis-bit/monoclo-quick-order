@@ -773,6 +773,10 @@ export class Store {
     return Boolean(this.db.prepare(`SELECT 1 FROM certificates WHERE crm_order_id = ? AND line_key IN (${marks})`).get(crmOrderId, ...lineKeys));
   }
 
+  certificatesForOrder(crmOrderId) {
+    return this.db.prepare('SELECT * FROM certificates WHERE crm_order_id = ? ORDER BY created_at, code').all(crmOrderId);
+  }
+
   getCertificate(code) {
     return this.db.prepare('SELECT * FROM certificates WHERE code = ?').get(code) || null;
   }

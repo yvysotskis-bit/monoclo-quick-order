@@ -100,14 +100,16 @@ export function buyerText(cert, storeOrigin) {
   ].join('\n');
 }
 
-export function certificateMessage(cert, { storeOrigin, timezone }) {
+export function certificateMessage(cert, { storeOrigin, timezone, autoSend = false }) {
   const when = (ms) => new Intl.DateTimeFormat('uk-UA', { timeZone: timezone, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(ms));
   const lines = [
     `<b>🎁 Подарунковий сертифікат · <code>${escapeHtml(cert.code)}</code></b>`,
     `Виріб: <b>${escapeHtml(cert.item_label)}</b> · ${escapeHtml(formatMoney(cert.amount_uah * 100))}`,
     cert.printed
       ? 'Формат: 🖨 <b>друкований</b> - роздрукуйте листівку з кодом і вкладіть у посилку'
-      : 'Формат: 📩 <b>електронний</b> - надішліть текст нижче покупцю <b>після повної оплати</b>',
+      : (autoSend
+        ? 'Формат: 📩 <b>електронний</b> - після повної оплати бот сам надішле код покупцю (лист і @monoclo_store_bot)'
+        : 'Формат: 📩 <b>електронний</b> - надішліть текст нижче покупцю <b>після повної оплати</b>'),
     `Замовлення: ${escapeHtml(cert.order_label)}${cert.grand_total_uah ? ` · оплачено ${escapeHtml(formatMoney(cert.paid_uah * 100))} з ${escapeHtml(formatMoney(cert.grand_total_uah * 100))}` : ''}`,
   ];
   if (cert.buyer_name || cert.buyer_phone) lines.push(`👤 ${escapeHtml([cert.buyer_name, cert.buyer_phone].filter(Boolean).join(' · '))}`);
@@ -200,7 +202,7 @@ export function createCertificates({ config, store, keycrm, telegram, now, log }
   async function announce() {
     for (const cert of store.certificatesToAnnounce()) {
       try {
-        const sent = await telegram.sendText(certificateMessage(cert, { storeOrigin, timezone: config.timezone }), { replyMarkup: certificateKeyboard(cert) });
+        const sent = await telegram.sendText(certificateMessage(cert, { storeOrigin, timezone: config.timezone, autoSend: Boolean(config.certApiToken) }), { replyMarkup: certificateKeyboard(cert) });
         store.setCertificateMessage(cert.code, sent.message_id);
         log.log(JSON.stringify({ event: 'certificate_issued', code: cert.code, crm_order: cert.crm_order_id, amount: cert.amount_uah }));
       } catch (err) {
@@ -208,6 +210,14 @@ export function createCertificates({ config, store, keycrm, telegram, now, log }
         return;
       }
     }
+  }
+
+  // Для бота: сертифікати замовлення KeyCRM (код, виріб, сума, формат, посилання на бриф)
+  function forOrder(crmOrderId) {
+    return store.certificatesForOrder(crmOrderId).map((c) => ({
+      code: c.code, item: c.item_label, amount_uah: c.amount_uah, printed: Boolean(c.printed), status: c.status,
+      line_key: c.line_key, link: `${storeOrigin}/pages/svii-prynt?cert=${c.code}#brif`,
+    }));
   }
 
   async function tick() {
@@ -220,7 +230,7 @@ export function createCertificates({ config, store, keycrm, telegram, now, log }
     if (!cert?.tg_message_id) return;
     await telegram.editHtml({
       messageId: cert.tg_message_id,
-      text: certificateMessage(cert, { storeOrigin, timezone: config.timezone }),
+      text: certificateMessage(cert, { storeOrigin, timezone: config.timezone, autoSend: Boolean(config.certApiToken) }),
       replyMarkup: certificateKeyboard(cert),
     }).catch((e) => log.error('certificate card update failed', e.message));
   }
@@ -294,5 +304,5 @@ export function createCertificates({ config, store, keycrm, telegram, now, log }
     }).catch((e) => log.error('certificate brief reply failed', e.message));
   }
 
-  return { enabled, tick, callback, lookupMessage, forBrief, replyToBrief };
+  return { enabled, tick, callback, lookupMessage, forBrief, replyToBrief, forOrder };
 }
