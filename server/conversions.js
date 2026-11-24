@@ -79,6 +79,9 @@ export function buildMetaEvent(order, { contentIdTemplate, eventTimeMs }) {
       currency: 'UAH',
       value,
       order_id: `quick-${order.order_number}`,
+      // Мітка «наша» покупка: з 20.11 GetCheckout теж шле order_id, тож звірка в n8n (Meta ↔ KeyCRM)
+      // відрізняє Direct і швидкі замовлення саме за цим полем
+      order_source: 'quick',
       content_type: 'product',
       content_name: d.productTitle,
       ...(id ? {
@@ -291,6 +294,7 @@ export function buildCrmMetaEvent(o, { valueCents, eventTimeMs, storeOrigin }) {
       currency: 'UAH',
       value: valueCents / 100,
       order_id: `keycrm-${o.id}`,
+      order_source: 'keycrm',
       content_type: 'product',
       num_items: products.reduce((n, p) => n + (Number(p.quantity) || 0), 0) || 1,
     },

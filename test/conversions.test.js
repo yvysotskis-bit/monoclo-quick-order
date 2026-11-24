@@ -77,6 +77,7 @@ test('оплата + ТТН → одна покупка в Meta (у гривня
   assert.equal(event.action_source, 'website');
   assert.equal(event.custom_data.currency, 'UAH');
   assert.equal(event.custom_data.value, 1780);
+  assert.equal(event.custom_data.order_source, 'quick');
   assert.deepEqual(event.custom_data.content_ids, ['shopify_UA_9001']);
   assert.deepEqual(event.custom_data.contents, [{ id: 'shopify_UA_9001', quantity: 2, item_price: 890 }]);
   assert.deepEqual(event.user_data.ph, [sha('380671234567')]);
@@ -448,6 +449,7 @@ test('Instagram Direct: оплачене замовлення з ТТН іде �
   assert.equal(event.event_source_url, 'https://store.test/direct', 'адреса для власної конверсії «URL містить домен»');
   assert.equal(event.custom_data.currency, 'UAH');
   assert.equal(event.custom_data.value, 1899);
+  assert.equal(event.custom_data.order_source, 'keycrm');
   assert.deepEqual(event.user_data.ph, [sha('380501112233')]);
   assert.deepEqual(event.user_data.ct, [sha('львів')]);
   assert.ok(!JSON.stringify(meta.body).includes('380501112233'));
