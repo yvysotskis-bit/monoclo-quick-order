@@ -126,7 +126,7 @@ test('бриф: зіп-худі - окремий виріб зі своєю ці
   const r = validateCustomBrief(brief({ item: 'zip' }), { maxQty: 10, items: customItems() });
   assert.equal(r.ok, true);
   assert.equal(r.value.item.label, 'Зіп-худі на флісі');
-  assert.equal(r.value.item.priceUah, 2450);
+  assert.equal(r.value.item.priceUah, 2750);
   assert.equal(r.value.item.variantId, '68690119295197');
   assert.equal(r.value.color, 'Чорний');
 });
