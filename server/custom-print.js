@@ -11,7 +11,7 @@ export const CUSTOM_PRODUCT_ID = '15443984875741';
 export const CUSTOM_ITEMS = {
   tee: { label: 'Футболка', priceUah: 1450, variantId: '68257292550365', sized: true },
   hoodie: { label: 'Худі', priceUah: 2450, variantId: '68257292583133', sized: true },
-  zip: { label: 'Зіп-худі на флісі', priceUah: 2450, variantId: '68690119295197', sized: true },
+  zip: { label: 'Зіп-худі на флісі', priceUah: 2750, variantId: '68690119295197', sized: true },
   kids: { label: 'Футболка дитяча', priceUah: 950, variantId: '68257292615901', sized: true },
   a3: { label: 'Постер A3 (30×40 см)', priceUah: 1350, variantId: '68257292648669', sized: false },
   a2: { label: 'Постер A2 (42×59,5 см)', priceUah: 1550, variantId: '68257292681437', sized: false },
