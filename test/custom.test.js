@@ -121,3 +121,12 @@ test('фото до звичайного швидкого замовлення �
   for (let i = 0; i < 5; i += 1) assert.equal((await sendPhoto(app, body)).status, 200);
   assert.equal((await sendPhoto(app, body)).status, 429);
 });
+
+test('бриф: зіп-худі - окремий виріб зі своєю ціною й варіантом', () => {
+  const r = validateCustomBrief(brief({ item: 'zip' }), { maxQty: 10, items: customItems() });
+  assert.equal(r.ok, true);
+  assert.equal(r.value.item.label, 'Зіп-худі на флісі');
+  assert.equal(r.value.item.priceUah, 2450);
+  assert.equal(r.value.item.variantId, '68690119295197');
+  assert.equal(r.value.color, 'Чорний');
+});
