@@ -38,6 +38,7 @@ export function findCode(text) {
 // Порядок важливий: «Футболка дитяча» перевіряємо раніше за «Футболка».
 const ITEM_PATTERNS = [
   ['kids', /футболк\S*\s+дитяч|дитяч\S*\s+футболк/i],
+  ['zip', /зіп|zip/i],
   ['hoodie', /худі|hoodie/i],
   ['a3', /постер\s*a3|\ba3\b/i],
   ['a2', /постер\s*a2|\ba2\b/i],
