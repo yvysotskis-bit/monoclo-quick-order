@@ -113,7 +113,7 @@ const mock = `<script>
       { ref: uid(4), name: 'Київ', present: 'с. Київ, Закарпатська обл.', area: 'Закарпатська', region: '', warehouses: 0 }
     ],
     branches: Array.apply(null, Array(40)).map(function (_, i) {
-      return { ref: uid(100 + i), number: String(i + 1), name: 'Відділення №' + (i + 1) + ': вул. Тестова, ' + (i + 1), address: '', kind: 'branch' };
+      return { ref: uid(100 + i), number: String(i + 1), name: 'Відділення №' + (i + 1) + (i === 11 ? ' (до 30 кг на одне місце)' : '') + ': вул. Тестова, ' + (i + 1), address: '', kind: 'branch' };
     }),
     postomats: [4101, 4102, 4103, 4104].map(function (n, i) {
       return { ref: uid(200 + i), number: String(n), name: 'Поштомат "Нова Пошта" №' + n + ': вул. Головна, ' + (i + 1), address: '', kind: 'postomat' };

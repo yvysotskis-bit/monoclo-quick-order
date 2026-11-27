@@ -567,7 +567,7 @@
 
     var afterHours = isAfterHours();
     refs.hoursNote.hidden = !afterHours;
-    if (afterHours) refs.hoursNote.textContent = hoursText();
+    if (afterHours) refs.hoursNote.textContent = hoursShort();
 
     dialog.classList.remove('is-success', 'is-open');
     openDialog();
@@ -1661,7 +1661,7 @@
       },
       main: function (p) { return p.name.split(':')[0]; },
       sub: function (p) { return [p.distance != null ? formatDistance(p.distance) : '', p.address, p.hours].filter(Boolean).join(' · '); },
-      label: function (p) { return p.name; },
+      label: function (p) { return pointLabel(p.name); },
       onType: function () { state.delivery.point = null; state.nearby = null; refresh(); },
       onPick: function (p) { state.delivery.point = p; refresh(); }
     });
@@ -1715,7 +1715,7 @@
         refs.apartment.value = d.apartment || '';
       } else if (d.point && d.point.name) {
         state.delivery.point = d.point;
-        refs.point.value = d.point.name;
+        refs.point.value = pointLabel(d.point.name);
       }
     }
     showNp();
@@ -1765,11 +1765,18 @@
     return h < cfg.workStart || h >= cfg.workEnd;
   }
 
-  function hoursText() {
-    return cfg.afterHoursText
-      .replace('{start}', pad(cfg.workStart))
-      .replace('{end}', pad(cfg.workEnd));
+  // «Відділення №31 (до 30 кг на одне місце): вул. Руська, 233А» → «Відділення №31: вул. Руська, 233А»:
+  // на телефоні довга назва обрізалась, і адреси не було видно. Обмеження ваги лишається у списку
+  function pointLabel(name) {
+    return String(name || '').replace(/\s*\([^)]*\)/g, '').replace(/\s+:/, ':').trim();
   }
+
+  // Коротка нейтральна примітка над формою поза робочим часом (замість довгого попередження)
+  function hoursShort() {
+    var when = hourIn(cfg.tz, new Date()) < cfg.workStart ? 'сьогодні' : 'завтра';
+    return 'Працюємо з ' + pad(cfg.workStart) + ' до ' + pad(cfg.workEnd) + ': підтвердимо замовлення ' + when + ' вранці.';
+  }
+
 
   /* ---------- Відправка ---------- */
 
