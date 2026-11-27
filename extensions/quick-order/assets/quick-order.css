@@ -582,6 +582,8 @@ html.qo-lock { overflow: hidden; }
   text-align: center;
 }
 .qo-note--hours { margin-top: 6px; color: var(--qo-warn); }
+/* Над формою примітка про години — спокійна, без попереджувального кольору */
+.qo-banner.qo-note--hours { margin-top: 0; padding: 8px 12px; color: var(--qo-muted); font-size: 13px; }
 .qo-note[hidden] { display: none; }
 
 /* ---------- Екран успіху ---------- */

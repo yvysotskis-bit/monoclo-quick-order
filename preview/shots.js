@@ -356,6 +356,7 @@ for (const [hour, expected] of [[5, 'dark'], [6, 'light'], [12, 'light'], [16, '
   await toContacts(page);
   assert.equal(await page.isVisible('[data-qo-hours-note]'), true);
   assert.match(await page.textContent('[data-qo-hours-note]'), /з 10:00 до 20:00/);
+  assert.match(await page.textContent('[data-qo-hours-note]'), /підтвердимо замовлення (сьогодні|завтра) вранці/);
   await shot('open');
   await ctx.close();
 }
@@ -445,6 +446,7 @@ for (const [name, viewport] of [['desktop', { width: 1280, height: 820 }], ['mob
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   assert.match(await page.inputValue('[data-qo-point]'), /^Відділення №12:/);
+  assert.doesNotMatch(await page.inputValue('[data-qo-point]'), /кг/, 'обмеження ваги не займає місце в полі');
   assert.equal(await page.isVisible(`${combo('point')} [role="listbox"]`), false);
   await shot('branch-picked');
 
