@@ -8,7 +8,7 @@ import { createTelegram } from './telegram.js';
 import { createBackup } from './backup.js';
 import { createSizeAdvisor, sizeOf } from './sizes.js';
 import { createExperiments } from './experiments.js';
-import { createKeycrm } from './keycrm.js';
+import { createKeycrm, crmFailureReason } from './keycrm.js';
 import { createNovaPoshta, npDateKey } from './novaposhta.js';
 import { createTtnService } from './ttn.js';
 import { createMonobank } from './monobank.js';
@@ -221,7 +221,11 @@ export function createApp({ config, store, fetchFn = fetch, now = () => new Date
         const gaveUp = store.markCrmFailed(order.id, err.message, now().getTime());
         if (gaveUp) {
           await telegram
-            .sendText(`⚠️ Не вдалося передати замовлення #${order.order_number} у KeyCRM. Додайте його вручну.`, { replyTo: order.tg_message_id || undefined })
+            .sendText(
+              `⚠️ Не вдалося передати замовлення #${order.order_number} у KeyCRM. Додайте його вручну.\n`
+                + `Причина: ${escapeHtml(crmFailureReason(err))}`,
+              { replyTo: order.tg_message_id || undefined },
+            )
             .catch(() => {});
         }
         return false;
