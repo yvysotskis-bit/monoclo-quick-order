@@ -489,12 +489,32 @@
 
   /* ---------- Відкриття / закриття ---------- */
 
+  // Кольори, сховані в налаштуваннях теми («MONOCLO · Приховані кольори»; тема віддає їх у window.mclHiddenColors):
+  // прибираємо такі значення й варіанти, як це робить картка товару. Порожній список типів = для всіх товарів
+  function applyHiddenColors(product) {
+    var rule = window.mclHiddenColors;
+    if (!product || !rule || !rule.colors) return product;
+    var trim = function (x) { return String(x || '').trim(); };
+    var colors = rule.colors.map(trim).filter(Boolean);
+    var types = (rule.types || []).map(trim).filter(Boolean);
+    if (!colors.length) return product;
+    if (types.length && types.indexOf(trim(product.type)) === -1) return product;
+    var i = -1;
+    product.options.forEach(function (option, k) { if (i === -1 && COLOR_OPTION.test(option.name)) i = k; });
+    if (i === -1) return product;
+    var keep = product.options[i].values.filter(function (v) { return colors.indexOf(v) === -1; });
+    if (!keep.length) return product;
+    product.options[i].values = keep;
+    product.variants = product.variants.filter(function (v) { return colors.indexOf(v.options[i]) === -1; });
+    return product;
+  }
+
   function loadProduct(id) {
     if (productCache[id]) return productCache[id];
     var node = document.getElementById(id);
     if (!node) return null;
     try {
-      productCache[id] = JSON.parse(node.textContent);
+      productCache[id] = applyHiddenColors(JSON.parse(node.textContent));
       return productCache[id];
     } catch (e) {
       return null;

@@ -140,6 +140,7 @@
       {
         "handle": {{ qo_product.handle | json }},
         "title": {{ qo_product.title | json }},
+        "type": {{ qo_product.type | json }},
         "url": {{ qo_product.url | json }},
         "currency": {{ cart.currency.iso_code | json }},
         "price": {{ qo_product.price | default: 0 }},
