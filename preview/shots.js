@@ -958,5 +958,22 @@ for (const [typed, shown] of [['0671234567', '(067) 123 45 67'], ['+380671234567
   await ctx.close();
 }
 
+// Приховані кольори теми: Графітовий зникає для свого типу товару й лишається для інших
+{
+  const { page, ctx, errors } = await session('hidden-colors', { width: 390, height: 844 }, '?hour=12&hidden=tee');
+  await open(page);
+  assert.equal(await page.locator('.qo-choice[data-qo-value="Графітовий"]').count(), 0, 'Графітовий схований для футболок');
+  assert.equal(await page.locator('.qo-choice[data-qo-value="Чорний"]').count(), 1);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+{
+  const { page, ctx, errors } = await session('hidden-colors-other', { width: 390, height: 844 }, '?hour=12&hidden=hoodie');
+  await open(page);
+  assert.equal(await page.locator('.qo-choice[data-qo-value="Графітовий"]').count(), 1, 'правило для худі не чіпає футболку');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
 await browser.close();
 console.log('E2E: усе пройшло. Скріншоти:', shots);

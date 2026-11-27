@@ -65,7 +65,7 @@ for (const color of Object.keys(colors)) {
   }
 }
 const product = {
-  handle: 'futbolka-monoclo-volvo-fh16', title: 'Футболка Monoclo Volvo FH16 750',
+  handle: 'futbolka-monoclo-volvo-fh16', title: 'Футболка Monoclo Volvo FH16 750', type: 'Футболка',
   url: '/products/futbolka-monoclo-volvo-fh16', price: 89000, compare_at_price: 110000,
   featured_image: tee('#151515'),
   options_with_values: [
@@ -99,6 +99,8 @@ const mock = `<script>
 (function () {
   var q = new URLSearchParams(location.search);
   var mode = q.get('mode') || 'ok';
+  // ?hidden=tee — тема ховає Графітовий для футболок; ?hidden=hoodie — лише для худі (цей товар не зачіпає)
+  if (q.get('hidden')) window.mclHiddenColors = { colors: [' Графітовий'], types: [q.get('hidden') === 'hoodie' ? 'Худі' : 'Футболка'] };
   window.__orders = [];
   // Імітація Нової пошти (?np=down: сервіс недоступний)
   var uid = function (n) { return '00000000-0000-4000-8000-' + String(n).padStart(12, '0'); };
