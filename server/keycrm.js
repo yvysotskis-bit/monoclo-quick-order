@@ -31,6 +31,25 @@ function buildShipping(d, deliveryServiceId) {
   return Object.keys(shipping).length ? shipping : undefined;
 }
 
+// Коротке пояснення для менеджерів, чому KeyCRM не прийняв замовлення (текст без HTML, екранується під час відправки)
+export function crmFailureReason(err) {
+  const status = err?.status;
+  if (status === 401 || status === 403) {
+    return `KeyCRM не прийняв ключ API (${status}). Оновіть KEYCRM_API_KEY у Render: доки ключ недійсний, у KeyCRM не передається жодне замовлення.`;
+  }
+  if (status === 429) return 'KeyCRM обмежив кількість запитів (429).';
+  if (!status) return `KeyCRM не відповів: ${String(err?.message || err || 'невідома помилка').slice(0, 200)}`;
+  let details = '';
+  try {
+    const data = JSON.parse(err.body || '');
+    const fieldErrors = data?.errors && typeof data.errors === 'object'
+      ? Object.entries(data.errors).map(([field, msgs]) => `${field}: ${[].concat(msgs).join(', ')}`)
+      : [];
+    details = [data?.message, ...fieldErrors].filter(Boolean).join('; ');
+  } catch { details = String(err.body || '').trim(); }
+  return `KeyCRM відповів ${status}${details ? `: ${details.slice(0, 300)}` : ''}`;
+}
+
 export function buildCrmOrder(order, { sourceId, deliveryServiceId = 0 }) {
   const d = order.data;
   const marketing = {};
@@ -85,6 +104,7 @@ export function createKeycrm({ token, sourceId, statusMap = {}, deliveryServiceI
       // У помилку потрапляє відповідь KeyCRM (корисна для діагностики), а не токен
       const error = new Error(`KeyCRM ${method} ${path} → ${res.status}: ${text.slice(0, 200)}`);
       error.status = res.status;
+      error.body = text.slice(0, 1000);
       throw error;
     }
     return data;

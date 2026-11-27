@@ -199,7 +199,7 @@ export function mockFetch({ productResponse } = {}) {
     if (u.startsWith('https://openapi.keycrm.app/')) {
       const url = new URL(u);
       const crm = fn.crmState;
-      if (fn.fail.keycrm) return new Response('{"message":"boom"}', { status: 500 });
+      if (fn.fail.keycrm) return new Response(fn.fail.keycrmBody || '{"message":"boom"}', { status: fn.fail.keycrmStatus || 500 });
       // Замовлення, видалені в KeyCRM: будь-який запит до них відповідає 404
       const goneId = /^\/v1\/order\/(\d+)/.exec(url.pathname);
       if (goneId && crm.notFound?.includes(Number(goneId[1]))) return new Response('{"message":"Not found"}', { status: 404 });

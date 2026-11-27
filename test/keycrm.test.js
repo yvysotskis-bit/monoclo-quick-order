@@ -63,6 +63,26 @@ test('збій KeyCRM не зупиняє Telegram; черга повторює;
   assert.equal(failing.store.getOrder(1).crm_state, 'failed');
   const warnings = failing.fetchFn.tg('sendMessage').filter((c) => /Не вдалося передати замовлення/.test(c.body.text));
   assert.equal(warnings.length, 1);
+  assert.match(warnings[0].body.text, /Причина: KeyCRM відповів 500: boom/);
+});
+
+test('попередження називає причину: недійсний ключ і поля, які KeyCRM не прийняв', async () => {
+  const run = async (status, body) => {
+    const t = makeApp({ cfg: crmCfg });
+    t.fetchFn.fail.keycrm = true;
+    t.fetchFn.fail.keycrmStatus = status;
+    t.fetchFn.fail.keycrmBody = body;
+    await submit(t.app);
+    for (let i = 0; i < 12; i += 1) {
+      t.now.advance(16 * 60_000);
+      await t.app.tick();
+    }
+    return t.fetchFn.tg('sendMessage').find((c) => /Не вдалося передати замовлення/.test(c.body.text)).body.text;
+  };
+  const unauth = await run(401, '{"message":"Unauthenticated."}');
+  assert.match(unauth, /Причина: KeyCRM не прийняв ключ API \(401\)\. Оновіть KEYCRM_API_KEY у Render/);
+  const invalid = await run(422, '{"message":"The given data was invalid.","errors":{"buyer.phone":["Невірний <номер>"]}}');
+  assert.match(invalid, /Причина: KeyCRM відповів 422: The given data was invalid\.; buyer\.phone: Невірний &lt;номер&gt;/);
 });
 
 test('статус з Telegram оновлює замовлення в KeyCRM (лише для налаштованих статусів)', async () => {
