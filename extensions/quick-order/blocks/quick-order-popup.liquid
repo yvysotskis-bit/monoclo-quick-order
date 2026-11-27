@@ -90,23 +90,18 @@
             <p class="qo-note qo-note--hours qo-banner" data-qo-hours-note hidden></p>
 
             <div class="qo-field" data-qo-field="name">
-              <label class="qo-label" for="qo-name">Ваше імʼя</label>
-              <input class="qo-input" id="qo-name" name="name" type="text" autocomplete="given-name" autocapitalize="words" enterkeyhint="next" placeholder="Як до вас звертатися" maxlength="60" required data-qo-name>
-              <p class="qo-hint qo-hint--field" data-qo-field-hint="name">Вкажіть імʼя, щоб менеджер знав, як до вас звертатися</p>
-            </div>
-
-            <div class="qo-field" data-qo-field="surname">
-              <label class="qo-label" for="qo-surname">Прізвище <span class="qo-optional">(для накладної Нової пошти)</span></label>
-              <input class="qo-input" id="qo-surname" name="surname" type="text" autocomplete="family-name" autocapitalize="words" enterkeyhint="next" placeholder="Ваше прізвище" maxlength="60" data-qo-surname>
+              <label class="qo-label" for="qo-name">Імʼя та прізвище</label>
+              <input class="qo-input" id="qo-name" name="name" type="text" autocomplete="name" autocapitalize="words" enterkeyhint="next" placeholder="Наприклад, Олена Коваль" maxlength="90" required data-qo-name aria-describedby="qo-name-hint">
+              <p class="qo-hint qo-hint--field" id="qo-name-hint" data-qo-field-hint="name">Прізвище потрібне для накладної Нової пошти</p>
             </div>
 
             <div class="qo-field" data-qo-field="phone">
               <label class="qo-label" for="qo-phone">Номер телефону</label>
               <div class="qo-phone">
-                <span class="qo-phone__prefix" aria-hidden="true">+380</span>
-                <input class="qo-input qo-input--phone" id="qo-phone" name="tel" type="tel" inputmode="numeric" autocomplete="tel-national" enterkeyhint="next" placeholder="(__) ___ __ __" required data-qo-phone aria-describedby="qo-phone-hint">
+                <span class="qo-phone__prefix" aria-hidden="true">+38</span>
+                <input class="qo-input qo-input--phone" id="qo-phone" name="tel" type="tel" inputmode="numeric" autocomplete="tel-national" enterkeyhint="next" placeholder="(0__) ___ __ __" required data-qo-phone aria-describedby="qo-phone-hint">
               </div>
-              <p class="qo-hint qo-hint--field" id="qo-phone-hint" data-qo-field-hint="phone">Менеджер звʼяжеться за цим номером</p>
+              <p class="qo-hint qo-hint--field" id="qo-phone-hint" data-qo-field-hint="phone">Менеджер зателефонує, щоб підтвердити замовлення</p>
             </div>
 
             {%- if s.show_city -%}
@@ -186,23 +181,40 @@
             <svg width="28" height="28" viewBox="0 0 28 28"><path d="M6 14.5l5.5 5.5L22 9" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="square"/></svg>
           </div>
           <h2 class="qo-success__title" tabindex="-1" data-qo-success-title></h2>
+          <button type="button" class="qo-success__number" data-qo-success-number aria-label="Скопіювати номер замовлення">
+            <span data-qo-success-number-text></span>
+            <svg class="qo-success__copy" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="4.5" y="4.5" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M9.5 4.5v-3h-8v8h3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+            <span class="qo-success__copied" data-qo-success-copied hidden>скопійовано</span>
+          </button>
+          <ol class="qo-success__steps">
+            <li>
+              <strong data-qo-success-call-title>Дзвінок менеджера</strong>
+              <span data-qo-success-call-text></span>
+            </li>
+            <li>
+              <strong>Відправка Новою поштою</strong>
+              <span data-qo-success-ship></span>
+            </li>
+            <li>
+              <strong>ТТН і статус посилки</strong>
+              <span>{% if s.telegram_url != blank %}Надішлемо в Telegram-кабінет MONOCLO{% else %}Менеджер надішле номер ТТН{% endif %}</span>
+            </li>
+          </ol>
           <dl class="qo-success__summary" data-qo-success-summary></dl>
-          <p class="qo-note" data-qo-success-note></p>
-          <p class="qo-note qo-note--hours" data-qo-success-hours hidden></p>
           {%- if s.telegram_url != blank -%}
-            <p class="qo-note qo-note--contact">{{ s.account_hint | default: 'Ваш особистий кабінет MONOCLO у Telegram: замовлення, звʼязок із менеджером, сповіщення.' | escape }}</p>
+            <p class="qo-success__fix">Помилились у даних? <a href="{{ s.telegram_url }}" target="_blank" rel="noopener">Напишіть менеджеру</a></p>
           {%- endif -%}
           <div class="qo-success__actions">
             {%- if s.telegram_url != blank -%}
-              <a class="qo-btn" href="{{ s.telegram_url }}" target="_blank" rel="noopener" data-qo-telegram>{{ s.account_label | default: 'Відкрити кабінет у Telegram' | escape }}</a>
+              <a class="qo-btn" href="{{ s.telegram_url }}" target="_blank" rel="noopener" data-qo-telegram>{{ s.account_label | default: 'Відстежувати в Telegram' | escape }}</a>
               <button type="button" class="qo-btn qo-btn--ghost" data-qo-close>Продовжити покупки</button>
             {%- else -%}
               <button type="button" class="qo-btn" data-qo-close>Продовжити покупки</button>
             {%- endif -%}
-            {%- if s.instagram_url != blank -%}
-              <a class="qo-btn qo-btn--ghost" href="{{ s.instagram_url }}" target="_blank" rel="noopener">Instagram</a>
-            {%- endif -%}
           </div>
+          {%- if s.instagram_url != blank -%}
+            <p class="qo-success__social"><a href="{{ s.instagram_url }}" target="_blank" rel="noopener">Ми в Instagram</a></p>
+          {%- endif -%}
         </section>
       </div>
 
@@ -425,7 +437,7 @@
       "type": "text",
       "id": "account_label",
       "label": "Текст кнопки бота",
-      "default": "Відкрити кабінет у Telegram"
+      "default": "Відстежувати в Telegram"
     },
     {
       "type": "text",
