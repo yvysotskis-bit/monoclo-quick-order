@@ -9,6 +9,14 @@
     chooseOption: function (name) { return 'Оберіть ' + name.toLowerCase(); },
     enterName: 'Вкажіть імʼя',
     enterPhone: 'Вкажіть номер телефону',
+    badPhone: 'Перевірте номер: після 0 має йти код оператора, наприклад 067',
+    callTitle: 'Дзвінок менеджера',
+    callText: function (start, end) { return 'Підтвердимо розмір і доставку. Працюємо щодня з ' + start + ' до ' + end + '.'; },
+    callLaterTitle: function (when, start) { return 'Дзвінок менеджера — ' + when + ' після ' + start; },
+    callLaterText: function (start, end) { return 'Працюємо щодня з ' + start + ' до ' + end + ', тож підтвердимо замовлення вранці.'; },
+    shipTo: function (where) { return 'У ' + where; },
+    shipLater: 'Адресу доставки уточнить менеджер',
+    recipient: 'Отримувач', delivery: 'Доставка', variant: 'Варіант',
     inStock: 'В наявності',
     low: function (n) { return 'Залишилось ' + n + ' шт.'; },
     soldOut: 'Немає в наявності',
@@ -47,18 +55,34 @@
     var d = String(raw || '').replace(/\D/g, '');
     if (d.indexOf('380') === 0) d = d.slice(3);
     else if (d.charAt(0) === '0') d = d.slice(1);
+    // Поле показує «(0…», тож якщо покупець набирає «+380…» вручну, бачимо «0380…»: префікс країни теж відкидаємо
+    if (d.indexOf('380') === 0) d = d.slice(3);
     return d.slice(0, 9);
   }
 
-  // 671234567 → (67) 123 45 67
+  // 671234567 → (067) 123 45 67: номер пишемо так, як його звикли бачити, з нулем, після префікса +38
   function formatNational(d) {
     if (!d) return '';
-    var s = '(' + d.slice(0, 2);
+    var s = '(0' + d.slice(0, 2);
     if (d.length === 2) s += ')';
     if (d.length > 2) s += ') ' + d.slice(2, 5);
     if (d.length > 5) s += ' ' + d.slice(5, 7);
     if (d.length > 7) s += ' ' + d.slice(7, 9);
     return s;
+  }
+
+  // Українські коди після нуля починаються з 3–9 (мобільні 039, 050, 063, 066–068, 073, 091–099 і міські 03x–06x).
+  // Відсікаємо явні помилки на кшталт (010) або (000) і номер з однієї цифри, а не вузький список операторів,
+  // щоб не загубити справжнього покупця з новим кодом
+  function phoneCodeValid(d) {
+    return /^[3-9]\d{8}$/.test(d) && !/^(\d)\1{8}$/.test(d);
+  }
+
+  // «Олена Коваль» → імʼя «Олена», прізвище «Коваль»: у Telegram і KeyCRM вони йдуть окремими полями
+  function splitFullName(full) {
+    var parts = String(full || '').trim().split(/\s+/).filter(Boolean);
+    if (parts.length < 2 || parts[0].length < 2) return { name: parts.join(' '), surname: '' };
+    return { name: parts[0], surname: parts.slice(1).join(' ') };
   }
 
   // Форматувальники Intl створюються один раз: їх створення коштує кілька мілісекунд на телефоні, а money() викликається
@@ -363,8 +387,13 @@
       successView: $('[data-qo-success-view]'),
       successTitle: $('[data-qo-success-title]'),
       successSummary: $('[data-qo-success-summary]'),
-      successNote: $('[data-qo-success-note]'),
-      successHours: $('[data-qo-success-hours]'),
+      successNumber: $('[data-qo-success-number]'),
+      successNumberText: $('[data-qo-success-number-text]'),
+      successCopied: $('[data-qo-success-copied]'),
+      successCallTitle: $('[data-qo-success-call-title]'),
+      successCallText: $('[data-qo-success-call-text]'),
+      successShip: $('[data-qo-success-ship]'),
+      phoneHint: $('[data-qo-field-hint="phone"]'),
       body: $('[data-qo-body]'),
       head: $('[data-qo-head]'),
       stepLabel: $('[data-qo-step-label]'),
@@ -439,6 +468,21 @@
       }, 320);
     });
 
+    // Номер замовлення копіюється одним дотиком: його питають у чаті й на пошті
+    refs.phoneHintDefault = refs.phoneHint ? refs.phoneHint.textContent : '';
+    if (refs.successNumber) {
+      refs.successNumber.addEventListener('click', function () {
+        var text = refs.successNumberText.textContent;
+        var done = function () {
+          refs.successCopied.hidden = false;
+          setTimeout(function () { if (refs.successCopied) refs.successCopied.hidden = true; }, 2000);
+        };
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () {});
+        } catch (e) { /* буфер обміну недоступний */ }
+      });
+    }
+
     initSwipe();
     initDelivery();
   }
@@ -480,7 +524,8 @@
     refs.title.textContent = product.title;
     refs.image.alt = product.title;
     refs.image.removeAttribute('src');
-    refs.name.value = saved.name || '';
+    // Імʼя й прізвище тепер в одному полі; збережені окремо дані з минулих замовлень зʼєднуємо
+    refs.name.value = refs.surname ? (saved.name || '') : [saved.name, saved.surname].filter(Boolean).join(' ');
     // Зріст і вага з минулого разу лише підставляються в поля підбору; у замовлення йдуть, лише якщо їх підтвердили цього разу
     state.bodyPrefill = saved.body && saved.body.height && saved.body.weight ? saved.body : null;
     state.body = null;
@@ -602,6 +647,17 @@
         return j === i || s == null || v.options[j] === s;
       });
     });
+  }
+
+  // Найнижча ціна значення з урахуванням уже обраних інших опцій (null, якщо такого варіанта немає)
+  function valuePrice(i, value) {
+    var best = null;
+    state.product.variants.forEach(function (v) {
+      if (v.options[i] !== value) return;
+      var fits = state.selected.every(function (s, j) { return j === i || s == null || v.options[j] === s; });
+      if (fits && (best == null || v.price < best)) best = v.price;
+    });
+    return best;
   }
 
   function selectValue(i, value) {
@@ -789,6 +845,12 @@
           btn.appendChild(dot);
           btn.setAttribute('aria-label', value);
           btn.title = value;
+        } else if (!SIZE_OPTION.test(option.name)) {
+          // Матеріал і подібні опції часто мають різну ціну (з флісом / без): ціну видно прямо на кнопці
+          btn.appendChild(el('span', 'qo-choice__label', value));
+          var price = el('span', 'qo-choice__price');
+          price.dataset.qoPrice = '';
+          btn.appendChild(price);
         } else {
           btn.textContent = value;
         }
@@ -839,6 +901,22 @@
       if (!available) btn.title = T.soldOut;
       else if (btn.classList.contains('qo-choice--color')) btn.title = value;
       else btn.removeAttribute('title');
+    });
+    // Ціна на кнопках опцій: лише коли значення справді відрізняються за ціною
+    dialog.querySelectorAll('.qo-choices').forEach(function (group) {
+      var spans = group.querySelectorAll('[data-qo-price]');
+      if (!spans.length) return;
+      var prices = [];
+      spans.forEach(function (span) {
+        var btn = span.parentNode;
+        prices.push(valuePrice(Number(btn.dataset.qoOption), btn.dataset.qoValue));
+      });
+      var known = prices.filter(function (p) { return p != null; });
+      var differ = known.some(function (p) { return p !== known[0]; });
+      spans.forEach(function (span, k) {
+        span.textContent = differ && prices[k] != null ? money(prices[k], state.product.currency) : '';
+        span.hidden = !span.textContent;
+      });
     });
     // Якщо нічого не обрано, у групі фокусується перша доступна кнопка
     dialog.querySelectorAll('.qo-choices').forEach(function (group) {
@@ -910,7 +988,15 @@
 
   function digits() { return nationalDigits(refs.phone.value); }
   function nameValid() { return refs.name.value.trim().length >= 2; }
-  function phoneValid() { return digits().length === 9; }
+  function phoneValid() { return digits().length === 9 && phoneCodeValid(digits()); }
+  // Номер набрано повністю, але код оператора неможливий: підказуємо, що саме не так
+  function phoneBadCode() { return digits().length === 9 && !phoneCodeValid(digits()); }
+
+  // Імʼя й прізвище для замовлення: окреме поле прізвища (стара розмітка) або розбір повного імені
+  function contactName() {
+    if (refs.surname) return { name: refs.name.value.trim(), surname: refs.surname.value.trim() };
+    return splitFullName(refs.name.value);
+  }
 
   function optionMissing() {
     for (var i = 0; i < state.selected.length; i++) {
@@ -923,7 +1009,7 @@
 
   function contactMissing() {
     if (!nameValid()) return { key: 'name', text: T.enterName };
-    if (!phoneValid()) return { key: 'phone', text: T.enterPhone };
+    if (!phoneValid()) return { key: 'phone', text: phoneBadCode() ? T.badPhone : T.enterPhone };
     return deliveryMissing();
   }
 
@@ -936,7 +1022,7 @@
 
   function recapText() {
     var parts = [[refs.name.value.trim(), refs.surname ? refs.surname.value.trim() : ''].filter(Boolean).join(' ')];
-    parts.push('+380 ' + formatNational(digits()));
+    parts.push('+38 ' + formatNational(digits()));
     var place = state.delivery.city ? (state.delivery.city.present || state.delivery.city.name) : cityText();
     if (place) parts.push(place);
     var d = state.delivery;
@@ -1069,7 +1155,8 @@
 
     // Підказки під полями
     setFieldInvalid('name', state.touched.name && !nameValid());
-    setFieldInvalid('phone', state.touched.phone && !phoneValid());
+    setFieldInvalid('phone', (state.touched.phone && !phoneValid()) || phoneBadCode());
+    if (refs.phoneHint) refs.phoneHint.textContent = phoneBadCode() ? T.badPhone : refs.phoneHintDefault;
 
     var missing = state.step === 1 ? optionMissing() : firstMissing();
     // Підсвітка «зверни увагу» гасне, щойно поле виправлено
@@ -1684,12 +1771,13 @@
     hideError();
     refresh();
 
+    var person = contactName();
     var payload = {
       product_handle: state.product.handle,
       variant_id: variant.id,
       quantity: state.qty,
-      name: refs.name.value.trim(),
-      surname: refs.surname ? refs.surname.value.trim() : '',
+      name: person.name,
+      surname: person.surname,
       body: state.body || undefined,
       phone: '+380' + digits(),
       comment: refs.comment ? refs.comment.value.trim() : '',
@@ -1756,26 +1844,46 @@
   function onSuccess(data, variant, payload) {
     writeStore({ body: payload.body || state.bodyPrefill || undefined, name: payload.name, surname: payload.surname, phone: digits(), city: payload.city, delivery: payload.delivery });
 
-    refs.successTitle.textContent = T.thanks(data.order_number);
+    // Заголовок звертається на імʼя, номер замовлення окремою кнопкою (копіюється)
+    var firstName = payload.name.split(' ')[0];
+    refs.successTitle.textContent = firstName ? 'Дякуємо, ' + firstName + '!\nЗамовлення прийнято' : 'Дякуємо!\nЗамовлення прийнято';
+    refs.successNumberText.textContent = '№' + data.order_number;
+    refs.successCopied.hidden = true;
+
+    // Що буде далі: дзвінок (з урахуванням робочих годин), відправка, ТТН
+    var after = data.after_hours != null ? data.after_hours : isAfterHours();
+    var start = pad(cfg.workStart);
+    var end = pad(cfg.workEnd);
+    if (after) {
+      var when = hourIn(cfg.tz, new Date()) < cfg.workStart ? 'сьогодні' : 'завтра';
+      refs.successCallTitle.textContent = T.callLaterTitle(when, start);
+      refs.successCallText.textContent = T.callLaterText(start, end);
+    } else {
+      refs.successCallTitle.textContent = T.callTitle;
+      refs.successCallText.textContent = T.callText(start, end);
+    }
+    var ship = deliverySummary().replace(/^Нова пошта · /, '');
+    refs.successShip.textContent = ship ? T.shipTo(ship) : T.shipLater;
+
+    // Підсумок: товар, варіант, сума, отримувач, телефон, доставка — щоб покупець міг перевірити все одразу
     refs.successSummary.textContent = '';
-    var rows = [[T.product, state.product.title]];
+    var picked = [];
     state.product.options.forEach(function (option, i) {
-      if (state.selected[i] && state.selected[i] !== 'Default Title') rows.push([option.name, state.selected[i]]);
+      if (state.selected[i] && state.selected[i] !== 'Default Title') picked.push(state.selected[i]);
     });
-    rows.push([T.qty, String(state.qty)]);
+    var rows = [[T.product, state.product.title]];
+    if (picked.length) rows.push([T.variant, picked.join(' · ')]);
+    if (state.qty > 1) rows.push([T.qty, String(state.qty)]);
     rows.push([T.total, money(variant.price * state.qty, state.product.currency)]);
-    rows.push([T.phone, '+380 ' + formatNational(digits())]);
+    rows.push([T.recipient, [payload.name, payload.surname].filter(Boolean).join(' ')]);
+    rows.push([T.phone, '+38 ' + formatNational(digits())]);
+    if (ship) rows.push([T.delivery, 'Нова пошта, ' + ship]);
     rows.forEach(function (row) {
       var line = el('div');
       line.appendChild(el('dt', '', row[0]));
       line.appendChild(el('dd', '', row[1]));
       refs.successSummary.appendChild(line);
     });
-
-    refs.successNote.textContent = $('[data-qo-note]').textContent;
-    var after = data.after_hours != null ? data.after_hours : isAfterHours();
-    refs.successHours.hidden = !after;
-    if (after) refs.successHours.textContent = hoursText();
 
     setView('success');
     refs.body.scrollTop = 0;

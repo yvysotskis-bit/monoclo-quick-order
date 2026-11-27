@@ -138,17 +138,17 @@ async function flow(name, viewport) {
   await page.fill('[data-qo-city]', 'Львів');
   await page.click('[data-qo-phone]');
   await page.keyboard.type('0671234567');
-  assert.equal(await page.inputValue('[data-qo-phone]'), '(67) 123 45 67');
+  assert.equal(await page.inputValue('[data-qo-phone]'), '(067) 123 45 67');
   await page.keyboard.press('Backspace');
-  assert.equal(await page.inputValue('[data-qo-phone]'), '(67) 123 45 6');
+  assert.equal(await page.inputValue('[data-qo-phone]'), '(067) 123 45 6');
   await page.fill('[data-qo-phone]', '');
   await page.keyboard.type('67');
-  assert.equal(await page.inputValue('[data-qo-phone]'), '(67)');
+  assert.equal(await page.inputValue('[data-qo-phone]'), '(067)');
   await page.keyboard.press('Backspace');
-  assert.equal(await page.inputValue('[data-qo-phone]'), '(6');
+  assert.equal(await page.inputValue('[data-qo-phone]'), '(06');
   await page.fill('[data-qo-phone]', '');
   await page.keyboard.type('+380671234567');
-  assert.equal(await page.inputValue('[data-qo-phone]'), '(67) 123 45 67');
+  assert.equal(await page.inputValue('[data-qo-phone]'), '(067) 123 45 67');
   assert.equal(await page.getAttribute('[data-qo-submit]', 'aria-disabled'), 'false');
   assert.equal(await page.textContent('[data-qo-cta-hint]'), '');
   await shot('4-ready');
@@ -164,15 +164,17 @@ async function flow(name, viewport) {
   assert.equal(order.city, 'Львів');
   assert.equal(order.variant_id, 1002 + 0); // Чорний / L
   assert.equal(order.page_url.endsWith('/products/futbolka-monoclo-volvo-fh16'), true);
-  assert.match(await page.textContent('[data-qo-success-title]'), /Замовлення №20251005-213405 прийнято/);
+  assert.match(await page.textContent('[data-qo-success-title]'), /Дякуємо, Іван!\s+Замовлення прийнято/);
+  assert.equal(await page.textContent('[data-qo-success-number-text]'), '№20251005-213405');
+  assert.match(await page.textContent('[data-qo-success-summary]'), /\+38 \(067\) 123 45 67/);
   assert.equal(await page.isVisible('[data-qo-submit]'), false);
   // Після замовлення: кнопка «Написати нам у Telegram» магазину
   const tg = page.locator('[data-qo-telegram]');
   assert.equal(await tg.isVisible(), true);
   assert.equal(await tg.getAttribute('href'), 'https://t.me/monoclo_store_bot?start=site');
   assert.equal(await tg.getAttribute('target'), '_blank');
-  assert.match(await page.textContent('.qo-note--contact'), /особистий кабінет MONOCLO у Telegram: замовлення, звʼязок із менеджером/);
-  assert.equal((await tg.textContent()).trim(), 'Відкрити кабінет у Telegram');
+  assert.match(await page.textContent('.qo-success__steps'), /Надішлемо в Telegram-кабінет MONOCLO/);
+  assert.equal((await tg.textContent()).trim(), 'Відстежувати в Telegram');
   assert.doesNotMatch(await page.textContent('[data-qo-success-view]'), /Напишіть нам/);
   assert.equal(await page.evaluate(() => window.__lastEvent.value), 1780);
   // Аналітика: GA4 generate_lead, Meta Pixel Lead, dataLayer
@@ -195,7 +197,7 @@ async function flow(name, viewport) {
   await open(page);
   assert.equal(await page.inputValue('[data-qo-name]'), 'Іван');
   assert.equal(await page.inputValue('[data-qo-city]'), 'Львів');
-  assert.equal(await page.inputValue('[data-qo-phone]'), '(67) 123 45 67');
+  assert.equal(await page.inputValue('[data-qo-phone]'), '(067) 123 45 67');
   assert.equal(await page.textContent('[data-qo-cta-hint]'), 'Оберіть колір');
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.querySelector('[data-qo-dialog]').open);
@@ -254,7 +256,7 @@ await flow('mobile', { width: 390, height: 844 });
   await page.click('.qo-choice[data-qo-value="M"]');
   assert.match(await page.textContent('[data-qo-submit-label]'), /^Замовити як Олена · /);
   assert.equal(await page.isVisible('[data-qo-recap]'), true);
-  assert.match(await page.textContent('[data-qo-recap-line]'), /Олена · \+380 \(50\) 111 22 33/);
+  assert.match(await page.textContent('[data-qo-recap-line]'), /Олена · \+38 \(050\) 111 22 33/);
   await page.dblclick('[data-qo-submit]');
   await page.waitForSelector('[data-qo-success-view]:not([hidden])');
   assert.equal(await page.evaluate(() => window.__orders.length), 2);
@@ -863,7 +865,7 @@ for (const [w, h] of [[320, 568], [360, 740], [390, 844], [430, 932], [568, 320]
 }
 
 // Автозаповнення телефону браузером у різних форматах
-for (const [typed, shown] of [['0671234567', '(67) 123 45 67'], ['+380671234567', '(67) 123 45 67'], ['380671234567', '(67) 123 45 67'], ['067 123-45-67', '(67) 123 45 67']]) {
+for (const [typed, shown] of [['0671234567', '(067) 123 45 67'], ['+380671234567', '(067) 123 45 67'], ['380671234567', '(067) 123 45 67'], ['067 123-45-67', '(067) 123 45 67']]) {
   const { page, ctx } = await session('autofill', { width: 390, height: 844 }, '?hour=12');
   await open(page);
   await basics(page, { phone: '' });
@@ -903,6 +905,55 @@ for (const [typed, shown] of [['0671234567', '(67) 123 45 67'], ['+380671234567'
   await page.waitForTimeout(300);
   assert.deepEqual(await page.evaluate(() => window.__demand), ['Розмір: XL'], 'один запис про відсутній розмір');
   assert.equal(await page.getAttribute('.qo-choice[data-qo-value="XL"]', 'aria-checked'), 'false');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
+// Неможливий код оператора (010…): кнопка неактивна, підказка пояснює, що не так
+{
+  const { page, ctx, errors } = await session('bad-code', { width: 390, height: 844 }, '?hour=12');
+  await open(page);
+  await basics(page, { phone: '100000000' });
+  assert.equal(await page.inputValue('[data-qo-phone]'), '(010) 000 00 00');
+  assert.equal(await page.getAttribute('[data-qo-submit]', 'aria-disabled'), 'true');
+  assert.match(await page.textContent('[data-qo-field-hint="phone"]'), /код оператора/);
+  await page.click('[data-qo-submit]', { force: true });
+  assert.equal(await page.evaluate(() => window.__orders.length), 0);
+  await page.fill('[data-qo-phone]', '');
+  await page.keyboard.type('0671234567');
+  assert.equal(await page.getAttribute('[data-qo-submit]', 'aria-disabled'), 'false');
+  assert.equal(await page.textContent('[data-qo-field-hint="phone"]'), 'Менеджер зателефонує, щоб підтвердити замовлення');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
+// Імʼя й прізвище в одному полі: у замовлення йдуть окремо; екран успіху з доставкою й кроками
+{
+  const { page, ctx, errors, shot } = await session('fullname', { width: 390, height: 844 }, '?hour=12');
+  await open(page);
+  await basics(page);
+  await page.click('[data-qo-submit]');
+  await page.waitForSelector('[data-qo-success-view]:not([hidden])');
+  const order = await page.evaluate(() => window.__orders[0]);
+  assert.equal(order.name, 'Олена');
+  assert.equal(order.surname, 'Коваль');
+  assert.match(await page.textContent('[data-qo-success-title]'), /Дякуємо, Олена!/);
+  assert.match(await page.textContent('[data-qo-success-summary]'), /Отримувач\s*Олена Коваль/);
+  assert.match(await page.textContent('[data-qo-success-call-title]'), /^Дзвінок менеджера$/);
+  await shot('success-new');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+}
+
+// Після 20:00 перший крок каже, коли зателефонують
+{
+  const { page, ctx, errors, shot } = await session('fullname-night', { width: 390, height: 844 }, '?hours=off');
+  await open(page);
+  await basics(page);
+  await page.click('[data-qo-submit]');
+  await page.waitForSelector('[data-qo-success-view]:not([hidden])');
+  assert.match(await page.textContent('[data-qo-success-call-title]'), /завтра після 10:00/);
+  await shot('success-night');
   assert.deepEqual(errors, []);
   await ctx.close();
 }
